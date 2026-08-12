@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VIDIA V2 — Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            vidia: {
+              red: '#E52E35',
+              slate: '#0F172A',
+              light: '#F8FAFC',
+              border: '#E2E8F0',
+            },
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    body { font-family: Inter, system-ui, -apple-system, sans-serif; }
+    .tab-active { border-bottom: 2px solid #E52E35; color: #E52E35; }
+    pre { white-space: pre-wrap; word-break: break-word; }
+  </style>
+</head>
+<body class="bg-vidia-light text-vidia-slate min-h-screen">
+
+  <!-- Login -->
+  <div id="login-screen" class="min-h-screen flex items-center justify-center p-6">
+    <div class="bg-white border border-vidia-border rounded-2xl shadow-sm p-8 w-full max-w-md">
+      <div class="flex flex-col items-center mb-8">
+        <img src="/assets/logo.png" alt="VIDIA" class="h-12 mb-4" onerror="this.style.display='none'; document.getElementById('logo-fallback').classList.remove('hidden')" />
+        <div id="logo-fallback" class="hidden text-2xl font-bold tracking-tight text-vidia-red mb-2">VIDIA</div>
+        <p class="text-sm text-slate-500">Panou Administrare V2</p>
+      </div>
+      <form id="login-form" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium mb-1">Parolă admin</label>
+          <input id="login-password" type="password" required
+            class="w-full border border-vidia-border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-vidia-red/30 focus:border-vidia-red" />
+        </div>
+        <p id="login-error" class="text-sm text-vidia-red hidden"></p>
+        <button type="submit"
+          class="w-full bg-vidia-red hover:bg-red-600 text-white font-medium py-2.5 rounded-lg transition">
+          Autentificare
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Dashboard -->
+  <div id="dashboard" class="hidden">
+    <header class="bg-white border-b border-vidia-border sticky top-0 z-10">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <img src="/assets/logo.png" alt="VIDIA" class="h-8" onerror="this.outerHTML='<span class=\'text-xl font-bold text-vidia-red\'>VIDIA</span>'" />
+          <span class="text-sm text-slate-500 hidden sm:inline">Admin Dashboard</span>
+        </div>
+        <button id="logout-btn" class="text-sm text-slate-500 hover:text-vidia-red">Deconectare</button>
+      </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+      <!-- Tabs -->
+      <div class="flex gap-6 border-b border-vidia-border mb-6">
+        <button data-tab="businesses" class="tab-btn tab-active pb-3 text-sm font-medium">Afaceri Înregistrate</button>
+        <button data-tab="settings" class="tab-btn pb-3 text-sm font-medium text-slate-500 hover:text-vidia-slate">Setări sistem</button>
+        <button data-tab="logs" class="tab-btn pb-3 text-sm font-medium text-slate-500 hover:text-vidia-slate">Erori / Jurnale</button>
+      </div>
+
+      <!-- Tab: Businesses -->
+      <section id="tab-businesses">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+          <div>
+            <h2 class="text-lg font-semibold">Afaceri</h2>
+            <p class="text-sm text-slate-500">Gestionează tenant-ii și modul booking / consulting</p>
+          </div>
+          <button id="add-business-btn"
+            class="bg-vidia-red hover:bg-red-600 text-white text-sm font-medium px-4 py-2 rounded-lg">
+            + Adaugă afacere
+          </button>
+        </div>
+
+        <!-- Module preview toggle -->
+        <div class="bg-white border border-vidia-border rounded-xl p-4 mb-6">
+          <p class="text-sm font-medium mb-3">Previzualizare modul activ</p>
+          <div class="flex gap-3">
+            <button id="preview-booking" class="preview-btn flex-1 border-2 border-vidia-red bg-red-50 rounded-lg p-4 text-left">
+              <span class="text-lg">📅</span>
+              <p class="font-medium mt-1">Booking</p>
+              <p class="text-xs text-slate-500">Programări + Calendar + WhatsApp Flows</p>
+            </button>
+            <button id="preview-consulting" class="preview-btn flex-1 border-2 border-vidia-border rounded-lg p-4 text-left hover:border-slate-300">
+              <span class="text-lg">💬</span>
+              <p class="font-medium mt-1">Consulting</p>
+              <p class="text-xs text-slate-500">AI expert + contact, fără calendar</p>
+            </button>
+          </div>
+          <p id="preview-desc" class="text-xs text-slate-500 mt-3">Modul <strong>booking</strong> — flux complet de programări.</p>
+        </div>
+
+        <div id="businesses-list" class="grid gap-4"></div>
+      </section>
+
+      <!-- Tab: System settings -->
+      <section id="tab-settings" class="hidden">
+        <div class="mb-6">
+          <h2 class="text-lg font-semibold">Setări sistem (Super-Admin)</h2>
+          <p class="text-sm text-slate-500">Google Service Account global — folosit pentru toate calendarele partajate (Calendar Share).</p>
+        </div>
+        <form id="google-master-form" class="bg-white border border-vidia-border rounded-xl p-6 space-y-4 max-w-2xl">
+          <p class="text-xs text-slate-500">
+            Autentificare exclusiv prin <strong>Google Service Account</strong>.
+            Clienții partajează calendarul cu email-ul robotului (Make changes to events).
+          </p>
+          <div>
+            <label class="text-sm font-medium">google_service_account_email</label>
+            <input id="gm-sa-email" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="vidia-calendar@project.iam.gserviceaccount.com" />
+          </div>
+          <div>
+            <label class="text-sm font-medium">google_service_account_private_key</label>
+            <textarea id="gm-sa-key" rows="6" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm font-mono text-xs" placeholder="-----BEGIN PRIVATE KEY-----&#10;…&#10;-----END PRIVATE KEY-----&#10;(gol = păstrează cheia salvată)"></textarea>
+            <p class="text-xs text-slate-500 mt-1">Din fișierul JSON Google: câmpul <code>private_key</code> (blocul lung cu BEGIN/END), nu <code>private_key_id</code>.</p>
+            <p id="gm-sa-key-hint" class="text-xs text-slate-500 mt-1 hidden">Cheie privată salvată — lasă gol pentru a păstra.</p>
+          </div>
+
+          <p id="gm-status" class="text-sm text-slate-500"></p>
+          <p id="gm-error" class="text-sm text-vidia-red hidden"></p>
+          <button type="submit" class="bg-vidia-red hover:bg-red-600 text-white text-sm font-medium px-4 py-2 rounded-lg">
+            Salvează Service Account
+          </button>
+        </form>
+      </section>
+
+      <!-- Tab: Logs / Journals -->
+      <section id="tab-logs" class="hidden">
+        <div class="mb-4">
+          <h2 class="text-lg font-semibold">Erori / Activitate / Jurnale</h2>
+          <p class="text-sm text-slate-500">
+            Monitorizare globală. Pentru jurnal detaliat per afacere (callback-uri, programări, SMS), deschide afacerea → secțiunea Jurnale.
+          </p>
+        </div>
+        <div class="flex flex-col sm:flex-row sm:items-end gap-4 mb-6 flex-wrap">
+          <div>
+            <label class="block text-sm font-medium mb-1">Afacere</label>
+            <select id="logs-business-filter"
+              class="w-full sm:w-64 border border-vidia-border rounded-lg px-3 py-2 text-sm">
+              <option value="">Toate afacerile</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Severitate</label>
+            <select id="logs-severity-filter" class="w-full sm:w-40 border border-vidia-border rounded-lg px-3 py-2 text-sm">
+              <option value="">Toate</option>
+              <option value="critical">critical</option>
+              <option value="error">error</option>
+              <option value="warning">warning</option>
+              <option value="info">info</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Sursă</label>
+            <select id="logs-source-filter" class="w-full sm:w-44 border border-vidia-border rounded-lg px-3 py-2 text-sm">
+              <option value="">Toate</option>
+              <option value="webhook">webhook / WhatsApp</option>
+              <option value="google_calendar">google_calendar</option>
+              <option value="database">database</option>
+              <option value="system">system</option>
+            </select>
+          </div>
+          <label class="flex items-center gap-2 text-sm pb-2">
+            <input id="logs-unresolved-only" type="checkbox" class="rounded border-vidia-border text-vidia-red focus:ring-vidia-red" />
+            Doar nerezolvate
+          </label>
+          <button id="refresh-logs-btn"
+            class="border border-vidia-border hover:bg-white text-sm px-4 py-2 rounded-lg">
+            Reîmprospătează
+          </button>
+        </div>
+        <div id="logs-list" class="space-y-3"></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Business modal -->
+  <div id="business-modal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-6">
+      <h3 id="modal-title" class="text-lg font-semibold mb-4">Adaugă afacere</h3>
+      <form id="business-form" class="space-y-4">
+        <input type="hidden" id="bf-id" />
+        <div class="grid sm:grid-cols-2 gap-4">
+          <div>
+            <label class="text-sm font-medium">Nume *</label>
+            <input id="bf-name" required class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label class="text-sm font-medium">Slug</label>
+            <input id="bf-slug" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="auto-generat" />
+          </div>
+        </div>
+        <div class="grid sm:grid-cols-3 gap-4">
+          <div>
+            <label class="text-sm font-medium">Tip afacere</label>
+            <select id="bf-type" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm">
+              <option value="booking">booking</option>
+              <option value="consulting">consulting</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-sm font-medium">Status</label>
+            <select id="bf-status" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm">
+              <option value="active">active (live)</option>
+              <option value="paused">paused (suspendat)</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-sm font-medium">Fus orar</label>
+            <select id="bf-timezone" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm">
+              <option value="Europe/Bucharest">Europe/Bucharest</option>
+              <option value="Europe/London">Europe/London</option>
+              <option value="Europe/Berlin">Europe/Berlin</option>
+              <option value="Europe/Paris">Europe/Paris</option>
+              <option value="UTC">UTC</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label class="text-sm font-medium">WhatsApp From (număr E.164 / phone_number_id)</label>
+          <input id="bf-phone-id" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="+14155238886" />
+        </div>
+
+        <div class="border-t border-vidia-border pt-4">
+          <h4 class="text-sm font-semibold mb-1">Twilio (per afacere)</h4>
+          <p class="text-xs text-slate-500 mb-3">Obligatoriu pe fiecare afacere — fără fallback din .env.</p>
+          <div class="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label class="text-sm font-medium">Twilio Account SID</label>
+              <input id="bf-twilio-sid" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="ACxxxxxxxx" />
+            </div>
+            <div>
+              <label class="text-sm font-medium">Twilio Auth Token</label>
+              <input id="bf-twilio-token" type="password" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="Lăsați gol pentru a păstra / .env" />
+            </div>
+          </div>
+          <details class="mt-3">
+            <summary class="text-xs text-slate-500 cursor-pointer">Legacy: WhatsApp access token</summary>
+            <input id="bf-token" type="password" class="mt-2 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="Compatibilitate veche — preferați Twilio Auth Token" />
+          </details>
+        </div>
+
+        <div class="border-t border-vidia-border pt-4">
+          <h4 class="text-sm font-semibold mb-1">Google Calendar (Calendar Share)</h4>
+          <p class="text-xs text-slate-500 mb-3">
+            Clientul partajează calendarul cu email-ul Service Account Vidia (Make changes to events).
+            Autentificarea e globală din Setări sistem — aici salvezi doar email-ul calendarului partajat.
+          </p>
+          <label class="flex items-center gap-2 text-sm mb-3">
+            <input id="bf-g-mock" type="checkbox" checked class="rounded border-vidia-border text-vidia-red focus:ring-vidia-red" />
+            Mock Mode (fără API Google — rezervări locale)
+          </label>
+          <div>
+            <label class="text-sm font-medium">Google Calendar ID (email calendar)</label>
+            <input id="bf-calendar" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="salonulmeu@gmail.com" />
+          </div>
+          <div class="grid sm:grid-cols-3 gap-3 mt-3">
+            <div>
+              <label class="text-sm font-medium">Interval slot (min)</label>
+              <input id="bf-slot-interval" type="number" min="5" max="240" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="30" />
+            </div>
+            <div>
+              <label class="text-sm font-medium">Orizont (zile)</label>
+              <input id="bf-horizon-days" type="number" min="1" max="90" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="7" />
+            </div>
+            <div>
+              <label class="text-sm font-medium">Buffer (min)</label>
+              <input id="bf-buffer-minutes" type="number" min="0" max="120" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="0" />
+            </div>
+          </div>
+        </div>
+
+        <div class="border-t border-vidia-border pt-4">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="text-sm font-semibold">Servicii &amp; Prețuri</h4>
+            <button type="button" id="bf-add-service" class="text-xs text-vidia-red hover:underline">+ Adaugă serviciu</button>
+          </div>
+          <div class="overflow-x-auto border border-vidia-border rounded-lg">
+            <table class="w-full text-sm">
+              <thead class="bg-vidia-light text-left">
+                <tr>
+                  <th class="px-3 py-2 font-medium">Nume</th>
+                  <th class="px-3 py-2 font-medium w-24">Preț (LEI)</th>
+                  <th class="px-3 py-2 font-medium w-24">Durată (min)</th>
+                  <th class="px-3 py-2 w-10"></th>
+                </tr>
+              </thead>
+              <tbody id="bf-services-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="border-t border-vidia-border pt-4">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="text-sm font-semibold">Angajați &amp; calendare</h4>
+            <button type="button" id="bf-add-employee" class="text-xs text-vidia-red hover:underline">+ Adaugă angajat</button>
+          </div>
+          <p class="text-xs text-slate-500 mb-3">
+            Fiecare angajat poate avea propriul Google Calendar partajat cu Service Account.
+            Widget-urile existente pe același calendar rămân sincronizate (busy slots).
+          </p>
+          <div class="overflow-x-auto border border-vidia-border rounded-lg">
+            <table class="w-full text-sm">
+              <thead class="bg-vidia-light text-left">
+                <tr>
+                  <th class="px-3 py-2 font-medium">Nume</th>
+                  <th class="px-3 py-2 font-medium">Calendar ID (email)</th>
+                  <th class="px-3 py-2 font-medium w-20">Activ</th>
+                  <th class="px-3 py-2 w-10"></th>
+                </tr>
+              </thead>
+              <tbody id="bf-employees-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="border-t border-vidia-border pt-4">
+          <h4 class="text-sm font-semibold mb-1">SMS Marketing (Twilio)</h4>
+          <p class="text-xs text-slate-500 mb-3">
+            Trimite doar către clienți cu opt-in (`da sms` pe WhatsApp). Necesită număr SMS dedicat (E.164), nu WhatsApp SID.
+          </p>
+          <div class="mb-3">
+            <label class="text-sm font-medium">Număr SMS From (obligatoriu pentru campanii)</label>
+            <input id="bf-sms-from" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="+407xxxxxxxx" />
+          </div>
+          <div class="flex flex-col sm:flex-row gap-2">
+            <textarea id="bf-sms-body" rows="2" class="flex-1 border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="Mesaj campanie SMS…"></textarea>
+            <button type="button" id="bf-sms-send" class="px-4 py-2 text-sm bg-slate-800 text-white rounded-lg hover:bg-slate-700 whitespace-nowrap">
+              Trimite campanie
+            </button>
+          </div>
+          <p id="bf-sms-status" class="text-xs text-slate-500 mt-2"></p>
+          <p id="bf-sms-optin-count" class="text-xs text-slate-500 mt-1"></p>
+        </div>
+
+        <div class="border-t border-vidia-border pt-4">
+          <h4 class="text-sm font-semibold mb-1">Program de lucru</h4>
+          <p class="text-xs text-slate-500 mb-3">
+            Folosit pentru sloturi WhatsApp și pentru răspunsurile AI.
+            Dacă nu e setat, AI-ul spune că nu știe programul (nu inventează).
+          </p>
+          <div id="bf-hours" class="space-y-2"></div>
+        </div>
+
+        <div class="border-t border-vidia-border pt-4">
+          <h4 class="text-sm font-semibold mb-1">Contact</h4>
+          <p class="text-xs text-slate-500 mb-3">Date afișate la butonul Contact și în contextul AI.</p>
+          <div class="grid sm:grid-cols-2 gap-3">
+            <div>
+              <label class="text-sm font-medium">Telefon</label>
+              <input id="bf-contact-phone" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="+40…" />
+            </div>
+            <div>
+              <label class="text-sm font-medium">Email</label>
+              <input id="bf-contact-email" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="contact@…" />
+            </div>
+            <div class="sm:col-span-2">
+              <label class="text-sm font-medium">Adresă</label>
+              <input id="bf-contact-address" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="text-sm font-medium">Website</label>
+              <input id="bf-contact-website" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="text-sm font-medium">Link hartă</label>
+              <input id="bf-contact-maps" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" />
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label class="text-sm font-medium">Mesaj de bun venit (WhatsApp)</label>
+          <textarea id="bf-welcome" rows="3" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="Bun venit la salonul nostru!"></textarea>
+          <p class="text-xs text-slate-500 mt-1">La primul mesaj, botul se identifică ca AI și trimite acest text.</p>
+        </div>
+        <div>
+          <label class="text-sm font-medium">Mesaj după confirmare (opțional)</label>
+          <textarea id="bf-confirmation" rows="2" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="Ne vedem curând! Placeholders: {{service}} {{datetime}} {{name}} {{business}}"></textarea>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="text-sm font-medium">Link Termeni / GDPR</label>
+            <input id="bf-terms-url" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="https://…/termeni" />
+          </div>
+          <div>
+            <label class="text-sm font-medium">Link confidențialitate (opțional)</label>
+            <input id="bf-gdpr-url" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="https://…/gdpr" />
+          </div>
+        </div>
+        <div class="grid sm:grid-cols-2 gap-3">
+          <div>
+            <label class="text-sm font-medium">Model AI</label>
+            <select id="bf-ai-model" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm">
+              <option value="gpt-4o-mini">gpt-4o-mini</option>
+              <option value="gpt-4o">gpt-4o</option>
+              <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+              <option value="gpt-4.1">gpt-4.1</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-sm font-medium">Temperatura AI</label>
+            <input id="bf-ai-temperature" type="number" min="0" max="1" step="0.05" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="0.3" />
+          </div>
+        </div>
+        <div>
+          <label class="text-sm font-medium">AI System Prompt</label>
+          <textarea id="bf-prompt" rows="4" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm"></textarea>
+        </div>
+        <div>
+          <label class="text-sm font-medium">Fapte AI (opțional)</label>
+          <textarea id="bf-ai-facts" rows="3" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="Ex: Parcare gratis în spate. Acceptăm card."></textarea>
+          <p class="text-xs text-slate-500 mt-1">Doar fapte verificate — AI-ul nu inventează în afara lor.</p>
+        </div>
+        <details class="border-t border-vidia-border pt-4">
+          <summary class="text-sm font-medium cursor-pointer text-slate-600">JSON avansat (opțional)</summary>
+          <textarea id="bf-settings" rows="3" class="mt-2 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm font-mono text-xs"></textarea>
+          <p class="text-xs text-slate-500 mt-1">Chei rare rămase aici. Interval/orizont/buffer se salvează din câmpurile de mai sus.</p>
+        </details>
+
+        <!-- Per-business journal (edit mode only) -->
+        <div id="bf-journal-section" class="hidden border-t border-vidia-border pt-4">
+          <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
+            <div>
+              <h4 class="text-sm font-semibold">Erori / Activitate / Jurnale</h4>
+              <p class="text-xs text-slate-500">Date din Supabase pentru această afacere — fără acces manual la DB.</p>
+            </div>
+            <button type="button" id="bf-journal-refresh" class="text-xs border border-vidia-border px-3 py-1.5 rounded-lg hover:bg-vidia-light">
+              Reîmprospătează jurnal
+            </button>
+          </div>
+          <div id="bf-journal-stats" class="flex flex-wrap gap-2 mb-3 text-xs"></div>
+          <div class="flex gap-2 mb-3 flex-wrap">
+            <button type="button" data-journal-tab="errors" class="journal-tab text-xs px-3 py-1.5 rounded-full border border-vidia-red bg-red-50 text-vidia-red">Erori</button>
+            <button type="button" data-journal-tab="callbacks" class="journal-tab text-xs px-3 py-1.5 rounded-full border border-vidia-border text-slate-600">Callback-uri</button>
+            <button type="button" data-journal-tab="bookings" class="journal-tab text-xs px-3 py-1.5 rounded-full border border-vidia-border text-slate-600">Programări</button>
+            <button type="button" data-journal-tab="sms" class="journal-tab text-xs px-3 py-1.5 rounded-full border border-vidia-border text-slate-600">SMS</button>
+          </div>
+          <div id="bf-journal-body" class="space-y-2 max-h-72 overflow-y-auto border border-vidia-border rounded-lg p-3 bg-vidia-light/40"></div>
+        </div>
+
+        <p id="form-error" class="text-sm text-vidia-red hidden"></p>
+        <div class="flex gap-3 justify-end pt-2">
+          <button type="button" id="modal-cancel" class="px-4 py-2 text-sm border border-vidia-border rounded-lg">Anulează</button>
+          <button type="submit" class="px-4 py-2 text-sm bg-vidia-red text-white rounded-lg hover:bg-red-600">Salvează</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/admin.js"></script>
+</body>
+</html>

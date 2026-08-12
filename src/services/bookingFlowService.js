@@ -1,0 +1,1167 @@
+import { getAvailableSlots, isSlotAvailable, decodeSlotId } from '../db/cacheService.js';
+import {
+  getActiveDraftBooking,
+  setSelectedService,
+  setSelectedSlot,
+  setDraftEmployee,
+  confirmDraftBooking,
+  cancelOrResetDraft,
+  startBrowsingFlow,
+} from '../db/draftBookingService.js';
+import {
+  CONVERSATION_STEPS,
+  setConversationStep,
+  resetConversationState,
+} from '../db/conversationStateService.js';
+import { logError } from '../db/loggerService.js';
+import {
+  getClientByPhone,
+  updateClientDisplayName,
+  parseClientNameReply,
+} from '../db/clientService.js';
+import {
+  listEmployees,
+  getEmployeeById,
+  matchEmployeeMention,
+  resolveEmployeeCalendarId,
+} from '../db/employeeService.js';
+import { getBookingConfig, formatSlotLabel, encodeSlotId, localToUtc, formatDateKey, slotNumberEmoji } from '../utils/datetime.js';
+import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
+import {
+  buildBookingConfirmationMessage,
+  buildGdprNote,
+  buildMapsInviteLine,
+} from '../utils/businessMessages.js';
+import {
+  lazySyncCalendar,
+  createCalendarEvent,
+  deleteCalendarEvent,
+  resolveCalendarEventId,
+  isBusinessMockMode,
+} from './googleCalendarService.js';
+import {
+  sendTextMessage,
+  sendMessageWithUrlButton,
+  sendInteractiveButtons,
+  simulateHumanDelay,
+  rememberMenuOptions,
+} from './whatsappService.js';
+
+/** @typedef {import('../db/businessService.js').Business} Business */
+
+const PREFIX = {
+  SERVICE: 'svc_',
+  EMPLOYEE: 'emp_',
+  CONFIRM: 'confirm_booking',
+  CANCEL: 'cancel_booking',
+  RESCHEDULE: 'reschedule_booking',
+  ANY_EMPLOYEE: 'emp_any',
+};
+
+/**
+ * @param {import('../db/draftBookingService.js').DraftBooking | null | undefined} draft
+ * @returns {string | null}
+ */
+function draftEmployeeId(draft) {
+  if (!draft) return null;
+  if (draft.employee_id) return draft.employee_id;
+  const ctxEmp = draft.conversation_context?.employee_id;
+  return typeof ctxEmp === 'string' ? ctxEmp : null;
+}
+
+/**
+ * Shows service picker (buttons ≤3, list otherwise).
+ * @param {Object} params
+ * @param {Business} params.business
+ * @param {string} params.recipientPhone
+ * @param {import('../db/draftBookingService.js').DraftBooking} params.draft
+ * @param {string | null} [params.requestId]
+ */
+export async function sendServicePicker({ business, recipientPhone, draft, requestId = null }) {
+  const { services } = getBookingConfig(business);
+
+  if (services.length === 0) {
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: 'Nu există servicii configurate. Contactează administratorul.',
+    });
+    return;
+  }
+
+  await simulateHumanDelay({ business, recipientPhone, requestId });
+
+  const listed = services.slice(0, 10);
+  const options = listed.map((s) => ({
+    id: `${PREFIX.SERVICE}${s.id}`,
+    title: s.name,
+  }));
+  rememberMenuOptions(business.id, recipientPhone, options);
+
+  const lines = ['📋 *Alege serviciul dorit:*', ''];
+  listed.forEach((s, i) => {
+    lines.push(`${slotNumberEmoji(i)} *${s.name}*`);
+    lines.push(formatServiceMetaLine(s));
+    lines.push('');
+  });
+  lines.push('👉 _Răspunde cu numărul corespunzător (ex: 1)._');
+
+  await sendTextMessage({
+    business,
+    recipientPhone,
+    requestId,
+    text: lines.join('\n'),
+  });
+}
+
+/**
+ * @param {{ price_ron?: number | null; duration_minutes: number }} s
+ */
+function formatServiceMetaLine(s) {
+  const price =
+    s.price_ron != null && s.price_ron !== ''
+      ? `💰 ${s.price_ron} LEI`
+      : '💰 —';
+  const duration = `⏱️ ${s.duration_minutes} min`;
+  return `${price}  |  ${duration}`;
+}
+
+/**
+ * Lazy sync + show available slot list from the selected employee (or business) calendar.
+ */
+export async function sendSlotPicker({ business, recipientPhone, draft, requestId = null }) {
+  const service = /** @type {{ id: string; name: string; duration_minutes: number }} */ (
+    draft.selected_service
+  );
+
+  if (!service) {
+    await sendServicePicker({ business, recipientPhone, draft, requestId });
+    return;
+  }
+
+  const empId = draftEmployeeId(draft);
+  const employee = empId ? await getEmployeeById(empId, business.id) : null;
+  const calendarId = resolveEmployeeCalendarId(business, employee);
+
+  await lazySyncCalendar({
+    business,
+    requestId,
+    calendarId,
+    employeeId: empId,
+  });
+
+  const slots = await getAvailableSlots({
+    business,
+    durationMinutes: service.duration_minutes,
+    limit: 10,
+    excludeDraftId: draft.id,
+    employeeId: empId,
+  });
+
+  await simulateHumanDelay({ business, recipientPhone, requestId });
+
+  if (slots.length === 0) {
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text:
+        `Ne pare rău, nu am găsit sloturi libere pentru *${service.name}*` +
+        (employee ? ` cu *${employee.name}*` : '') +
+        ` în următoarele ${getBookingConfig(business).bookingHorizonDays} zile. Încearcă din nou mai târziu.`,
+    });
+    return;
+  }
+
+  const options = slots.map((s) => ({
+    id: s.id,
+    title: formatSlotLabel(s.start, business.timezone),
+  }));
+
+  rememberMenuOptions(business.id, recipientPhone, options);
+
+  const lines = [
+    `📅 *Alege ora pentru ${service.name}:*`,
+    ...(employee ? [`_cu ${employee.name}_`] : []),
+    '_(Primele opțiuni disponibile)_',
+    '',
+  ];
+  options.forEach((opt, i) => {
+    lines.push(`🟦 ${i + 1}. ${opt.title}`);
+    lines.push('');
+  });
+  // Drop trailing blank after last slot, then CTA
+  while (lines.length && lines[lines.length - 1] === '') lines.pop();
+  lines.push('', '👉 _Răspunde cu numărul opțiunii dorite._');
+
+  await sendTextMessage({
+    business,
+    recipientPhone,
+    requestId,
+    text: lines.join('\n'),
+  });
+}
+
+/**
+ * First active employee who has at least one free slot (live calendar sync).
+ * @returns {Promise<import('../db/employeeService.js').Employee | null>}
+ */
+async function findFirstAvailableEmployee({ business, durationMinutes, draftId, requestId }) {
+  const employees = await listEmployees(business.id, { activeOnly: true });
+  for (const emp of employees) {
+    const calendarId = resolveEmployeeCalendarId(business, emp);
+    if (!calendarId && !isBusinessMockMode(business)) continue;
+
+    await lazySyncCalendar({
+      business,
+      requestId,
+      force: true,
+      calendarId,
+      employeeId: emp.id,
+    });
+
+    const slots = await getAvailableSlots({
+      business,
+      durationMinutes,
+      limit: 1,
+      excludeDraftId: draftId,
+      employeeId: emp.id,
+    });
+    if (slots.length > 0) return emp;
+  }
+  return null;
+}
+
+/**
+ * After service selection: resolve employee (mention / single / first available / ask).
+ */
+async function continueAfterServiceSelected({
+  business,
+  recipientPhone,
+  draft,
+  service,
+  hintText = '',
+  requestId = null,
+}) {
+  const employees = await listEmployees(business.id, { activeOnly: true });
+
+  // No staff configured → classic business calendar
+  if (!employees.length) {
+    await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: CONVERSATION_STEPS.SELECTING_SLOT,
+      context: { draft_id: draft.id, service, intent: 'book' },
+      requestId,
+    });
+    await sendSlotPicker({ business, recipientPhone, draft, requestId });
+    return;
+  }
+
+  const mentioned = matchEmployeeMention(hintText, employees);
+  /** @type {import('../db/employeeService.js').Employee | null} */
+  let chosen = mentioned;
+
+  if (!chosen && employees.length === 1) {
+    chosen = employees[0];
+  }
+
+  if (!chosen) {
+    // Prefer first available; if none, still show picker
+    chosen = await findFirstAvailableEmployee({
+      business,
+      durationMinutes: service.duration_minutes,
+      draftId: draft.id,
+      requestId,
+    });
+  }
+
+  if (chosen && (mentioned || employees.length === 1)) {
+    await assignEmployeeAndShowSlots({
+      business,
+      recipientPhone,
+      draft,
+      service,
+      employee: chosen,
+      requestId,
+    });
+    return;
+  }
+
+  // Multiple staff — ask the client (pre-select first available as option 1 hint)
+  await setConversationStep({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
+    context: {
+      draft_id: draft.id,
+      service,
+      intent: 'book',
+      suggested_employee_id: chosen?.id ?? null,
+    },
+    requestId,
+  });
+  await sendEmployeePicker({
+    business,
+    recipientPhone,
+    employees,
+    suggested: chosen,
+    requestId,
+  });
+}
+
+/**
+ * @param {Object} params
+ */
+async function assignEmployeeAndShowSlots({
+  business,
+  recipientPhone,
+  draft,
+  service,
+  employee,
+  requestId = null,
+}) {
+  const updated = await setDraftEmployee({
+    draftId: draft.id,
+    businessId: business.id,
+    employeeId: employee.id,
+    context: {
+      ...draft.conversation_context,
+      step: 'select_slot',
+      employee_id: employee.id,
+      employee_name: employee.name,
+    },
+    requestId,
+  });
+
+  const nextDraft = updated ?? { ...draft, employee_id: employee.id };
+
+  await setConversationStep({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    step: CONVERSATION_STEPS.SELECTING_SLOT,
+    context: {
+      draft_id: draft.id,
+      service,
+      employee_id: employee.id,
+      employee_name: employee.name,
+      intent: 'book',
+    },
+    requestId,
+  });
+
+  await simulateHumanDelay({ business, recipientPhone, requestId, delayMs: 600 });
+  await sendTextMessage({
+    business,
+    recipientPhone,
+    requestId,
+    text: `Te programez cu *${employee.name}*.`,
+  });
+  await sendSlotPicker({ business, recipientPhone, draft: nextDraft, requestId });
+}
+
+/**
+ * Numbered employee menu for WhatsApp.
+ */
+export async function sendEmployeePicker({
+  business,
+  recipientPhone,
+  employees,
+  suggested = null,
+  requestId = null,
+}) {
+  await simulateHumanDelay({ business, recipientPhone, requestId });
+
+  const options = employees.map((e) => ({
+    id: `${PREFIX.EMPLOYEE}${e.id}`,
+    title: e.name.slice(0, 24),
+  }));
+  options.push({ id: PREFIX.ANY_EMPLOYEE, title: 'Primul disponibil' });
+
+  rememberMenuOptions(business.id, recipientPhone, options);
+
+  const lines = ['Cu cine preferi programarea?', ''];
+  options.forEach((opt, i) => {
+    const hint =
+      suggested && opt.id === `${PREFIX.EMPLOYEE}${suggested.id}`
+        ? ' ← disponibil acum'
+        : '';
+    lines.push(`${slotNumberEmoji(i)} ${opt.title}${hint}`);
+  });
+  lines.push('', 'Răspunde cu numărul opțiunii (ex: 1).');
+
+  await sendTextMessage({
+    business,
+    recipientPhone,
+    requestId,
+    text: lines.join('\n'),
+  });
+}
+
+/**
+ * @param {Object} params
+ * @param {Business} params.business
+ * @param {string} params.recipientPhone
+ * @param {import('../db/draftBookingService.js').DraftBooking} params.draft
+ * @param {string | null} [params.requestId]
+ */
+export async function sendConfirmationPrompt({ business, recipientPhone, draft, requestId = null }) {
+  const service = /** @type {{ name: string }} */ (draft.selected_service);
+  const slotStart = draft.selected_slot_start ? new Date(draft.selected_slot_start) : null;
+
+  if (!slotStart || !service) return;
+
+  const client = await getClientByPhone({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    requestId,
+  });
+  const nameLine = client?.display_name ? `👤 *${client.display_name}*\n` : '';
+
+  await simulateHumanDelay({ business, recipientPhone, requestId });
+
+  await sendInteractiveButtons({
+    business,
+    recipientPhone,
+    requestId,
+    bodyText:
+      `Confirmi programarea?\n\n` +
+      nameLine +
+      `📋 *${service.name}*\n` +
+      `🕐 ${formatSlotLabel(slotStart, business.timezone)}`,
+    buttons: [
+      { id: PREFIX.CONFIRM, title: '✅ Confirm' },
+      { id: PREFIX.CANCEL, title: '❌ Anulează' },
+    ],
+  });
+}
+
+/**
+ * After a slot is chosen: ask for client name if missing, else show confirm prompt.
+ * @returns {Promise<void>}
+ */
+async function continueAfterSlotSelected({
+  business,
+  recipientPhone,
+  draft,
+  service,
+  slotStart,
+  slotEnd,
+  requestId = null,
+}) {
+  await setConversationStep({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    step: CONVERSATION_STEPS.CONFIRMING,
+    context: {
+      draft_id: draft.id,
+      service,
+      slot_start: slotStart instanceof Date ? slotStart.toISOString() : slotStart,
+      slot_end: slotEnd instanceof Date ? slotEnd.toISOString() : slotEnd,
+      intent: 'book',
+    },
+    requestId,
+  });
+
+  const client = await getClientByPhone({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    requestId,
+  });
+
+  if (!client?.display_name) {
+    await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: CONVERSATION_STEPS.ASKING_NAME,
+      context: {
+        draft_id: draft.id,
+        service,
+        slot_start: slotStart instanceof Date ? slotStart.toISOString() : slotStart,
+        slot_end: slotEnd instanceof Date ? slotEnd.toISOString() : slotEnd,
+        intent: 'book',
+        awaiting_name: true,
+      },
+      requestId,
+    });
+
+    await simulateHumanDelay({ business, recipientPhone, requestId });
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text:
+        'Pentru rezervare am nevoie de *numele tău* (cum să te trecem în calendar).\n' +
+        'Scrie prenumele și numele, ex: *Ana Popescu*.',
+    });
+    return;
+  }
+
+  await sendConfirmationPrompt({ business, recipientPhone, draft, requestId });
+}
+
+/**
+ * Handles free-text while waiting for the client name before confirm.
+ * @returns {Promise<boolean>}
+ */
+export async function handleClientNameReply({
+  business,
+  recipientPhone,
+  textBody,
+  clientId = null,
+  requestId = null,
+}) {
+  const draft = await getActiveDraftBooking(business.id, recipientPhone);
+  if (!draft || draft.state !== 'pending_confirmation') {
+    return false;
+  }
+
+  const name = parseClientNameReply(textBody);
+  if (!name) {
+    await simulateHumanDelay({ business, recipientPhone, requestId });
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: 'Te rog scrie un nume valid (minim 2 litere), ex: *Ana Popescu*.',
+    });
+    return true;
+  }
+
+  const resolvedClientId = clientId || draft.client_id;
+  if (resolvedClientId) {
+    await updateClientDisplayName({
+      clientId: resolvedClientId,
+      displayName: name,
+      businessId: business.id,
+      requestId,
+    });
+  }
+
+  await setConversationStep({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    step: CONVERSATION_STEPS.CONFIRMING,
+    context: {
+      draft_id: draft.id,
+      service: draft.selected_service,
+      slot_start: draft.selected_slot_start,
+      slot_end: draft.selected_slot_end,
+      intent: 'book',
+      client_name: name,
+    },
+    requestId,
+  });
+
+  await sendConfirmationPrompt({ business, recipientPhone, draft, requestId });
+  return true;
+}
+
+/**
+ * Starts booking flow: draft browsing + service picker.
+ * @param {Object} params
+ * @param {Business} params.business
+ * @param {string} params.recipientPhone
+ * @param {string | null} [params.clientId]
+ * @param {string} [params.hintText] — original user text (employee name mentions)
+ * @param {string | null} [params.requestId]
+ */
+export async function startBookingFlow({
+  business,
+  recipientPhone,
+  clientId,
+  hintText = '',
+  requestId = null,
+}) {
+  const draft = await startBrowsingFlow({
+    businessId: business.id,
+    clientId,
+    rawPhone: recipientPhone,
+    context: { step: 'select_service', booking_hint: hintText || '' },
+    requestId,
+  });
+
+  if (!draft) {
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: 'A apărut o eroare la inițierea programării. Încearcă din nou.',
+    });
+    return;
+  }
+
+  await simulateHumanDelay({ business, recipientPhone, requestId });
+  await sendTextMessage({
+    business,
+    recipientPhone,
+    requestId,
+    text: `Perfect! Hai să programăm o vizită la *${business.name}*. 📅`,
+  });
+
+  await setConversationStep({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    step: CONVERSATION_STEPS.CHOOSING_SERVICE,
+    context: { draft_id: draft.id, intent: 'book' },
+    mergeContext: false,
+    requestId,
+  });
+
+  await sendServicePicker({ business, recipientPhone, draft, requestId });
+}
+
+/**
+ * Routes booking-related interactive replies (services, slots, confirm/cancel).
+ * @returns {Promise<boolean>} true if handled
+ */
+export async function handleBookingInteractiveReply({
+  business,
+  recipientPhone,
+  replyId,
+  clientId,
+  requestId = null,
+}) {
+  const draft = await getActiveDraftBooking(business.id, recipientPhone);
+
+  if (replyId === PREFIX.CONFIRM || replyId === PREFIX.CANCEL) {
+    if (!draft) return false;
+    if (replyId === PREFIX.CONFIRM) {
+      await handleConfirmBooking({ business, recipientPhone, draft, requestId });
+    } else {
+      await handleCancelBooking({ business, recipientPhone, draft, requestId });
+    }
+    return true;
+  }
+
+  if (replyId.startsWith(PREFIX.SERVICE)) {
+    const serviceId = replyId.slice(PREFIX.SERVICE.length);
+    const { services } = getBookingConfig(business);
+    const service = services.find((s) => s.id === serviceId);
+
+    if (!service) {
+      await sendTextMessage({
+        business,
+        recipientPhone,
+        requestId,
+        text: 'Serviciul selectat nu mai este disponibil.',
+      });
+      return true;
+    }
+
+    let activeDraft = draft;
+    if (!activeDraft) {
+      activeDraft = await startBrowsingFlow({
+        businessId: business.id,
+        clientId,
+        rawPhone: recipientPhone,
+        requestId,
+      });
+    }
+
+    if (!activeDraft) return true;
+
+    const updated = await setSelectedService({
+      draftId: activeDraft.id,
+      businessId: business.id,
+      service,
+      context: { ...activeDraft.conversation_context, step: 'select_slot', service_id: service.id },
+      requestId,
+    });
+
+    if (updated) {
+      const hintText =
+        typeof updated.conversation_context?.booking_hint === 'string'
+          ? updated.conversation_context.booking_hint
+          : '';
+      await continueAfterServiceSelected({
+        business,
+        recipientPhone,
+        draft: updated,
+        service,
+        hintText,
+        requestId,
+      });
+    }
+    return true;
+  }
+
+  if (replyId === PREFIX.ANY_EMPLOYEE || replyId.startsWith(PREFIX.EMPLOYEE)) {
+    if (!draft) return false;
+    const service = /** @type {{ duration_minutes: number; name: string }} */ (
+      draft.selected_service
+    );
+    if (!service) return false;
+
+    let employee = null;
+    if (replyId === PREFIX.ANY_EMPLOYEE) {
+      employee = await findFirstAvailableEmployee({
+        business,
+        durationMinutes: service.duration_minutes,
+        draftId: draft.id,
+        requestId,
+      });
+      if (!employee) {
+        const all = await listEmployees(business.id, { activeOnly: true });
+        employee = all[0] ?? null;
+      }
+    } else {
+      const empId = replyId.slice(PREFIX.EMPLOYEE.length);
+      employee = await getEmployeeById(empId, business.id);
+    }
+
+    if (!employee) {
+      await sendTextMessage({
+        business,
+        recipientPhone,
+        requestId,
+        text: 'Angajatul selectat nu este disponibil. Alege din listă.',
+      });
+      return true;
+    }
+
+    await assignEmployeeAndShowSlots({
+      business,
+      recipientPhone,
+      draft,
+      service,
+      employee,
+      requestId,
+    });
+    return true;
+  }
+
+  if (replyId.startsWith('slot_')) {
+    if (!draft) return false;
+
+    const service = /** @type {{ duration_minutes: number; name: string }} */ (
+      draft.selected_service
+    );
+    if (!service) return false;
+
+    const slotStart = decodeSlotId(replyId, business.timezone);
+    if (!slotStart) {
+      await sendTextMessage({
+        business,
+        recipientPhone,
+        requestId,
+        text: 'Slot invalid. Te rugăm să alegi din listă.',
+      });
+      return true;
+    }
+
+    const empId = draftEmployeeId(draft);
+    const available = await isSlotAvailable({
+      business,
+      slotId: replyId,
+      durationMinutes: service.duration_minutes,
+      excludeDraftId: draft.id,
+      employeeId: empId,
+    });
+
+    if (!available) {
+      await sendTextMessage({
+        business,
+        recipientPhone,
+        requestId,
+        text: 'Ne pare rău, acest slot tocmai a fost ocupat. Alege altă oră:',
+      });
+      await sendSlotPicker({ business, recipientPhone, draft, requestId });
+      return true;
+    }
+
+    const slotEnd = new Date(slotStart.getTime() + service.duration_minutes * 60_000);
+
+    const updated = await setSelectedSlot({
+      draftId: draft.id,
+      businessId: business.id,
+      slotStart,
+      slotEnd,
+      context: { ...draft.conversation_context, step: 'confirm', slot_id: replyId },
+      requestId,
+    });
+
+    if (updated) {
+      await continueAfterSlotSelected({
+        business,
+        recipientPhone,
+        draft: updated,
+        service,
+        slotStart,
+        slotEnd,
+        requestId,
+      });
+    }
+    return true;
+  }
+
+  return false;
+}
+
+async function handleConfirmBooking({ business, recipientPhone, draft, requestId }) {
+  if (draft.state !== 'pending_confirmation') {
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: 'Nu există o programare în așteptarea confirmării.',
+    });
+    return;
+  }
+
+  const service = /** @type {{ name: string; duration_minutes: number }} */ (draft.selected_service);
+  const slotStart = draft.selected_slot_start;
+  const slotEnd = draft.selected_slot_end;
+
+  if (!service || !slotStart || !slotEnd) return;
+
+  await simulateHumanDelay({ business, recipientPhone, requestId });
+
+  const phoneE164 = draft.phone_number;
+  const client = await getClientByPhone({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    requestId,
+  });
+  const clientName = client?.display_name?.trim() || '';
+  const clientLabel = clientName || phoneE164;
+  const empId = draftEmployeeId(draft);
+  const employee = empId ? await getEmployeeById(empId, business.id) : null;
+  const calendarId = resolveEmployeeCalendarId(business, employee);
+
+  const result = await createCalendarEvent({
+    business,
+    calendarId,
+    employeeId: empId,
+    event: {
+      summary: `${service.name} — ${clientLabel}${employee ? ` (${employee.name})` : ''}`,
+      description:
+        `Programare WhatsApp Vidia\n` +
+        (clientName ? `Client: ${clientName}\n` : '') +
+        `Telefon: ${phoneE164}\n` +
+        (employee ? `Angajat: ${employee.name}\n` : '') +
+        `Draft: ${draft.id}`,
+      startIso: slotStart,
+      endIso: slotEnd,
+    },
+    requestId,
+  });
+
+  const isMockEvent =
+    result.mocked === true
+    || business.google_calendar_mock_mode === true
+    || (typeof result.eventId === 'string' && result.eventId.startsWith('mock_evt_'));
+
+  // Nu confirmăm niciodată o programare care nu a fost scrisă în Google Calendar real.
+  if (!result.ok || !result.eventId || isMockEvent) {
+    console.error('Eroare detalii:', {
+      reason: 'createCalendarEvent failed or mock — refusing confirmation',
+      mockMode: business.google_calendar_mock_mode === true,
+      mockedResult: result.mocked === true,
+      hasCalendarId: Boolean(calendarId),
+      employeeId: empId,
+      eventId: result.eventId ?? null,
+      result,
+    });
+
+    let adminHint =
+      '_Administrator: configurează Master Google în Admin → Setări sistem, ' +
+      'setează google_calendar_id pe afacere sau pe angajat și oprește Mock Mode._';
+
+    if (business.google_calendar_mock_mode === true) {
+      adminHint =
+        '_Administrator: Mock Mode este activ pe această afacere — ' +
+        'opriți Mock Mode și configurați Master Google + partajarea calendarului._';
+    } else if (!calendarId) {
+      adminHint =
+        '_Administrator: lipsește google_calendar_id pe afacere sau pe angajatul selectat._';
+    }
+
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text:
+        'Nu am putut salva programarea în Google Calendar, deci *nu am confirmat-o*.\n\n' +
+        'Te rog încearcă din nou după ce administratorul configurează calendarul.\n\n' +
+        adminHint,
+    });
+    return;
+  }
+
+  await confirmDraftBooking({
+    draftId: draft.id,
+    businessId: business.id,
+    googleEventId: result.eventId,
+    googleEventLink: result.htmlLink,
+    context: { ...draft.conversation_context, step: 'confirmed' },
+    requestId,
+  });
+
+  await resetConversationState({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    requestId,
+  });
+
+  const calendarInvite = buildBookingCalendarInvite({
+    business,
+    serviceName: service.name,
+    startIso: slotStart,
+    endIso: slotEnd,
+  });
+  const mapsInvite = buildMapsInviteLine(business);
+
+  // Order: 1) GDPR note, 2) confirmation (maps + calendar CTA)
+  await sendTextMessage({
+    business,
+    recipientPhone,
+    requestId,
+    text: buildGdprNote(business),
+  });
+
+  const confirmBody = buildBookingConfirmationMessage({
+    business,
+    serviceName: service.name,
+    slotLabel: formatSlotLabel(new Date(slotStart), business.timezone),
+    clientName,
+    calendarLine: '',
+    mapsLine: mapsInvite?.messageLine || '',
+    includeGdpr: false,
+  });
+
+  if (calendarInvite.url) {
+    await sendMessageWithUrlButton({
+      business,
+      recipientPhone,
+      requestId,
+      text: confirmBody,
+      buttonTitle: calendarInvite.buttonTitle,
+      buttonUrl: calendarInvite.url,
+    });
+  } else {
+    const bodyWithCalendar = calendarInvite.markdownLine
+      ? `${confirmBody}\n\n${calendarInvite.markdownLine}`
+      : confirmBody;
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: bodyWithCalendar,
+    });
+  }
+}
+
+async function handleCancelBooking({ business, recipientPhone, draft, requestId }) {
+  const empId = draftEmployeeId(draft);
+  const employee = empId ? await getEmployeeById(empId, business.id) : null;
+  const calendarId = resolveEmployeeCalendarId(business, employee);
+
+  const eventId = await resolveCalendarEventId({
+    business,
+    eventId: draft.google_event_id,
+    phoneNumber: draft.phone_number || recipientPhone,
+    startIso: draft.selected_slot_start,
+    endIso: draft.selected_slot_end,
+    calendarId,
+    requestId,
+  });
+
+  if (!isBusinessMockMode(business) && draft.state === 'confirmed') {
+    if (!eventId) {
+      await simulateHumanDelay({ business, recipientPhone, requestId });
+      await sendTextMessage({
+        business,
+        recipientPhone,
+        requestId,
+        text:
+          'Nu am putut găsi evenimentul în Google Calendar, deci *nu am anulat* programarea.',
+      });
+      return;
+    }
+    const del = await deleteCalendarEvent({ business, eventId, calendarId, requestId });
+    if (!del?.ok) {
+      await simulateHumanDelay({ business, recipientPhone, requestId });
+      await sendTextMessage({
+        business,
+        recipientPhone,
+        requestId,
+        text:
+          'Nu am putut șterge evenimentul din Google Calendar, deci *nu am anulat* programarea.',
+      });
+      return;
+    }
+  } else if (eventId) {
+    await deleteCalendarEvent({ business, eventId, calendarId, requestId });
+  }
+
+  await cancelOrResetDraft({
+    draftId: draft.id,
+    businessId: business.id,
+    state: 'cancelled',
+    context: { ...draft.conversation_context, step: 'cancelled' },
+    requestId,
+  });
+
+  await resetConversationState({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    requestId,
+  });
+
+  await simulateHumanDelay({ business, recipientPhone, requestId });
+  await sendTextMessage({
+    business,
+    recipientPhone,
+    requestId,
+    text: 'Programarea a fost anulată. Dacă dorești, poți începe o programare nouă oricând.',
+  });
+}
+
+export { PREFIX as BOOKING_PREFIXES };
+
+/**
+ * Tries to interpret free-text like "maine la 10:30" into a slot selection.
+ * @returns {Promise<boolean>} true if handled
+ */
+export async function handleFreeTextSlotRequest({
+  business,
+  recipientPhone,
+  draft,
+  textBody,
+  requestId = null,
+}) {
+  const service = /** @type {{ duration_minutes: number; name: string } | null} */ (
+    draft.selected_service
+  );
+  if (!service) return false;
+
+  const parsed = parseRomanianDateTime(textBody, business.timezone);
+  if (!parsed) {
+    await simulateHumanDelay({ business, recipientPhone, requestId });
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text:
+        `Am notat: _"${textBody.slice(0, 120)}"_\n\n` +
+        'Alege o oră din listă (răspunde cu numărul), sau scrie ex: *mâine la 10:30*.',
+    });
+    // Still show available slots so user can pick
+    await sendSlotPicker({ business, recipientPhone, draft, requestId });
+    return true;
+  }
+
+  const slotId = encodeSlotId(parsed, business.timezone);
+  const available = await isSlotAvailable({
+    business,
+    slotId,
+    durationMinutes: service.duration_minutes,
+    excludeDraftId: draft.id,
+    employeeId: draftEmployeeId(draft),
+  });
+
+  if (!available) {
+    await simulateHumanDelay({ business, recipientPhone, requestId });
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: `Intervalul *${formatSlotLabel(parsed, business.timezone)}* nu e disponibil. Alege din listă:`,
+    });
+    return false;
+  }
+
+  const slotEnd = new Date(parsed.getTime() + service.duration_minutes * 60_000);
+  const updated = await setSelectedSlot({
+    draftId: draft.id,
+    businessId: business.id,
+    slotStart: parsed,
+    slotEnd,
+    context: { ...draft.conversation_context, step: 'confirm', slot_id: slotId, free_text: textBody },
+    requestId,
+  });
+
+  if (updated) {
+    await continueAfterSlotSelected({
+      business,
+      recipientPhone,
+      draft: updated,
+      service,
+      slotStart: parsed,
+      slotEnd,
+      requestId,
+    });
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Very light RO date/time parser: "maine la 10:30", "azi 14:00", "10:30".
+ * @param {string} text
+ * @param {string} timezone
+ * @returns {Date | null}
+ */
+export function parseRomanianDateTime(text, timezone) {
+  const normalized = text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+
+  const timeMatch = normalized.match(/\b(\d{1,2})[:\.](\d{2})\b/) || normalized.match(/\b(\d{1,2})\s*(?:am|pm)?\b/);
+  if (!timeMatch) return null;
+
+  let hour = Number(timeMatch[1]);
+  const minute = timeMatch[2] !== undefined ? Number(timeMatch[2]) : 0;
+  if (hour > 23 || minute > 59) return null;
+
+  const now = new Date();
+  let dayOffset = 0;
+  if (/\bmaine\b/.test(normalized)) dayOffset = 1;
+  else if (/\bazi\b/.test(normalized)) dayOffset = 0;
+  else if (/\bpoimaine\b/.test(normalized)) dayOffset = 2;
+
+  const target = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
+  const dateKey = formatDateKey(target, timezone);
+  const hh = String(hour).padStart(2, '0');
+  const mm = String(minute).padStart(2, '0');
+
+  return localToUtc(dateKey, `${hh}:${mm}`, timezone);
+}
+
+/**
+ * Free-text slot while rescheduling a confirmed appointment.
+ * @returns {Promise<boolean>}
+ */
+export async function handleFreeTextReschedule({
+  business,
+  recipientPhone,
+  textBody,
+  convState,
+  requestId = null,
+}) {
+  const parsed = parseRomanianDateTime(textBody, business.timezone);
+  if (!parsed) {
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: 'Nu am înțeles ora. Alege din listă sau scrie ex: *mâine la 10:30*.',
+    });
+    return true;
+  }
+
+  const slotId = encodeSlotId(parsed, business.timezone);
+  const { applyRescheduleSlot } = await import('./modificationFlowService.js');
+  return applyRescheduleSlot({
+    business,
+    recipientPhone,
+    convState,
+    slotId,
+    requestId,
+  });
+}
