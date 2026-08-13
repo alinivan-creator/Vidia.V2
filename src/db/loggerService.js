@@ -97,6 +97,7 @@ export async function logError({
         severity,
         source,
         message: finalMessage,
+        details: mergedDetails,
         request_id: requestId,
         phone_number: phoneNumber,
         draft_booking_id: draftBookingId,

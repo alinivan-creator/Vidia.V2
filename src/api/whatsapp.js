@@ -59,6 +59,7 @@ import {
 } from '../services/whatsappService.js';
 import { toE164, toMetaPhone } from '../utils/phone.js';
 import { debugLog } from '../utils/debugLog.js';
+import { continueAfterResponse } from '../utils/afterResponse.js';
 import {
   sweepStalePendingForPhone,
   resolveLastBookingIntent,
@@ -84,22 +85,38 @@ whatsappRouter.get('/', (_req, res) => {
 
 /**
  * Twilio Messaging webhook (WhatsApp).
- * Responds 200 immediately; processing continues async.
+ * Process in-request first (Vercel Express can freeze the isolate after 200).
+ * If we exceed ~12s, ack Twilio and finish via waitUntil.
  */
 whatsappRouter.post('/', async (req, res) => {
   const requestId = crypto.randomUUID();
+  const from = String(req.body?.From ?? '');
+  const to = String(req.body?.To ?? '');
 
   debugLog('--- WEBHOOK INCOMING ---', {
-    From: req.body?.From,
-    To: req.body?.To,
+    From: from,
+    To: to,
     Body: req.body?.Body,
     MessageSid: req.body?.MessageSid,
     requestId,
   });
 
-  res.type('text/xml').status(200).send('<Response></Response>');
+  void logError({
+    message: from && to
+      ? 'WhatsApp inbound primit'
+      : 'WhatsApp inbound fără From/To (body gol sau webhook greșit)',
+    source: 'webhook',
+    severity: from && to ? 'info' : 'warning',
+    requestId,
+    details: {
+      hasFrom: Boolean(from),
+      hasTo: Boolean(to),
+      bodyLen: String(req.body?.Body ?? '').length,
+      contentType: String(req.headers['content-type'] ?? ''),
+    },
+  });
 
-  await continueAfterResponse((async () => {
+  const work = (async () => {
     try {
       await processTwilioWebhook(req.body, requestId);
     } catch (error) {
@@ -114,7 +131,20 @@ whatsappRouter.post('/', async (req, res) => {
         details: { body: sanitizeTwilioBody(req.body) },
       });
     }
-  })());
+  })();
+
+  const raced = await Promise.race([
+    work.then(() => 'done'),
+    new Promise((resolve) => setTimeout(() => resolve('timeout'), 12000)),
+  ]);
+
+  if (!res.headersSent) {
+    res.type('text/xml').status(200).send('<Response></Response>');
+  }
+
+  if (raced === 'timeout') {
+    await continueAfterResponse(work);
+  }
 });
 
 /**
