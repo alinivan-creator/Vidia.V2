@@ -1,5 +1,6 @@
 import { supabase } from '../config/supabase.js';
 import { logError } from './loggerService.js';
+import { reportQueryFailure } from './schemaHealth.js';
 import { toE164 } from '../utils/phone.js';
 
 /** @typedef {'browsing' | 'pending_confirmation' | 'confirmed' | 'cancelled' | 'expired'} DraftBookingState */
@@ -21,18 +22,23 @@ import { toE164 } from '../utils/phone.js';
  * @property {string | null} [employee_id]
  * @property {Record<string, unknown>} conversation_context
  * @property {string} expires_at
+ * @property {string} [created_at]
+ * @property {string} [updated_at]
  */
 
 const PENDING_TTL_MS = 5 * 60 * 1000;
 
 const DRAFT_COLUMNS =
-  'id, business_id, client_id, phone_number, state, selected_service, selected_slot_start, selected_slot_end, locked_until, pending_expires_at, google_event_id, google_event_link, employee_id, conversation_context, expires_at';
+  'id, business_id, client_id, phone_number, state, selected_service, selected_slot_start, selected_slot_end, locked_until, pending_expires_at, google_event_id, google_event_link, employee_id, conversation_context, expires_at, created_at, updated_at';
 
 const DRAFT_COLUMNS_NO_PENDING_EXPIRES =
-  'id, business_id, client_id, phone_number, state, selected_service, selected_slot_start, selected_slot_end, locked_until, google_event_id, google_event_link, employee_id, conversation_context, expires_at';
+  'id, business_id, client_id, phone_number, state, selected_service, selected_slot_start, selected_slot_end, locked_until, google_event_id, google_event_link, employee_id, conversation_context, expires_at, created_at, updated_at';
 
 const DRAFT_COLUMNS_LEGACY =
-  'id, business_id, client_id, phone_number, state, selected_service, selected_slot_start, selected_slot_end, locked_until, google_event_id, google_event_link, conversation_context, expires_at';
+  'id, business_id, client_id, phone_number, state, selected_service, selected_slot_start, selected_slot_end, locked_until, google_event_id, google_event_link, conversation_context, expires_at, created_at, updated_at';
+
+const JOURNAL_COLUMNS =
+  'id, phone_number, state, selected_service, selected_slot_start, selected_slot_end, locked_until, google_event_id, conversation_context, created_at, updated_at';
 
 /** @type {boolean | null} */
 let employeeColumnAvailable = null;
@@ -68,13 +74,37 @@ export function resolvePendingExpiresAt(draft) {
 }
 
 /**
+ * Pending hold is stale when the explicit TTL elapsed, or — if that column
+ * is missing — when updated_at/created_at is older than ttlMinutes.
+ * No clock at all → treat as expired so a hold can never last forever.
+ *
  * @param {DraftBooking | null | undefined} draft
+ * @param {number} [ttlMinutes]
  */
-export function isPendingConfirmationExpired(draft) {
+export function isPendingConfirmationExpired(draft, ttlMinutes = 5) {
   if (!draft || draft.state !== 'pending_confirmation') return false;
-  const exp = resolvePendingExpiresAt(draft);
-  if (!exp) return false;
-  return new Date(exp).getTime() <= Date.now();
+
+  const now = Date.now();
+  const ttlMs = Math.min(60, Math.max(1, Number(ttlMinutes) || 5)) * 60 * 1000;
+
+  const explicit = draft.pending_expires_at || draft.conversation_context?.pending_expires_at;
+  if (typeof explicit === 'string' && explicit) {
+    const t = new Date(explicit).getTime();
+    if (Number.isFinite(t)) return t <= now;
+  }
+
+  if (typeof draft.locked_until === 'string' && draft.locked_until) {
+    const locked = new Date(draft.locked_until).getTime();
+    if (Number.isFinite(locked) && locked <= now) return true;
+  }
+
+  const started = draft.updated_at || draft.created_at;
+  if (typeof started === 'string' && started) {
+    const t = new Date(started).getTime();
+    if (Number.isFinite(t)) return now - t >= ttlMs;
+  }
+
+  return true;
 }
 
 const ACTIVE_STATES = ['browsing', 'pending_confirmation'];
@@ -784,4 +814,60 @@ export async function getLatestExpiredDraft(businessId, rawPhone, maxAgeMs = 12 
     return null;
   }
   return /** @type {DraftBooking | null} */ (data);
+}
+
+/**
+ * Admin journal: never selects pending_expires_at (column may be missing).
+ * TTL for the UI is hydrated from context / locked_until.
+ *
+ * @param {string} businessId
+ * @param {number} [limit]
+ */
+export async function listRecentDraftsForJournal(businessId, limit = 40) {
+  const cap = Math.min(Math.max(Number(limit) || 40, 1), 100);
+  if (!businessId) return [];
+
+  const { data, error } = await supabase
+    .from('draft_bookings')
+    .select(JOURNAL_COLUMNS)
+    .eq('business_id', businessId)
+    .order('updated_at', { ascending: false })
+    .limit(cap);
+
+  if (!error) {
+    return (data ?? []).map(hydrateJournalDraft);
+  }
+
+  const retry = await supabase
+    .from('draft_bookings')
+    .select('id, phone_number, state, selected_service, selected_slot_start, locked_until, google_event_id, created_at')
+    .eq('business_id', businessId)
+    .order('created_at', { ascending: false })
+    .limit(cap);
+
+  if (retry.error) {
+    await reportQueryFailure({
+      table: 'draft_bookings',
+      error: retry.error,
+      op: 'journal.bookings',
+      businessId,
+      critical: true,
+    });
+    return [];
+  }
+
+  return (retry.data ?? []).map(hydrateJournalDraft);
+}
+
+/**
+ * @param {Record<string, unknown>} row
+ */
+function hydrateJournalDraft(row) {
+  const ctx = row.conversation_context && typeof row.conversation_context === 'object'
+    ? /** @type {Record<string, unknown>} */ (row.conversation_context)
+    : {};
+  const pending =
+    (typeof ctx.pending_expires_at === 'string' && ctx.pending_expires_at)
+    || (typeof row.locked_until === 'string' ? row.locked_until : null);
+  return { ...row, pending_expires_at: pending };
 }

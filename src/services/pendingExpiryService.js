@@ -3,7 +3,9 @@ import {
   listPendingConfirmationDrafts,
   markDraftExpired,
   getLatestExpiredDraft,
+  getActiveDraftBooking,
 } from '../db/draftBookingService.js';
+import { getPendingTtlMinutes } from '../config/conversationConfig.js';
 import {
   CONVERSATION_STEPS,
   setConversationStep,
@@ -152,12 +154,68 @@ export async function expirePendingIfNeeded({
   recipientPhone,
   requestId = null,
 }) {
-  if (!draft || !isPendingConfirmationExpired(draft)) {
+  const ttlMinutes = getPendingTtlMinutes(business);
+  if (!draft || !isPendingConfirmationExpired(draft, ttlMinutes)) {
     return { expired: false, lastIntent: null, draft };
   }
 
   const result = await expirePendingDraft({ business, draft, requestId });
   return { ...result, draft: null, recipientPhone };
+}
+
+/**
+ * Lazy TTL: run on every inbound WhatsApp message, before routing.
+ * Expires a stale pending hold and unsticks CONFIRMING / ASKING_NAME.
+ *
+ * @param {Object} params
+ * @param {Business} params.business
+ * @param {string} params.rawPhone
+ * @param {string | null} [params.requestId]
+ */
+export async function sweepStalePendingForPhone({
+  business,
+  rawPhone,
+  requestId = null,
+}) {
+  const ttlMinutes = getPendingTtlMinutes(business);
+  const ttlMs = ttlMinutes * 60 * 1000;
+
+  let draft = await getActiveDraftBooking(business.id, rawPhone);
+  let expired = false;
+  /** @type {object | null} */
+  let lastIntent = null;
+
+  if (draft?.state === 'pending_confirmation' && isPendingConfirmationExpired(draft, ttlMinutes)) {
+    const result = await expirePendingDraft({ business, draft, requestId });
+    expired = Boolean(result.expired);
+    lastIntent = result.lastIntent;
+    draft = null;
+  }
+
+  let conv = await getOrCreateConversationState(business.id, rawPhone);
+  const pendingStep =
+    conv.current_step === CONVERSATION_STEPS.CONFIRMING
+    || conv.current_step === CONVERSATION_STEPS.ASKING_NAME;
+
+  if (pendingStep) {
+    const convAge = conv.updated_at ? Date.now() - new Date(conv.updated_at).getTime() : 0;
+    const convStale = !Number.isFinite(convAge) || convAge >= ttlMs;
+    const holdGone = expired || !draft || draft.state !== 'pending_confirmation';
+
+    if (holdGone || convStale) {
+      const reconciled = await reconcileConversationAfterPendingGone({
+        business,
+        rawPhone,
+        lastIntentHint: lastIntent,
+        requestId,
+      });
+      conv = reconciled.conv;
+      lastIntent = lastIntent ?? reconciled.lastIntent ?? null;
+      expired = expired || holdGone || convStale;
+    }
+  }
+
+  return { draft, conv, expired, lastIntent };
 }
 
 /**
@@ -219,9 +277,10 @@ export async function reconcileConversationAfterPendingGone({
 export async function expireStalePendingForBusiness(business, requestId = null) {
   if (!business?.id) return 0;
   const pending = await listPendingConfirmationDrafts(business.id);
+  const ttlMinutes = getPendingTtlMinutes(business);
   let count = 0;
   for (const draft of pending) {
-    if (!isPendingConfirmationExpired(draft)) continue;
+    if (!isPendingConfirmationExpired(draft, ttlMinutes)) continue;
     await expirePendingDraft({ business, draft, requestId });
     count += 1;
   }

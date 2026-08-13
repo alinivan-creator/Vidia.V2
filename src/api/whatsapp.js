@@ -6,7 +6,6 @@ import {
 } from '../db/businessService.js';
 import { getActiveDraftBooking } from '../db/draftBookingService.js';
 import {
-  getOrCreateConversationState,
   isBookingFlowStep,
   isModificationFlowStep,
   CONVERSATION_STEPS,
@@ -60,8 +59,7 @@ import {
 import { toE164, toMetaPhone } from '../utils/phone.js';
 import { debugLog } from '../utils/debugLog.js';
 import {
-  expirePendingIfNeeded,
-  reconcileConversationAfterPendingGone,
+  sweepStalePendingForPhone,
   resolveLastBookingIntent,
 } from '../services/pendingExpiryService.js';
 
@@ -228,37 +226,22 @@ async function processTwilioWebhook(body, requestId) {
 
     const { clientId, isNew } = await ensureClient({ business, recipientPhone, requestId });
 
-    // Conversation memory (before AI / menus)
-    let convState = await getOrCreateConversationState(business.id, recipientPhone);
+    // Lazy TTL: expire stale pending / stuck confirm steps before routing.
+    const swept = await sweepStalePendingForPhone({
+      business,
+      rawPhone: recipientPhone,
+      requestId,
+    });
+    let convState = swept.conv;
+    let activeDraft = swept.draft;
+    const expiry = { expired: swept.expired, lastIntent: swept.lastIntent };
+
     console.log('[webhook] Conversation state:', {
       step: convState.current_step,
       contextKeys: Object.keys(convState.context_data ?? {}),
       isNewClient: isNew,
+      pendingSwept: swept.expired,
     });
-
-    let activeDraft = await getActiveDraftBooking(business.id, recipientPhone);
-    const expiry = await expirePendingIfNeeded({
-      business,
-      draft: activeDraft,
-      recipientPhone,
-      requestId,
-    });
-    if (expiry.expired) {
-      activeDraft = null;
-      convState = await getOrCreateConversationState(business.id, recipientPhone);
-    } else if (
-      !activeDraft
-      && (convState.current_step === CONVERSATION_STEPS.CONFIRMING
-        || convState.current_step === CONVERSATION_STEPS.ASKING_NAME)
-    ) {
-      const reconciled = await reconcileConversationAfterPendingGone({
-        business,
-        rawPhone: recipientPhone,
-        lastIntentHint: expiry.lastIntent,
-        requestId,
-      });
-      convState = reconciled.conv;
-    }
 
     const normalized = textBody.toLowerCase().trim();
 

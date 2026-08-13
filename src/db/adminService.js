@@ -3,6 +3,7 @@ import { logError } from './loggerService.js';
 import { getSchemaHealthSnapshot, reportQueryFailure } from './schemaHealth.js';
 import { hydrateBusiness } from './businessService.js';
 import { listServicesForBusiness, replaceServicesForBusiness } from './serviceCatalog.js';
+import { listRecentDraftsForJournal } from './draftBookingService.js';
 
 /** @typedef {import('./businessService.js').Business} Business */
 
@@ -480,7 +481,7 @@ export async function getBusinessJournalAdmin(businessId, opts = {}) {
     return { logs: [], callbacks: [], bookings: [], smsCampaigns: [], sessions: [], schemaAlerts: [], stats: {} };
   }
 
-  const [logs, callbacksRes, bookingsRes, smsRes, unresolvedRes, sessionsRes, schema] = await Promise.all([
+  const [logs, callbacksRes, bookings, smsRes, unresolvedRes, sessionsRes, schema] = await Promise.all([
     getErrorLogsAdmin({ businessId, limit, unresolvedOnly: false }),
     supabase
       .from('callback_requests')
@@ -488,14 +489,7 @@ export async function getBusinessJournalAdmin(businessId, opts = {}) {
       .eq('business_id', businessId)
       .order('created_at', { ascending: false })
       .limit(limit),
-    supabase
-      .from('draft_bookings')
-      .select(
-        'id, phone_number, state, selected_service, selected_slot_start, selected_slot_end, locked_until, pending_expires_at, google_event_id, conversation_context, created_at, updated_at',
-      )
-      .eq('business_id', businessId)
-      .order('updated_at', { ascending: false })
-      .limit(limit),
+    listRecentDraftsForJournal(businessId, limit),
     supabase
       .from('sms_campaigns')
       .select('id, body, status, target_count, sent_count, failed_count, created_at, completed_at')
@@ -527,25 +521,6 @@ export async function getBusinessJournalAdmin(businessId, opts = {}) {
   }
 
   const callbacks = callbacksRes.error ? [] : (callbacksRes.data ?? []);
-  let bookings = bookingsRes.error ? [] : (bookingsRes.data ?? []);
-  if (bookingsRes.error) {
-    const retry = await supabase
-      .from('draft_bookings')
-      .select('id, phone_number, state, selected_service, selected_slot_start, selected_slot_end, locked_until, google_event_id, conversation_context, created_at, updated_at')
-      .eq('business_id', businessId)
-      .order('updated_at', { ascending: false })
-      .limit(limit);
-    bookings = retry.data ?? [];
-    if (retry.error) {
-      void reportQueryFailure({
-        table: 'draft_bookings',
-        error: retry.error,
-        op: 'journal.bookings',
-        businessId,
-        critical: true,
-      });
-    }
-  }
   const smsCampaigns = smsRes.error ? [] : (smsRes.data ?? []);
   const sessions = sessionsRes.error ? [] : (sessionsRes.data ?? []);
 
