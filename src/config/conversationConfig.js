@@ -8,6 +8,8 @@ export const DEFAULT_PENDING_TTL_MINUTES = 5;
  */
 export const DEFAULT_CONVERSATION_LOGIC = `Când clientul cere o zi sau o oră (ex. „luni la 12”, „vineri 10”), tratează mesajul ca programare nouă pe acel interval — nu îi cere să scrie cuvântul „programare” și nu îl trimiți înapoi la meniu.
 
+Dacă are un hold pending (așteaptă confirmarea) și scrie text liber (alt angajat, preț, s-a răzgândit), citește mesajul integral. Nu ignora textul și nu reseta conversația. Răspunde ca un receptionist: schimbă angajatul, răspunde la întrebare sau anulează hold-ul — după intenție.
+
 Dacă are o oră reținută (hold expirat) și spune da / aceeași / reia, vrea să reia confirmarea pe acel slot.
 Dacă cere altă zi/oră, e programare nouă — ignoră hold-ul vechi.
 

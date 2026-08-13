@@ -1,3 +1,8 @@
+/**
+ * Legacy Meta Cloud API webhook — NOT mounted in src/index.js.
+ * Production WhatsApp traffic is handled only by src/api/whatsapp.js (Twilio).
+ * Do not add routing here; it will not run.
+ */
 import { Router } from 'express';
 import crypto from 'node:crypto';
 import { env } from '../config/env.js';

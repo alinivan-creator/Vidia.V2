@@ -447,6 +447,9 @@ export async function sendConfirmationPrompt({ business, recipientPhone, draft, 
     requestId,
   });
   const nameLine = client?.display_name ? `👤 *${client.display_name}*\n` : '';
+  const empId = draftEmployeeId(draft);
+  const employee = empId ? await getEmployeeById(empId, business.id) : null;
+  const empLine = employee ? `💇 cu *${employee.name}*\n` : '';
 
   await simulateHumanDelay({ business, recipientPhone, requestId });
 
@@ -457,6 +460,7 @@ export async function sendConfirmationPrompt({ business, recipientPhone, draft, 
     bodyText:
       `Confirmi programarea?\n\n` +
       nameLine +
+      empLine +
       `📋 *${service.name}*\n` +
       `🕐 ${formatSlotLabel(slotStart, business.timezone)}`,
     buttons: [
@@ -625,13 +629,15 @@ export async function startBookingFlow({
     return;
   }
 
-  await simulateHumanDelay({ business, recipientPhone, requestId });
-  await sendTextMessage({
-    business,
-    recipientPhone,
-    requestId,
-    text: `Perfect! Hai să programăm o vizită la *${business.name}*. 📅`,
-  });
+  if (!hintText.trim()) {
+    await simulateHumanDelay({ business, recipientPhone, requestId });
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: `Hai să programăm o vizită la *${business.name}*. 📅`,
+    });
+  }
 
   const { services } = getBookingConfig(business);
   if (services.length === 1) {
@@ -1186,6 +1192,184 @@ export async function abandonPendingConfirmation({
     recipientPhone,
     requestId,
   });
+}
+
+/**
+ * Client asked for another employee while a pending hold is still live.
+ * Keeps the same slot when that staff member is free; otherwise shows their hours.
+ *
+ * @returns {Promise<boolean>}
+ */
+export async function applyPendingEmployeeChange({
+  business,
+  recipientPhone,
+  draft,
+  textBody = '',
+  requestId = null,
+}) {
+  if (!draft) return false;
+
+  const employees = await listEmployees(business.id, { activeOnly: true });
+  if (!employees.length) {
+    await simulateHumanDelay({ business, recipientPhone, requestId });
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: 'Nu am angajați configurați încă. Programarea rămâne cum e — confirmi?',
+    });
+    return true;
+  }
+
+  const mentioned = matchEmployeeMention(textBody, employees);
+  const service = /** @type {{ name: string; duration_minutes: number } | null} */ (
+    draft.selected_service
+  );
+
+  if (!mentioned) {
+    await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
+      context: {
+        draft_id: draft.id,
+        service,
+        intent: 'book',
+        pending_hold: true,
+      },
+      requestId,
+    });
+    await sendEmployeePicker({
+      business,
+      recipientPhone,
+      employees,
+      requestId,
+    });
+    return true;
+  }
+
+  if (!service) {
+    await setDraftEmployee({
+      draftId: draft.id,
+      businessId: business.id,
+      employeeId: mentioned.id,
+      context: {
+        ...draft.conversation_context,
+        employee_id: mentioned.id,
+        employee_name: mentioned.name,
+      },
+      requestId,
+    });
+    await simulateHumanDelay({ business, recipientPhone, requestId });
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: `Te programez cu *${mentioned.name}*. Alege serviciul:`,
+    });
+    await sendServicePicker({ business, recipientPhone, draft, requestId });
+    return true;
+  }
+
+  const slotStart = draft.selected_slot_start ? new Date(draft.selected_slot_start) : null;
+  const keepSlot =
+    draft.state === 'pending_confirmation'
+    && slotStart
+    && !Number.isNaN(slotStart.getTime());
+
+  if (keepSlot) {
+    const slotId = encodeSlotId(slotStart, business.timezone);
+    const available = await isSlotAvailable({
+      business,
+      slotId,
+      durationMinutes: service.duration_minutes,
+      excludeDraftId: draft.id,
+      employeeId: mentioned.id,
+    });
+
+    if (available) {
+      const withEmp = await setDraftEmployee({
+        draftId: draft.id,
+        businessId: business.id,
+        employeeId: mentioned.id,
+        context: {
+          ...draft.conversation_context,
+          employee_id: mentioned.id,
+          employee_name: mentioned.name,
+        },
+        requestId,
+      });
+      const slotEnd = new Date(slotStart.getTime() + service.duration_minutes * 60_000);
+      const updated = await setSelectedSlot({
+        draftId: draft.id,
+        businessId: business.id,
+        slotStart,
+        slotEnd,
+        ttlMinutes: getPendingTtlMinutes(business),
+        context: {
+          ...(withEmp?.conversation_context ?? draft.conversation_context),
+          step: 'confirm',
+          slot_id: slotId,
+          employee_id: mentioned.id,
+          employee_name: mentioned.name,
+        },
+        requestId,
+      });
+      const nextDraft = updated ?? withEmp ?? { ...draft, employee_id: mentioned.id };
+      await setConversationStep({
+        businessId: business.id,
+        rawPhone: recipientPhone,
+        step: CONVERSATION_STEPS.CONFIRMING,
+        context: {
+          draft_id: draft.id,
+          service,
+          slot_start: slotStart.toISOString(),
+          slot_end: slotEnd.toISOString(),
+          employee_id: mentioned.id,
+          employee_name: mentioned.name,
+          intent: 'book',
+        },
+        requestId,
+      });
+      await simulateHumanDelay({ business, recipientPhone, requestId });
+      await sendTextMessage({
+        business,
+        recipientPhone,
+        requestId,
+        text: `Te programez cu *${mentioned.name}*.`,
+      });
+      await continueAfterSlotSelected({
+        business,
+        recipientPhone,
+        draft: nextDraft,
+        service,
+        slotStart,
+        slotEnd,
+        requestId,
+      });
+      return true;
+    }
+
+    await simulateHumanDelay({ business, recipientPhone, requestId });
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text:
+        `*${mentioned.name}* nu e liber la ora aleasă. Iată orele disponibile:`,
+    });
+  }
+
+  await assignEmployeeAndShowSlots({
+    business,
+    recipientPhone,
+    draft,
+    service,
+    employee: mentioned,
+    hintText: textBody,
+    requestId,
+  });
+  return true;
 }
 
 /**

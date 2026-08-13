@@ -171,17 +171,51 @@ export async function resetConversationState({
   requestId = null,
 }) {
   let lastIntent = null;
+  let recentTurns = null;
   if (keepLastIntent) {
     const existing = await getOrCreateConversationState(businessId, rawPhone);
     lastIntent = existing.context_data?.last_booking_intent ?? null;
+    recentTurns = existing.context_data?.recent_turns ?? null;
   }
 
   return setConversationStep({
     businessId,
     rawPhone,
     step: CONVERSATION_STEPS.IDLE,
-    context: lastIntent ? { last_booking_intent: lastIntent } : {},
+    context: {
+      ...(lastIntent ? { last_booking_intent: lastIntent } : {}),
+      ...(Array.isArray(recentTurns) && recentTurns.length ? { recent_turns: recentTurns } : {}),
+    },
     mergeContext: false,
+    requestId,
+  });
+}
+
+/**
+ * Appends a short turn to conversation memory (last 8 messages).
+ */
+export async function appendRecentTurn({
+  businessId,
+  rawPhone,
+  role = 'user',
+  text,
+  requestId = null,
+}) {
+  const existing = await getOrCreateConversationState(businessId, rawPhone);
+  const prev = Array.isArray(existing.context_data?.recent_turns)
+    ? existing.context_data.recent_turns
+    : [];
+  const recent_turns = [
+    ...prev,
+    { role: role === 'assistant' ? 'assistant' : 'user', text: String(text ?? '').slice(0, 240) },
+  ].slice(-8);
+
+  return setConversationStep({
+    businessId,
+    rawPhone,
+    step: existing.current_step,
+    context: { recent_turns },
+    mergeContext: true,
     requestId,
   });
 }

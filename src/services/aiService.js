@@ -63,8 +63,7 @@ export function buildBusinessHoursContext(business) {
     return (
       '\n\nPROGRAM DE LUCRU: nesetat în Admin.\n' +
       'Dacă clientul întreabă de program/oră de deschidere/închidere, ' +
-      'spune că nu ai programul configurat încă și invită-l să scrie *programare* ' +
-      'sau să folosească meniul Contact. NU inventa ore.'
+      'spune că nu ai programul configurat încă și oferă datele de contact. NU inventa ore.'
     );
   }
 
@@ -144,7 +143,7 @@ function buildTurnContextBlock(turnContext) {
  * Hardcoded routing slogans do not override the Admin prompt.
  *
  * @param {Business} business
- * @param {{ turnContext?: string | null }} [opts]
+ * @param {{ turnContext?: string | null, routerMode?: boolean }} [opts]
  */
 export function buildSystemPrompt(business, opts = {}) {
   const fromAdmin = typeof business.ai_system_prompt === 'string'
@@ -153,7 +152,7 @@ export function buildSystemPrompt(business, opts = {}) {
   const instructions = fromAdmin || DEFAULT_SYSTEM_PROMPT;
   const logic = getConversationLogic(business);
 
-  return (
+  let prompt =
     instructions +
     `\n\nLOGICA DE CONVERSAȚIE (din Admin — respectă cu prioritate față de obiceiurile implicite):\n${logic}` +
     `\n\nNume afacere: ${business.name}` +
@@ -163,8 +162,26 @@ export function buildSystemPrompt(business, opts = {}) {
     buildBusinessHoursContext(business) +
     buildContactContext(business) +
     buildFactsContext(business) +
-    `\n\nPROTOCOL CALLBACK: dacă nu poți răspunde din datele de mai sus, emite exact o linie: ${CALLBACK_SENTINEL}`
-  );
+    `\n\nPROTOCOL CALLBACK: dacă nu poți răspunde din datele de mai sus, emite exact o linie: ${CALLBACK_SENTINEL}`;
+
+  if (opts.routerMode) {
+    prompt +=
+      `\n\nSARCINĂ ROUTER — răspunde DOAR cu JSON valid:\n` +
+      `{"action":"book|resume|faq|cancel|reschedule|callback|chat|confirm|cancel_pending|change_employee","message":"...","same_slot":false}\n` +
+      `- confirm: acceptă hold-ul pending (da / ok / confirmă)\n` +
+      `- cancel_pending: renunță la hold-ul neconfirmat (nu mai vreau, anulează rezervarea în curs)\n` +
+      `- change_employee: vrea alt angajat (ex. „vreau la Andrei”)\n` +
+      `- book: altă zi/oră/serviciu decât hold-ul curent\n` +
+      `- resume: vrea aceeași oră reținută după TTL expirat\n` +
+      `- faq / chat: răspunsul pentru client stă în "message"; dacă există hold, NU îl elibera\n` +
+      `- cancel / reschedule: programare DEJA CONFIRMATĂ (nu hold-ul pending)\n` +
+      `- callback: om din echipă\n` +
+      `- same_slot=true doar dacă vrea explicit slotul reținut\n` +
+      `- Nu inventa ore libere. Nu cere clientului să scrie cuvântul „programare”.\n` +
+      `- Citește mesajul integral + istoricul. Nu ignora textul liber.`;
+  }
+
+  return prompt;
 }
 
 /**
@@ -190,20 +207,13 @@ function factualReply(business, userMessage) {
     if (!hours) {
       const legacy = getBusinessContactInfo(business).hours;
       if (legacy) {
-        return `*Program — ${business.name}*\n\n${legacy}` +
-          (business.business_type === 'booking' ? '\n\nPentru rezervare, scrie *programare*.' : '');
+        return `*Program — ${business.name}*\n\n${legacy}`;
       }
-      return (
-        `Nu am programul de lucru configurat încă pentru *${business.name}*.` +
-        (business.business_type === 'booking'
-          ? '\nPentru o programare, scrie *programare*.'
-          : '\nDacă vrei să te contacteze echipa, scrie *callback*.')
-      );
+      return `Nu am programul de lucru configurat încă pentru *${business.name}*.`;
     }
     return (
       `*Program de lucru — ${business.name}*\n\n` +
-      formatBusinessHoursText(hours).replace(/^- /gm, '• ') +
-      (business.business_type === 'booking' ? '\n\nPentru rezervare, scrie *programare*.' : '')
+      formatBusinessHoursText(hours).replace(/^- /gm, '• ')
     );
   }
 
@@ -230,11 +240,6 @@ function factualReply(business, userMessage) {
     for (const s of services) {
       const price = s.price_ron != null ? `${s.price_ron} LEI` : 'la cerere';
       lines.push(`• *${s.name}* — ${price} · ${s.duration_minutes} min`);
-    }
-    if (business.business_type === 'booking') {
-      lines.push('', 'Pentru programare, scrie *programare*.');
-    } else {
-      lines.push('', 'Pentru o discuție cu echipa, scrie *callback*.');
     }
     return lines.join('\n');
   }
@@ -275,11 +280,7 @@ function mockAiResponse(business, userMessage) {
     return CALLBACK_SENTINEL;
   }
 
-  return (
-    `Bună! Sunt asistentul *${business.name}*.\n\n` +
-    `Pot ajuta cu: *programare*, *reprogramare*, *anulează*, prețuri/program/contact.\n` +
-    `Pentru altceva, scrie *callback* — te contactează echipa.`
-  );
+  return `Bună! Sunt asistentul *${business.name}*. Cu ce te pot ajuta?`;
 }
 
 const OPENAI_TIMEOUT_MS = 8000;
@@ -300,7 +301,14 @@ export function isOpenAiTemporarilyDown() {
  * @param {string | null} [params.requestId]
  * @returns {Promise<AiResponse | null>}
  */
-async function callOpenAi({ business, userMessage, requestId = null, turnContext = null, jsonMode = false }) {
+async function callOpenAi({
+  business,
+  userMessage,
+  requestId = null,
+  turnContext = null,
+  jsonMode = false,
+  history = [],
+}) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return null;
@@ -313,13 +321,24 @@ async function callOpenAi({ business, userMessage, requestId = null, turnContext
   const timer = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
 
   try {
+    const prior = Array.isArray(history)
+      ? history
+          .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && m.text)
+          .slice(-8)
+          .map((m) => ({
+            role: m.role === 'assistant' ? 'assistant' : 'user',
+            content: String(m.text).slice(0, 240),
+          }))
+      : [];
+
     /** @type {Record<string, unknown>} */
     const body = {
       model: business.ai_model || 'gpt-4o-mini',
       temperature: jsonMode ? Math.min(0.2, clampTemperature(business.ai_temperature)) : clampTemperature(business.ai_temperature),
-      max_tokens: jsonMode ? 220 : 280,
+      max_tokens: jsonMode ? 400 : 280,
       messages: [
-        { role: 'system', content: buildSystemPrompt(business, { turnContext }) },
+        { role: 'system', content: buildSystemPrompt(business, { turnContext, routerMode: jsonMode }) },
+        ...prior,
         { role: 'user', content: userMessage },
       ],
     };
@@ -396,17 +415,29 @@ async function callOpenAi({ business, userMessage, requestId = null, turnContext
  * @param {string | null} [params.requestId]
  * @returns {Promise<AiResponse>}
  */
-export async function generateAiReply({ business, userMessage, requestId = null, turnContext = null }) {
+export async function generateAiReply({
+  business,
+  userMessage,
+  requestId = null,
+  turnContext = null,
+  history = [],
+}) {
   const fresh = (await getBusinessById(business.id)) || business;
+
+  const live = await callOpenAi({
+    business: fresh,
+    userMessage,
+    requestId,
+    turnContext,
+    history,
+  });
+  if (live) {
+    return live;
+  }
 
   const factual = factualReply(fresh, userMessage);
   if (factual) {
     return { text: factual, mocked: false, model: 'rules', needsCallback: false };
-  }
-
-  const live = await callOpenAi({ business: fresh, userMessage, requestId, turnContext });
-  if (live) {
-    return live;
   }
 
   const mockedText = mockAiResponse(fresh, userMessage);
@@ -433,9 +464,24 @@ export function buildConversationTurnContext({
   lastIntent = null,
   pendingDismissed = false,
   pendingExpired = false,
+  pendingHold = null,
+  recentTurns = [],
 }) {
   const lines = [`- pas conversație: ${step || 'IDLE'}`];
-  if (pendingDismissed) {
+  if (pendingHold) {
+    lines.push('- HOLD ACTIV (pending_confirmation): NU elibera slotul pentru o întrebare sau o schimbare de preferință');
+    if (pendingHold.serviceName) lines.push(`- serviciu reținut: ${pendingHold.serviceName}`);
+    if (pendingHold.slotLabel) lines.push(`- oră reținută: ${pendingHold.slotLabel}`);
+    if (pendingHold.employeeName) lines.push(`- angajat actual: ${pendingHold.employeeName}`);
+    if (Array.isArray(pendingHold.staffNames) && pendingHold.staffNames.length) {
+      lines.push(`- angajați disponibili: ${pendingHold.staffNames.join(', ')}`);
+    }
+    lines.push('- dacă confirmă hold-ul → action=confirm');
+    lines.push('- dacă renunță la hold → action=cancel_pending');
+    lines.push('- dacă vrea alt angajat → action=change_employee');
+    lines.push('- dacă cere altă zi/oră → action=book');
+    lines.push('- dacă întreabă (preț, program, servicii) → action=faq și PĂSTREAZĂ hold-ul');
+  } else if (pendingDismissed) {
     lines.push('- clientul a anulat explicit hold-ul pending — NU reia slotul vechi');
   } else if (lastIntent?.slot_start) {
     const svc = lastIntent.service?.name ? String(lastIntent.service.name) : 'serviciu';
@@ -446,6 +492,14 @@ export function buildConversationTurnContext({
     lines.push('- dacă vrea aceeași oră → action=resume; dacă cere altă zi/oră → action=book');
   } else {
     lines.push('- nicio oră reținută');
+  }
+  if (Array.isArray(recentTurns) && recentTurns.length) {
+    lines.push('- istoric recent (ultimele mesaje):');
+    for (const turn of recentTurns.slice(-6)) {
+      const role = turn?.role === 'assistant' ? 'asistent' : 'client';
+      const text = String(turn?.text ?? '').slice(0, 160);
+      if (text) lines.push(`  • ${role}: ${text}`);
+    }
   }
   return lines.join('\n');
 }
@@ -465,26 +519,17 @@ export async function interpretUserTurn({
   business,
   userMessage,
   turnContext = '',
+  history = [],
   requestId = null,
 }) {
   const fresh = (await getBusinessById(business.id)) || business;
-  const routerPrompt =
-    `Clasifică mesajul clientului. Răspunde DOAR cu JSON:\n` +
-    `{"action":"book|resume|faq|cancel|reschedule|callback|chat","message":"...","same_slot":false}\n` +
-    `- book: programare nouă sau o zi/oră anume\n` +
-    `- resume: vrea aceeași oră reținută (TTL expirat)\n` +
-    `- faq / chat: răspunsul pentru client stă în "message"\n` +
-    `- cancel / reschedule: programare deja confirmată\n` +
-    `- callback: om din echipă\n` +
-    `- same_slot=true doar dacă vrea explicit slotul reținut\n` +
-    `- Nu inventa ore libere.\n\n` +
-    `Mesaj client: ${userMessage}`;
 
   const live = await callOpenAi({
     business: fresh,
-    userMessage: routerPrompt,
+    userMessage,
     requestId,
     turnContext,
+    history,
     jsonMode: true,
   });
   if (!live?.text) return null;
@@ -493,7 +538,18 @@ export async function interpretUserTurn({
     const raw = live.text.replace(/```json\s*|```/g, '').trim();
     const parsed = JSON.parse(raw);
     const action = String(parsed.action || 'chat').toLowerCase();
-    const allowed = new Set(['book', 'resume', 'faq', 'cancel', 'reschedule', 'callback', 'chat']);
+    const allowed = new Set([
+      'book',
+      'resume',
+      'faq',
+      'cancel',
+      'reschedule',
+      'callback',
+      'chat',
+      'confirm',
+      'cancel_pending',
+      'change_employee',
+    ]);
     return {
       action: allowed.has(action) ? action : 'chat',
       message: typeof parsed.message === 'string' ? parsed.message.trim() : '',

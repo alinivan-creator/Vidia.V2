@@ -170,7 +170,7 @@ export async function handleCallbackRequest({
     text:
       `Am înregistrat cererea ta — un coleg de la *${business.name}* te va contacta în curând.\n\n` +
       (business.business_type === 'booking'
-        ? 'Între timp poți scrie *programare*, *reprogramare* sau *anulează*.'
+        ? 'Între timp poți continua aici — programare, reprogramare sau anulare.'
         : 'Între timp poți scrie *meniu* pentru opțiuni sau *contact* pentru datele noastre.'),
   });
 }
@@ -192,6 +192,7 @@ export async function handleInfoAction({
   clientId = null,
   requestId = null,
   turnContext = null,
+  history = [],
 }) {
   const prompt = userMessage?.trim() || buildInfoButtonPrompt(business);
 
@@ -199,7 +200,13 @@ export async function handleInfoAction({
   await simulateHumanDelay({ business, recipientPhone, requestId, delayMs: 400 });
   await sendTypingIndicator({ business, recipientPhone, requestId });
 
-  const aiReply = await generateAiReply({ business, userMessage: prompt, requestId, turnContext });
+  const aiReply = await generateAiReply({
+    business,
+    userMessage: prompt,
+    requestId,
+    turnContext,
+    history,
+  });
 
   if (aiReply.needsCallback) {
     await handleCallbackRequest({
@@ -265,7 +272,7 @@ export async function handleBrowsingTextMessage({
       business,
       recipientPhone,
       requestId,
-      text: 'Scrie *programare* pentru a începe o rezervare nouă.',
+      text: 'Spune-mi ce ai nevoie — o programare, un preț sau datele de contact.',
     });
     return;
   }
