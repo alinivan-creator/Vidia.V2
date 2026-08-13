@@ -158,6 +158,9 @@ CREATE INDEX IF NOT EXISTS idx_draft_bookings_active
 CREATE INDEX IF NOT EXISTS idx_draft_bookings_expires
   ON public.draft_bookings (expires_at)
   WHERE state IN ('browsing', 'pending_confirmation');
+
+ALTER TABLE public.draft_bookings
+  ADD COLUMN IF NOT EXISTS pending_expires_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_draft_bookings_google_event
   ON public.draft_bookings (business_id, google_event_id)
   WHERE google_event_id IS NOT NULL;
@@ -254,9 +257,10 @@ DECLARE
   affected INTEGER;
 BEGIN
   UPDATE public.draft_bookings
-  SET state = 'expired', locked_until = NULL, updated_at = NOW()
-  WHERE state IN ('browsing', 'pending_confirmation')
-    AND expires_at < NOW();
+  SET state = 'expired', locked_until = NULL, pending_expires_at = NULL, updated_at = NOW()
+  WHERE
+    (state IN ('browsing', 'pending_confirmation') AND expires_at < NOW())
+    OR (state = 'pending_confirmation' AND pending_expires_at IS NOT NULL AND pending_expires_at < NOW());
   GET DIAGNOSTICS affected = ROW_COUNT;
   RETURN affected;
 END;

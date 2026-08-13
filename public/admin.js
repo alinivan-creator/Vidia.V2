@@ -8,20 +8,34 @@ let logsPollInterval = null;
 /** @type {any} */
 let currentJournal = null;
 let currentJournalTab = 'errors';
+let defaultSystemPrompt = '';
+let defaultConversationLogic = '';
+
+async function loadAiDefaults() {
+  try {
+    const data = await api('/ai-defaults');
+    defaultSystemPrompt = typeof data.system_prompt === 'string' ? data.system_prompt : '';
+    defaultConversationLogic = typeof data.conversation_logic === 'string' ? data.conversation_logic : '';
+  } catch {
+    defaultSystemPrompt = '';
+    defaultConversationLogic = '';
+  }
+}
 
 async function api(path, options = {}) {
+  const { optional = false, ...fetchOpts } = options;
   const res = await fetch(`${API}${path}`, {
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    ...options,
+    headers: { 'Content-Type': 'application/json', ...(fetchOpts.headers || {}) },
+    ...fetchOpts,
   });
 
-  if (res.status === 401) {
-    showLogin();
-    throw new Error('Unauthorized');
-  }
-
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    const isLogin = path === '/login' || String(path).endsWith('/login');
+    if (!optional && !isLogin) showLogin();
+    throw new Error(data.error || 'Unauthorized');
+  }
   if (!res.ok) throw new Error(data.error || 'Request failed');
   return data;
 }
@@ -41,7 +55,7 @@ async function checkSession() {
   try {
     await api('/session');
     showDashboard();
-    await loadBusinesses();
+    await Promise.all([loadBusinesses(), loadAiDefaults()]);
     startLogsPoll();
   } catch {
     showLogin();
@@ -56,7 +70,7 @@ $('#login-form').addEventListener('submit', async (e) => {
   try {
     await api('/login', { method: 'POST', body: JSON.stringify({ password }) });
     showDashboard();
-    await loadBusinesses();
+    await Promise.all([loadBusinesses(), loadAiDefaults()]);
     startLogsPoll();
   } catch (err) {
     $('#login-error').textContent = err.message || 'Parolă incorectă';
@@ -224,6 +238,7 @@ const defaultServices = [
 const defaultSettings = {
   slot_interval_minutes: 30,
   booking_horizon_days: 7,
+  pending_ttl_minutes: 5,
   business_hours: {
     '0': null,
     '1': { open: '09:00', close: '18:00' },
@@ -423,7 +438,7 @@ async function loadEmployeesForBusiness(businessId) {
     return;
   }
   try {
-    const data = await api(`/businesses/${businessId}/employees`);
+    const data = await api(`/businesses/${businessId}/employees`, { optional: true });
     renderEmployeesRows(data.employees || []);
   } catch {
     renderEmployeesRows([]);
@@ -445,6 +460,7 @@ async function persistEmployees(businessId) {
 $('#bf-sms-send')?.addEventListener('click', async () => {
   const businessId = $('#bf-id').value;
   const status = $('#bf-sms-status');
+  const btn = $('#bf-sms-send');
   if (!businessId) {
     status.textContent = 'Salvează mai întâi afacerea, apoi trimite campania.';
     return;
@@ -454,15 +470,39 @@ $('#bf-sms-send')?.addEventListener('click', async () => {
     status.textContent = 'Mesajul SMS este prea scurt.';
     return;
   }
+  const phones = ($('#bf-sms-recipients')?.value || '').trim();
   status.textContent = 'Se trimite…';
+  status.classList.remove('text-vidia-red');
+  if (btn) btn.disabled = true;
   try {
     const result = await api(`/businesses/${businessId}/sms-campaigns`, {
       method: 'POST',
-      body: JSON.stringify({ body }),
+      body: JSON.stringify({ body, phones }),
     });
-    status.textContent = `Trimis: ${result.sent}/${result.targetCount} (eșuate: ${result.failed || 0})`;
+    const parts = [];
+    if (result.error && !(result.sent > 0)) parts.push(result.error);
+    parts.push(`Trimise cu succes: ${result.sent ?? 0}/${result.targetCount ?? 0}`);
+    if (result.failed) parts.push(`eșuate: ${result.failed}`);
+    if (result.skipped) parts.push(`sărite (fără opt-in): ${result.skipped}`);
+    if (result.invalid?.length) parts.push(`invalide: ${result.invalid.length}`);
+    if (result.truncated) parts.push('listă trunchiată la 200 numere');
+    let text = parts.join(' · ');
+    const errLines = [];
+    if (result.invalid?.length) {
+      errLines.push(`Invalide: ${result.invalid.slice(0, 8).join(', ')}`);
+    }
+    if (result.errors?.length) {
+      errLines.push(...result.errors.slice(0, 8).map((e) => `${e.phone}: ${e.error}`));
+    }
+    if (errLines.length) text += `\n${errLines.join('\n')}`;
+    status.textContent = text;
+    status.classList.toggle('text-vidia-red', !result.ok && !(result.sent > 0));
+    loadSmsOptInCount(businessId);
   } catch (err) {
     status.textContent = err.message || 'Campanie eșuată';
+    status.classList.add('text-vidia-red');
+  } finally {
+    if (btn) btn.disabled = false;
   }
 });
 
@@ -505,6 +545,7 @@ function openBusinessModal(id = null, opts = {}) {
     $('#bf-slot-interval').value = settings.slot_interval_minutes ?? defaultSettings.slot_interval_minutes;
     $('#bf-horizon-days').value = settings.booking_horizon_days ?? defaultSettings.booking_horizon_days;
     $('#bf-buffer-minutes').value = settings.buffer_minutes ?? 0;
+    $('#bf-pending-ttl') && ($('#bf-pending-ttl').value = settings.pending_ttl_minutes ?? defaultSettings.pending_ttl_minutes);
     const advanced = { ...settings };
     delete advanced.services;
     delete advanced.google;
@@ -520,12 +561,21 @@ function openBusinessModal(id = null, opts = {}) {
     delete advanced.slot_interval_minutes;
     delete advanced.booking_horizon_days;
     delete advanced.buffer_minutes;
+    delete advanced.pending_ttl_minutes;
+    delete advanced.conversation_logic;
     $('#bf-settings').value = Object.keys(advanced).length ? JSON.stringify(advanced, null, 2) : '{}';
     $('#bf-ai-facts').value = typeof settings.ai_facts === 'string' ? settings.ai_facts : '';
+    if ($('#bf-conversation-logic')) {
+      $('#bf-conversation-logic').value =
+        typeof settings.conversation_logic === 'string' && settings.conversation_logic.trim()
+          ? settings.conversation_logic
+          : defaultConversationLogic;
+    }
     renderHoursEditor(settings.business_hours || defaultSettings.business_hours);
     fillContactFields(settings.contact || {});
     renderServicesRows(b.services || settings.services || defaultServices);
     $('#bf-sms-from').value = typeof settings.sms_from_number === 'string' ? settings.sms_from_number : '';
+    $('#bf-sms-recipients').value = '';
     $('#bf-sms-body').value = '';
     $('#bf-sms-status').textContent = '';
     $('#bf-sms-optin-count').textContent = '';
@@ -550,9 +600,12 @@ function openBusinessModal(id = null, opts = {}) {
     $('#bf-twilio-token').value = '';
     $('#bf-ai-model').value = 'gpt-4o-mini';
     $('#bf-ai-temperature').value = '0.3';
+    $('#bf-prompt').value = defaultSystemPrompt;
+    $('#bf-conversation-logic').value = defaultConversationLogic;
     $('#bf-slot-interval').value = String(defaultSettings.slot_interval_minutes);
     $('#bf-horizon-days').value = String(defaultSettings.booking_horizon_days);
     $('#bf-buffer-minutes').value = '0';
+    $('#bf-pending-ttl').value = String(defaultSettings.pending_ttl_minutes);
     $('#bf-settings').value = '{}';
     $('#bf-ai-facts').value = '';
     $('#bf-welcome').value = '';
@@ -560,6 +613,7 @@ function openBusinessModal(id = null, opts = {}) {
     $('#bf-terms-url').value = '';
     $('#bf-gdpr-url').value = '';
     $('#bf-sms-from').value = '';
+    if ($('#bf-sms-recipients')) $('#bf-sms-recipients').value = '';
     $('#bf-sms-body').value = '';
     $('#bf-sms-status').textContent = '';
     $('#bf-sms-optin-count').textContent = '';
@@ -598,7 +652,7 @@ async function loadSmsOptInCount(businessId) {
   const el = $('#bf-sms-optin-count');
   if (!el || !businessId) return;
   try {
-    const data = await api(`/businesses/${businessId}/sms-opted-in`);
+    const data = await api(`/businesses/${businessId}/sms-opted-in`, { optional: true });
     el.textContent = `Clienți cu opt-in SMS: ${data.count ?? (data.clients || []).length}`;
   } catch {
     el.textContent = 'Opt-in SMS: — (migrarea 010?)';
@@ -611,12 +665,14 @@ async function loadBusinessJournal(businessId) {
   if (!businessId || !body) return;
   body.innerHTML = '<p class="text-xs text-slate-500">Se încarcă jurnalul…</p>';
   try {
-    currentJournal = await api(`/businesses/${businessId}/journal?limit=40`);
+    currentJournal = await api(`/businesses/${businessId}/journal?limit=40`, { optional: true });
     const s = currentJournal.stats || {};
     stats.innerHTML = [
       `<span class="px-2 py-1 rounded-full bg-red-50 text-red-700">Erori deschise: ${s.openErrors ?? 0}</span>`,
       `<span class="px-2 py-1 rounded-full bg-blue-50 text-blue-700">Callback pending: ${s.pendingCallbacks ?? 0}</span>`,
       `<span class="px-2 py-1 rounded-full bg-slate-100 text-slate-700">Programări recente: ${s.recentBookings ?? 0}</span>`,
+      `<span class="px-2 py-1 rounded-full bg-amber-50 text-amber-800">Pending TTL: ${s.pendingHolds ?? 0}</span>`,
+      `<span class="px-2 py-1 rounded-full bg-emerald-50 text-emerald-800">Sesiuni active: ${s.liveSessions ?? 0}</span>`,
       `<span class="px-2 py-1 rounded-full bg-slate-100 text-slate-700">Campanii SMS: ${s.smsCampaigns ?? 0}</span>`,
     ].join('');
     renderJournalTab(currentJournalTab);
@@ -633,6 +689,15 @@ function setJournalTabActive(tab) {
       ? 'journal-tab text-xs px-3 py-1.5 rounded-full border border-vidia-red bg-red-50 text-vidia-red'
       : 'journal-tab text-xs px-3 py-1.5 rounded-full border border-vidia-border text-slate-600';
   });
+}
+
+function ttlLine(d) {
+  const exp = d.pending_expires_at || d.locked_until;
+  if (d.state !== 'pending_confirmation' || !exp) return '';
+  const ms = new Date(exp).getTime() - Date.now();
+  if (ms <= 0) return '<p class="text-[10px] text-amber-700 mt-0.5">TTL expirat — se eliberează la următorul mesaj / check disponibilitate</p>';
+  const mins = Math.ceil(ms / 60000);
+  return `<p class="text-[10px] text-amber-700 mt-0.5">TTL: ~${mins} min rămase (până la ${new Date(exp).toLocaleTimeString('ro-RO')})</p>`;
 }
 
 function renderJournalTab(tab) {
@@ -719,7 +784,34 @@ function renderJournalTab(tab) {
             <span class="text-[10px] text-slate-400 ml-auto">${when}</span>
           </div>
           <p class="text-xs font-medium">${esc(svc)}</p>
+          ${ttlLine(d)}
           ${d.google_event_id ? `<p class="text-[10px] text-slate-500 mt-0.5">Google: ${esc(d.google_event_id)}</p>` : ''}
+        </div>`;
+    }).join('');
+    return;
+  }
+
+  if (tab === 'sessions') {
+    const rows = currentJournal.sessions || [];
+    if (!rows.length) {
+      body.innerHTML = '<p class="text-xs text-slate-500">Nicio sesiune WhatsApp înregistrată. TTL-ul de 5 minute rulează autonom.</p>';
+      return;
+    }
+    body.innerHTML = rows.map((s) => {
+      const intent = s.context_data?.last_booking_intent;
+      const label = intent?.slot_label || '';
+      const svc = intent?.service?.name || '';
+      const hold = s.pending_draft;
+      return `
+        <div class="bg-white border border-vidia-border rounded-lg p-2.5">
+          <div class="flex flex-wrap gap-2 items-center mb-1">
+            <span class="text-[10px] px-1.5 py-0.5 rounded ${s.current_step === 'IDLE' ? 'bg-slate-100' : 'bg-emerald-50 text-emerald-800'}">${esc(s.current_step || 'IDLE')}</span>
+            ${hold ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-800">pending 5 min</span>' : ''}
+            <span class="text-[10px] text-slate-500">${esc(s.client_phone || '')}</span>
+            <span class="text-[10px] text-slate-400 ml-auto">${s.updated_at ? new Date(s.updated_at).toLocaleString('ro-RO') : ''}</span>
+          </div>
+          ${label ? `<p class="text-xs">Ultima intenție: ${esc(svc ? `${svc} · ${label}` : label)}</p>` : '<p class="text-[10px] text-slate-500">Fără slot memorat</p>'}
+          ${hold ? ttlLine(hold) : ''}
         </div>`;
     }).join('');
     return;
@@ -760,6 +852,20 @@ $('#bf-type').addEventListener('change', (e) => {
   setPreview(e.target.value === 'consulting' ? 'consulting' : 'booking');
 });
 
+$('#bf-prompt-default')?.addEventListener('click', async () => {
+  if (!defaultSystemPrompt) await loadAiDefaults();
+  if (defaultSystemPrompt) {
+    $('#bf-prompt').value = defaultSystemPrompt;
+  }
+});
+
+$('#bf-logic-default')?.addEventListener('click', async () => {
+  if (!defaultConversationLogic) await loadAiDefaults();
+  if (defaultConversationLogic) {
+    $('#bf-conversation-logic').value = defaultConversationLogic;
+  }
+});
+
 $('#business-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   $('#form-error').classList.add('hidden');
@@ -784,6 +890,8 @@ $('#business-form').addEventListener('submit', async (e) => {
   booking_settings.slot_interval_minutes = Number($('#bf-slot-interval').value) || 30;
   booking_settings.booking_horizon_days = Number($('#bf-horizon-days').value) || 7;
   booking_settings.buffer_minutes = Number($('#bf-buffer-minutes').value) || 0;
+  booking_settings.pending_ttl_minutes = Number($('#bf-pending-ttl')?.value) || 5;
+  booking_settings.conversation_logic = ($('#bf-conversation-logic')?.value || '').trim();
   delete booking_settings.privacy_url;
 
   const payload = {
@@ -798,7 +906,7 @@ $('#business-form').addEventListener('submit', async (e) => {
     google_calendar_id: $('#bf-calendar').value || null,
     google_calendar_mock_mode: $('#bf-g-mock').checked,
     twilio_account_sid: $('#bf-twilio-sid').value || null,
-    ai_system_prompt: $('#bf-prompt').value,
+    ai_system_prompt: ($('#bf-prompt').value || '').trim(),
     ai_model: $('#bf-ai-model').value || 'gpt-4o-mini',
     ai_temperature: Number($('#bf-ai-temperature').value ?? 0.3),
     booking_settings,
@@ -813,9 +921,24 @@ $('#business-form').addEventListener('submit', async (e) => {
 
   try {
     const saved = await api('/businesses', { method: 'POST', body: JSON.stringify(payload) });
-    const businessId = saved?.business?.id || payload.id;
+    const savedBiz = saved?.business;
+    const businessId = savedBiz?.id || payload.id;
+    if (savedBiz?.id) {
+      const idx = businesses.findIndex((b) => b.id === savedBiz.id);
+      if (idx >= 0) businesses[idx] = { ...businesses[idx], ...savedBiz };
+      else businesses.unshift(savedBiz);
+      renderBusinesses();
+    }
     if (businessId) {
-      await persistEmployees(businessId);
+      try {
+        await persistEmployees(businessId);
+      } catch (empErr) {
+        $('#form-error').textContent =
+          'Afacerea s-a salvat. Angajații nu: ' + (empErr.message || 'eroare');
+        $('#form-error').classList.remove('hidden');
+        await loadBusinesses();
+        return;
+      }
     }
     $('#business-modal').classList.add('hidden');
     await loadBusinesses();

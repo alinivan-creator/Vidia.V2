@@ -25,6 +25,76 @@ export function normalizeSmsFromNumber(value) {
   return e164;
 }
 
+const MAX_SMS_RECIPIENTS = 200;
+const SMS_SEND_CONCURRENCY = 4;
+
+/**
+ * Splits a textarea / CSV blob into unique valid E.164 numbers.
+ * Accepts newlines, commas, and semicolons as separators.
+ *
+ * @param {unknown} raw
+ * @returns {{ phones: string[]; invalid: string[] }}
+ */
+export function parseSmsRecipientList(raw) {
+  /** @type {string[]} */
+  const tokens = [];
+
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (typeof item === 'string' && item.trim()) tokens.push(item.trim());
+    }
+  } else if (typeof raw === 'string' && raw.trim()) {
+    for (const part of raw.split(/[\n\r,;]+/)) {
+      const token = part.trim();
+      if (token) tokens.push(token);
+    }
+  }
+
+  const seen = new Set();
+  /** @type {string[]} */
+  const phones = [];
+  /** @type {string[]} */
+  const invalid = [];
+
+  for (const token of tokens) {
+    const e164 = toE164(token);
+    if (!e164 || !/^\+[1-9]\d{7,14}$/.test(e164)) {
+      invalid.push(token);
+      continue;
+    }
+    if (seen.has(e164)) continue;
+    seen.add(e164);
+    phones.push(e164);
+  }
+
+  return { phones, invalid };
+}
+
+/**
+ * @template T, R
+ * @param {T[]} items
+ * @param {number} concurrency
+ * @param {(item: T, index: number) => Promise<R>} worker
+ * @returns {Promise<R[]>}
+ */
+async function runPool(items, concurrency, worker) {
+  /** @type {R[]} */
+  const results = new Array(items.length);
+  let next = 0;
+
+  async function run() {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await worker(items[index], index);
+    }
+  }
+
+  const n = Math.max(1, Math.min(concurrency, items.length || 1));
+  await Promise.all(Array.from({ length: n }, () => run()));
+  return results;
+}
+
 /**
  * Resolve Twilio credentials + SMS from-number for a business.
  * Requires booking_settings.sms_from_number (dedicated SMS number) — never WhatsApp SID.
@@ -193,28 +263,39 @@ export async function setClientSmsOptIn({ businessId, rawPhone, optIn }) {
 }
 
 /**
- * Sends a bulk/targeted SMS campaign to opted-in clients only.
+ * Sends a bulk/targeted SMS campaign.
+ * `phones` (textarea list) takes priority; otherwise opted-in clients (optionally filtered by clientIds).
  *
  * @param {Object} params
  * @param {Business} params.business
  * @param {string} params.body
- * @param {string[] | null} [params.clientIds] — null = all opted-in
+ * @param {string[] | string | null} [params.phones]
+ * @param {string[] | null} [params.clientIds] — used only when phones is empty
  * @param {string} [params.createdBy]
  * @param {string | null} [params.requestId]
  */
 export async function sendSmsCampaign({
   business,
   body,
+  phones = null,
   clientIds = null,
   createdBy = 'admin',
   requestId = null,
 }) {
   const text = String(body ?? '').trim();
   if (text.length < 3) {
-    return { ok: false, error: 'Mesajul SMS este prea scurt', campaignId: null };
+    return {
+      ok: false,
+      error: 'Mesajul SMS este prea scurt',
+      campaignId: null,
+      sent: 0,
+      failed: 0,
+      skipped: 0,
+      invalid: [],
+      errors: [],
+    };
   }
 
-  // Fail fast if From number is missing/invalid — never fall back to WhatsApp SID
   try {
     resolveSmsCredentials(business);
   } catch (error) {
@@ -224,25 +305,66 @@ export async function sendSmsCampaign({
       campaignId: null,
       sent: 0,
       failed: 0,
+      skipped: 0,
+      invalid: [],
+      errors: [],
     };
   }
 
-  let recipients = await listSmsOptedInClients(business.id);
-  if (Array.isArray(clientIds) && clientIds.length) {
-    const allow = new Set(clientIds);
-    recipients = recipients.filter((c) => allow.has(c.id));
-  }
+  const parsed = parseSmsRecipientList(phones);
+  let truncated = false;
+  /** @type {{ id: string | null; phone_number: string; sms_opt_in: boolean }[]} */
+  let recipients = [];
 
-  // Strict opt-in gate before any send
-  recipients = recipients.filter((c) => c.sms_opt_in === true && c.phone_number);
+  if (parsed.phones.length) {
+    let list = parsed.phones;
+    if (list.length > MAX_SMS_RECIPIENTS) {
+      truncated = true;
+      list = list.slice(0, MAX_SMS_RECIPIENTS);
+    }
+
+    const { data: known } = await supabase
+      .from('clients')
+      .select('id, phone_number, sms_opt_in')
+      .eq('business_id', business.id)
+      .in('phone_number', list);
+
+    /** @type {Map<string, { id: string; sms_opt_in: boolean }>} */
+    const byPhone = new Map();
+    for (const row of known ?? []) {
+      const key = toE164(row.phone_number);
+      if (key) byPhone.set(key, { id: row.id, sms_opt_in: row.sms_opt_in === true });
+    }
+
+    recipients = list.map((phone) => {
+      const match = byPhone.get(phone);
+      return {
+        id: match?.id ?? null,
+        phone_number: phone,
+        sms_opt_in: match ? match.sms_opt_in : true,
+      };
+    });
+  } else {
+    let optedIn = await listSmsOptedInClients(business.id);
+    if (Array.isArray(clientIds) && clientIds.length) {
+      const allow = new Set(clientIds);
+      optedIn = optedIn.filter((c) => allow.has(c.id));
+    }
+    recipients = optedIn.filter((c) => c.sms_opt_in === true && c.phone_number);
+  }
 
   if (!recipients.length) {
     return {
       ok: false,
-      error: 'Niciun client cu opt-in SMS validat',
+      error: parsed.invalid.length
+        ? `Niciun număr valid. Invalide: ${parsed.invalid.slice(0, 8).join(', ')}`
+        : 'Niciun destinatar valid (adaugă numere în listă sau clienți cu opt-in SMS)',
       campaignId: null,
       sent: 0,
       failed: 0,
+      skipped: 0,
+      invalid: parsed.invalid,
+      errors: [],
     };
   }
 
@@ -256,7 +378,12 @@ export async function sendSmsCampaign({
         status: 'sending',
         target_count: recipients.length,
         created_by: createdBy,
-        details: { requestId },
+        details: {
+          requestId,
+          invalid: parsed.invalid,
+          truncated,
+          source: parsed.phones.length ? 'manual_list' : 'opt_in',
+        },
       })
       .select('id')
       .single();
@@ -270,61 +397,79 @@ export async function sendSmsCampaign({
 
   let sent = 0;
   let failed = 0;
+  let skipped = 0;
+  /** @type {{ phone: string; error: string }[]} */
+  const errors = [];
 
-  for (const client of recipients) {
-    // Re-check opt-in immediately before each Twilio call
-    if (client.sms_opt_in !== true) {
-      failed += 1;
-      continue;
-    }
+  await runPool(recipients, SMS_SEND_CONCURRENCY, async (client) => {
+    const phone = client.phone_number;
 
-    const { data: live, error: liveErr } = await supabase
-      .from('clients')
-      .select('id, sms_opt_in')
-      .eq('id', client.id)
-      .eq('business_id', business.id)
-      .eq('sms_opt_in', true)
-      .maybeSingle();
-
-    if (liveErr || !live || live.sms_opt_in !== true) {
-      failed += 1;
+    if (client.id && client.sms_opt_in !== true) {
+      skipped += 1;
+      errors.push({ phone, error: 'Fără opt-in SMS' });
       if (campaignId) {
         await supabase.from('sms_campaign_sends').insert({
           campaign_id: campaignId,
           client_id: client.id,
-          phone_number: client.phone_number,
-          status: 'failed',
+          phone_number: phone,
+          status: 'skipped',
           twilio_sid: null,
           error_message: 'opt_in_revoked_or_missing',
         });
       }
-      continue;
+      return;
+    }
+
+    if (client.id) {
+      const { data: live, error: liveErr } = await supabase
+        .from('clients')
+        .select('id, sms_opt_in')
+        .eq('id', client.id)
+        .eq('business_id', business.id)
+        .eq('sms_opt_in', true)
+        .maybeSingle();
+
+      if (liveErr || !live || live.sms_opt_in !== true) {
+        skipped += 1;
+        errors.push({ phone, error: 'Opt-in revocat' });
+        if (campaignId) {
+          await supabase.from('sms_campaign_sends').insert({
+            campaign_id: campaignId,
+            client_id: client.id,
+            phone_number: phone,
+            status: 'skipped',
+            twilio_sid: null,
+            error_message: 'opt_in_revoked_or_missing',
+          });
+        }
+        return;
+      }
     }
 
     const result = await sendSmsMessage({
       business,
-      toPhone: client.phone_number,
+      toPhone: phone,
       body: text,
       requestId,
     });
 
     if (result.ok) sent += 1;
-    else failed += 1;
+    else {
+      failed += 1;
+      errors.push({ phone, error: result.error || 'send_failed' });
+    }
 
     if (campaignId) {
       await supabase.from('sms_campaign_sends').insert({
         campaign_id: campaignId,
         client_id: client.id,
-        phone_number: client.phone_number,
+        phone_number: phone,
         status: result.ok ? 'sent' : 'failed',
         twilio_sid: result.sid,
         error_message: result.ok ? null : (result.error || 'send_failed'),
       });
     }
-
-    // Soft rate-limit to stay under Twilio burst limits
-    await new Promise((r) => setTimeout(r, 80));
-  }
+  });
 
   if (campaignId) {
     await supabase
@@ -344,6 +489,10 @@ export async function sendSmsCampaign({
     targetCount: recipients.length,
     sent,
     failed,
-    error: sent > 0 ? null : 'Toate trimiterile au eșuat',
+    skipped,
+    invalid: parsed.invalid,
+    truncated,
+    errors: errors.slice(0, 25),
+    error: sent > 0 ? null : (errors[0]?.error || 'Toate trimiterile au eșuat'),
   };
 }

@@ -15,6 +15,7 @@ import { toE164 } from '../utils/phone.js';
  * @property {string | null} selected_slot_start
  * @property {string | null} selected_slot_end
  * @property {string | null} locked_until
+ * @property {string | null} [pending_expires_at]
  * @property {string | null} google_event_id
  * @property {string | null} google_event_link
  * @property {string | null} [employee_id]
@@ -22,7 +23,12 @@ import { toE164 } from '../utils/phone.js';
  * @property {string} expires_at
  */
 
+const PENDING_TTL_MS = 5 * 60 * 1000;
+
 const DRAFT_COLUMNS =
+  'id, business_id, client_id, phone_number, state, selected_service, selected_slot_start, selected_slot_end, locked_until, pending_expires_at, google_event_id, google_event_link, employee_id, conversation_context, expires_at';
+
+const DRAFT_COLUMNS_NO_PENDING_EXPIRES =
   'id, business_id, client_id, phone_number, state, selected_service, selected_slot_start, selected_slot_end, locked_until, google_event_id, google_event_link, employee_id, conversation_context, expires_at';
 
 const DRAFT_COLUMNS_LEGACY =
@@ -30,10 +36,45 @@ const DRAFT_COLUMNS_LEGACY =
 
 /** @type {boolean | null} */
 let employeeColumnAvailable = null;
+/** @type {boolean | null} */
+let pendingExpiresColumnAvailable = null;
 
 async function draftSelectColumns() {
   if (employeeColumnAvailable === false) return DRAFT_COLUMNS_LEGACY;
+  if (pendingExpiresColumnAvailable === false) return DRAFT_COLUMNS_NO_PENDING_EXPIRES;
   return DRAFT_COLUMNS;
+}
+
+/**
+ * @returns {string} ISO timestamp now + 5 minutes
+ */
+export function pendingTtlIso(fromMs = Date.now(), ttlMs = PENDING_TTL_MS) {
+  const ms = Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : PENDING_TTL_MS;
+  return new Date(fromMs + ms).toISOString();
+}
+
+/**
+ * @param {DraftBooking | null | undefined} draft
+ * @returns {string | null}
+ */
+export function resolvePendingExpiresAt(draft) {
+  if (!draft) return null;
+  if (typeof draft.pending_expires_at === 'string' && draft.pending_expires_at) {
+    return draft.pending_expires_at;
+  }
+  const ctx = draft.conversation_context?.pending_expires_at;
+  if (typeof ctx === 'string' && ctx) return ctx;
+  return typeof draft.locked_until === 'string' ? draft.locked_until : null;
+}
+
+/**
+ * @param {DraftBooking | null | undefined} draft
+ */
+export function isPendingConfirmationExpired(draft) {
+  if (!draft || draft.state !== 'pending_confirmation') return false;
+  const exp = resolvePendingExpiresAt(draft);
+  if (!exp) return false;
+  return new Date(exp).getTime() <= Date.now();
 }
 
 const ACTIVE_STATES = ['browsing', 'pending_confirmation'];
@@ -56,6 +97,10 @@ export async function getActiveDraftBooking(businessId, rawPhone) {
     .maybeSingle();
 
   if (error) {
+    if (/pending_expires_at/i.test(error.message ?? '')) {
+      pendingExpiresColumnAvailable = false;
+      return getActiveDraftBooking(businessId, rawPhone);
+    }
     if (/employee_id|PGRST204/i.test(error.message ?? '')) {
       employeeColumnAvailable = false;
       const retry = await supabase
@@ -99,6 +144,10 @@ export async function getDraftBookingById(draftId, businessId) {
     .maybeSingle();
 
   if (error) {
+    if (/pending_expires_at/i.test(error.message ?? '')) {
+      pendingExpiresColumnAvailable = false;
+      return getDraftBookingById(draftId, businessId);
+    }
     if (/employee_id|PGRST204/i.test(error.message ?? '')) {
       employeeColumnAvailable = false;
       const retry = await supabase
@@ -305,24 +354,40 @@ export async function setSelectedSlot({
   slotStart,
   slotEnd,
   context,
+  ttlMinutes = 5,
   requestId = null,
 }) {
-  const lockedUntil = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  const minutes = Number.isFinite(Number(ttlMinutes))
+    ? Math.min(60, Math.max(1, Math.round(Number(ttlMinutes))))
+    : 5;
+  const ttl = pendingTtlIso(Date.now(), minutes * 60 * 1000);
+  const mergedContext = { ...context, pending_expires_at: ttl };
 
-  let query = supabase
-    .from('draft_bookings')
-    .update({
-      state: 'pending_confirmation',
-      selected_slot_start: slotStart.toISOString(),
-      selected_slot_end: slotEnd.toISOString(),
-      locked_until: lockedUntil,
-      conversation_context: context,
-      expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    })
-    .eq('id', draftId);
+  /** @type {Record<string, unknown>} */
+  const payload = {
+    state: 'pending_confirmation',
+    selected_slot_start: slotStart.toISOString(),
+    selected_slot_end: slotEnd.toISOString(),
+    locked_until: ttl,
+    conversation_context: mergedContext,
+    expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+  };
+  if (pendingExpiresColumnAvailable !== false) {
+    payload.pending_expires_at = ttl;
+  }
+
+  let query = supabase.from('draft_bookings').update(payload).eq('id', draftId);
   if (businessId) query = query.eq('business_id', businessId);
 
-  const { data, error } = await query.select(await draftSelectColumns()).single();
+  let { data, error } = await query.select(await draftSelectColumns()).single();
+
+  if (error && /pending_expires_at/i.test(error.message ?? '')) {
+    pendingExpiresColumnAvailable = false;
+    const { pending_expires_at: _p, ...without } = payload;
+    let retry = supabase.from('draft_bookings').update(without).eq('id', draftId);
+    if (businessId) retry = retry.eq('business_id', businessId);
+    ({ data, error } = await retry.select(DRAFT_COLUMNS_NO_PENDING_EXPIRES).single());
+  }
 
   if (error) {
     await logError({
@@ -354,20 +419,31 @@ export async function confirmDraftBooking({
   context,
   requestId = null,
 }) {
-  let query = supabase
-    .from('draft_bookings')
-    .update({
-      state: 'confirmed',
-      google_event_id: googleEventId,
-      google_event_link: googleEventLink,
-      locked_until: null,
-      confirmed_at: new Date().toISOString(),
-      conversation_context: context,
-    })
-    .eq('id', draftId);
+  /** @type {Record<string, unknown>} */
+  const updates = {
+    state: 'confirmed',
+    google_event_id: googleEventId,
+    google_event_link: googleEventLink,
+    locked_until: null,
+    confirmed_at: new Date().toISOString(),
+    conversation_context: context,
+  };
+  if (pendingExpiresColumnAvailable !== false) {
+    updates.pending_expires_at = null;
+  }
+
+  let query = supabase.from('draft_bookings').update(updates).eq('id', draftId);
   if (businessId) query = query.eq('business_id', businessId);
 
-  const { data, error } = await query.select(await draftSelectColumns()).single();
+  let { data, error } = await query.select(await draftSelectColumns()).single();
+
+  if (error && /pending_expires_at/i.test(error.message ?? '')) {
+    pendingExpiresColumnAvailable = false;
+    const { pending_expires_at: _p, ...without } = updates;
+    let retry = supabase.from('draft_bookings').update(without).eq('id', draftId);
+    if (businessId) retry = retry.eq('business_id', businessId);
+    ({ data, error } = await retry.select(DRAFT_COLUMNS_NO_PENDING_EXPIRES).single());
+  }
 
   if (error) {
     await logError({
@@ -404,6 +480,9 @@ export async function cancelOrResetDraft({
     cancelled_at: state === 'cancelled' ? new Date().toISOString() : null,
     conversation_context: context,
   };
+  if (pendingExpiresColumnAvailable !== false) {
+    updates.pending_expires_at = null;
+  }
 
   if (state === 'browsing') {
     updates.selected_slot_start = null;
@@ -413,7 +492,15 @@ export async function cancelOrResetDraft({
   let query = supabase.from('draft_bookings').update(updates).eq('id', draftId);
   if (businessId) query = query.eq('business_id', businessId);
 
-  const { data, error } = await query.select(await draftSelectColumns()).single();
+  let { data, error } = await query.select(await draftSelectColumns()).single();
+
+  if (error && /pending_expires_at/i.test(error.message ?? '')) {
+    pendingExpiresColumnAvailable = false;
+    const { pending_expires_at: _p, ...without } = updates;
+    let retry = supabase.from('draft_bookings').update(without).eq('id', draftId);
+    if (businessId) retry = retry.eq('business_id', businessId);
+    ({ data, error } = await retry.select(DRAFT_COLUMNS_NO_PENDING_EXPIRES).single());
+  }
 
   if (error) {
     await logError({
@@ -427,6 +514,71 @@ export async function cancelOrResetDraft({
   }
 
   return /** @type {DraftBooking} */ (data);
+}
+
+/**
+ * Immediately cancels every active draft (browsing / pending_confirmation)
+ * for this phone — used when the client sends "2" / Anulează.
+ * @param {Object} params
+ * @param {string} params.businessId
+ * @param {string} params.rawPhone
+ * @param {Record<string, unknown>} [params.context]
+ * @param {string | null} [params.requestId]
+ * @returns {Promise<DraftBooking[]>}
+ */
+export async function cancelActiveDraftsForPhone({
+  businessId,
+  rawPhone,
+  context = { step: 'cancelled_by_user' },
+  requestId = null,
+}) {
+  const phoneNumber = toE164(rawPhone);
+  if (!businessId || !phoneNumber) return [];
+
+  /** @type {Record<string, unknown>} */
+  const updates = {
+    state: 'cancelled',
+    locked_until: null,
+    cancelled_at: new Date().toISOString(),
+    conversation_context: context,
+  };
+  if (pendingExpiresColumnAvailable !== false) {
+    updates.pending_expires_at = null;
+  }
+
+  let { data, error } = await supabase
+    .from('draft_bookings')
+    .update(updates)
+    .eq('business_id', businessId)
+    .eq('phone_number', phoneNumber)
+    .in('state', ACTIVE_STATES)
+    .select(await draftSelectColumns());
+
+  if (error && /pending_expires_at/i.test(error.message ?? '')) {
+    pendingExpiresColumnAvailable = false;
+    const { pending_expires_at: _p, ...without } = updates;
+    ({ data, error } = await supabase
+      .from('draft_bookings')
+      .update(without)
+      .eq('business_id', businessId)
+      .eq('phone_number', phoneNumber)
+      .in('state', ACTIVE_STATES)
+      .select(DRAFT_COLUMNS_NO_PENDING_EXPIRES));
+  }
+
+  if (error) {
+    await logError({
+      message: 'cancelActiveDraftsForPhone failed',
+      source: 'database',
+      businessId,
+      requestId,
+      phoneNumber,
+      error,
+    });
+    return [];
+  }
+
+  return /** @type {DraftBooking[]} */ (data ?? []);
 }
 
 export async function updateDraftContext({ draftId, context, requestId = null }) {
@@ -529,4 +681,107 @@ export async function updateConfirmedBookingSlot({
   }
 
   return /** @type {DraftBooking} */ (data);
+}
+
+/**
+ * @param {string} businessId
+ * @returns {Promise<DraftBooking[]>}
+ */
+export async function listPendingConfirmationDrafts(businessId) {
+  if (!businessId) return [];
+  const columns = await draftSelectColumns();
+  const { data, error } = await supabase
+    .from('draft_bookings')
+    .select(columns)
+    .eq('business_id', businessId)
+    .eq('state', 'pending_confirmation');
+
+  if (error) {
+    if (/pending_expires_at/i.test(error.message ?? '')) {
+      pendingExpiresColumnAvailable = false;
+      return listPendingConfirmationDrafts(businessId);
+    }
+    return [];
+  }
+  return /** @type {DraftBooking[]} */ (data ?? []);
+}
+
+/**
+ * Marks a pending draft expired and releases the soft lock. Slot times stay for history.
+ * @param {Object} params
+ * @param {string} params.draftId
+ * @param {string} params.businessId
+ * @param {Record<string, unknown>} [params.context]
+ * @param {string | null} [params.requestId]
+ */
+export async function markDraftExpired({
+  draftId,
+  businessId,
+  context = {},
+  requestId = null,
+}) {
+  /** @type {Record<string, unknown>} */
+  const updates = {
+    state: 'expired',
+    locked_until: null,
+    conversation_context: context,
+  };
+  if (pendingExpiresColumnAvailable !== false) {
+    updates.pending_expires_at = null;
+  }
+
+  const { data, error } = await supabase
+    .from('draft_bookings')
+    .update(updates)
+    .eq('id', draftId)
+    .eq('business_id', businessId)
+    .eq('state', 'pending_confirmation')
+    .select(await draftSelectColumns())
+    .maybeSingle();
+
+  if (error) {
+    await logError({
+      message: 'markDraftExpired failed',
+      source: 'database',
+      businessId,
+      requestId,
+      draftBookingId: draftId,
+      error,
+    });
+    return null;
+  }
+
+  return /** @type {DraftBooking | null} */ (data);
+}
+
+/**
+ * Most recent expired hold for this phone — restores last-intent memory
+ * if a DB cron expired the row before the app copied context.
+ * @param {string} businessId
+ * @param {string} rawPhone
+ * @param {number} [maxAgeMs]
+ */
+export async function getLatestExpiredDraft(businessId, rawPhone, maxAgeMs = 12 * 60 * 60 * 1000) {
+  const phoneNumber = toE164(rawPhone);
+  const since = new Date(Date.now() - maxAgeMs).toISOString();
+  const { data, error } = await supabase
+    .from('draft_bookings')
+    .select(await draftSelectColumns())
+    .eq('business_id', businessId)
+    .eq('phone_number', phoneNumber)
+    .eq('state', 'expired')
+    .not('selected_slot_start', 'is', null)
+    .gte('updated_at', since)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    if (/pending_expires_at/i.test(error.message ?? '')) {
+      pendingExpiresColumnAvailable = false;
+      return getLatestExpiredDraft(businessId, rawPhone, maxAgeMs);
+    }
+    return null;
+  }
+  return /** @type {DraftBooking | null} */ (data);
 }

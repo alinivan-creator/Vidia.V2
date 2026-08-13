@@ -4,8 +4,23 @@ import { env } from '../config/env.js';
 export const SESSION_COOKIE = 'vidia_admin_session';
 const SESSION_MAX_AGE_SEC = 12 * 60 * 60;
 
-/** @type {Map<string, number>} */
-const sessions = new Map();
+/**
+ * Signed cookies work across Vercel serverless isolates.
+ * In-memory Maps do not — they caused instant logout on Edit.
+ * @returns {string}
+ */
+function sessionSecret() {
+  return env.adminPassword || 'vidia-admin-dev-secret';
+}
+
+/**
+ * @returns {string} `expiryMs.hmac`
+ */
+function createSessionToken() {
+  const payload = String(Date.now() + SESSION_MAX_AGE_SEC * 1000);
+  const sig = crypto.createHmac('sha256', sessionSecret()).update(payload).digest('hex');
+  return `${payload}.${sig}`;
+}
 
 /**
  * @param {string | undefined} header
@@ -30,13 +45,36 @@ export function getCookie(req, name) {
 }
 
 /**
+ * @param {string | undefined} token
+ */
+function isValidSession(token) {
+  if (!token || typeof token !== 'string') return false;
+  const sep = token.lastIndexOf('.');
+  if (sep < 1) return false;
+  const payload = token.slice(0, sep);
+  const sig = token.slice(sep + 1);
+  if (!/^\d+$/.test(payload) || !/^[a-f0-9]{64}$/i.test(sig)) return false;
+
+  const exp = Number(payload);
+  if (!Number.isFinite(exp) || Date.now() > exp) return false;
+
+  const expected = crypto.createHmac('sha256', sessionSecret()).update(payload).digest('hex');
+  try {
+    const a = Buffer.from(sig.toLowerCase(), 'hex');
+    const b = Buffer.from(expected, 'hex');
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * @param {import('express').Response} res
  */
 export function setAdminSessionCookie(res) {
-  const token = crypto.randomBytes(32).toString('hex');
-  sessions.set(token, Date.now() + SESSION_MAX_AGE_SEC * 1000);
-
-  const secure = env.isProduction ? '; Secure' : '';
+  const token = createSessionToken();
+  const secure = env.isProduction || Boolean(process.env.VERCEL) ? '; Secure' : '';
   res.setHeader(
     'Set-Cookie',
     `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_MAX_AGE_SEC}${secure}`,
@@ -47,7 +85,11 @@ export function setAdminSessionCookie(res) {
  * @param {import('express').Response} res
  */
 export function clearAdminSessionCookie(res) {
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; Path=/; Max-Age=0`);
+  const secure = env.isProduction || Boolean(process.env.VERCEL) ? '; Secure' : '';
+  res.setHeader(
+    'Set-Cookie',
+    `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`,
+  );
 }
 
 /**
@@ -60,19 +102,6 @@ export function verifyAdminPassword(password) {
   const b = Buffer.from(env.adminPassword);
   if (a.length !== b.length) return false;
   return crypto.timingSafeEqual(a, b);
-}
-
-/**
- * @param {string | undefined} token
- */
-function isValidSession(token) {
-  if (!token) return false;
-  const expiresAt = sessions.get(token);
-  if (!expiresAt || Date.now() > expiresAt) {
-    sessions.delete(token ?? '');
-    return false;
-  }
-  return true;
 }
 
 /**

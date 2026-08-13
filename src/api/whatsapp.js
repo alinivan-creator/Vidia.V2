@@ -17,6 +17,9 @@ import { logError } from '../db/loggerService.js';
 import {
   handleBookingInteractiveReply,
   handleClientNameReply,
+  abandonPendingConfirmation,
+  offerResumeOrAlternatives,
+  handleResumeOfferReply,
 } from '../services/bookingFlowService.js';
 import {
   handleGlobalModificationIntent,
@@ -26,6 +29,10 @@ import {
 import {
   triageUserIntent,
   looksLikeOutOfScopeRequest,
+  looksLikeDatetimeOrSlot,
+  isExplicitConfirmReply,
+  isExplicitCancelReply,
+  wantsSameExpiredBooking,
 } from '../services/intentTriageService.js';
 import {
   ensureClient,
@@ -39,15 +46,24 @@ import {
 } from '../services/menuHandler.js';
 import { setClientSmsOptIn } from '../services/smsMarketingService.js';
 import {
+  interpretUserTurn,
+  buildConversationTurnContext,
+} from '../services/aiService.js';
+import {
   getRememberedMenuOptions,
   resolveNumberedChoice,
   rememberInboundMessageSid,
   sendTypingIndicator,
   sendTextMessage,
+  simulateHumanDelay,
 } from '../services/whatsappService.js';
 import { toE164, toMetaPhone } from '../utils/phone.js';
 import { debugLog } from '../utils/debugLog.js';
-import { continueAfterResponse } from '../utils/afterResponse.js';
+import {
+  expirePendingIfNeeded,
+  reconcileConversationAfterPendingGone,
+  resolveLastBookingIntent,
+} from '../services/pendingExpiryService.js';
 
 /**
  * Twilio WhatsApp inbound webhook.
@@ -213,14 +229,37 @@ async function processTwilioWebhook(body, requestId) {
     const { clientId, isNew } = await ensureClient({ business, recipientPhone, requestId });
 
     // Conversation memory (before AI / menus)
-    const convState = await getOrCreateConversationState(business.id, recipientPhone);
+    let convState = await getOrCreateConversationState(business.id, recipientPhone);
     console.log('[webhook] Conversation state:', {
       step: convState.current_step,
       contextKeys: Object.keys(convState.context_data ?? {}),
       isNewClient: isNew,
     });
 
-    const activeDraft = await getActiveDraftBooking(business.id, recipientPhone);
+    let activeDraft = await getActiveDraftBooking(business.id, recipientPhone);
+    const expiry = await expirePendingIfNeeded({
+      business,
+      draft: activeDraft,
+      recipientPhone,
+      requestId,
+    });
+    if (expiry.expired) {
+      activeDraft = null;
+      convState = await getOrCreateConversationState(business.id, recipientPhone);
+    } else if (
+      !activeDraft
+      && (convState.current_step === CONVERSATION_STEPS.CONFIRMING
+        || convState.current_step === CONVERSATION_STEPS.ASKING_NAME)
+    ) {
+      const reconciled = await reconcileConversationAfterPendingGone({
+        business,
+        rawPhone: recipientPhone,
+        lastIntentHint: expiry.lastIntent,
+        requestId,
+      });
+      convState = reconciled.conv;
+    }
+
     const normalized = textBody.toLowerCase().trim();
 
     // Mandatory AI transparency on first contact — welcome_message + AI disclosure
@@ -245,11 +284,67 @@ async function processTwilioWebhook(body, requestId) {
       }
     }
 
+    const pendingDismissed = Boolean(convState.context_data?.pending_dismissed);
+    const lastIntent = pendingDismissed
+      ? null
+      : (
+        convState.context_data?.last_booking_intent
+        ?? expiry.lastIntent
+        ?? (await resolveLastBookingIntent(business, recipientPhone))
+      );
+
+    const isPendingHold =
+      activeDraft?.state === 'pending_confirmation'
+      || convState.current_step === CONVERSATION_STEPS.CONFIRMING
+      || convState.current_step === CONVERSATION_STEPS.ASKING_NAME;
+
+    // "2" / Anulează on a pending hold must wipe the draft before any other routing.
+    if (isPendingHold && isExplicitCancelReply(textBody)) {
+      await handleBookingInteractiveReply({
+        business,
+        recipientPhone,
+        replyId: 'cancel_booking',
+        clientId,
+        requestId,
+      });
+      return;
+    }
+
+    if (convState.current_step === CONVERSATION_STEPS.OFFERING_RESUME && lastIntent) {
+      if (isExplicitConfirmReply(textBody) || isExplicitCancelReply(textBody)) {
+        const handledResume = await handleResumeOfferReply({
+          business,
+          recipientPhone,
+          replyId: isExplicitConfirmReply(textBody) ? 'resume_confirm' : 'resume_other_slots',
+          lastIntent,
+          clientId,
+          requestId,
+        });
+        if (handledResume) return;
+      }
+      const rememberedResume = getRememberedMenuOptions(business.id, recipientPhone);
+      if (rememberedResume?.length) {
+        const choiceId = resolveNumberedChoice(textBody, rememberedResume);
+        if (choiceId) {
+          const handledResume = await handleResumeOfferReply({
+            business,
+            recipientPhone,
+            replyId: choiceId,
+            lastIntent,
+            clientId,
+            requestId,
+          });
+          if (handledResume) return;
+        }
+      }
+    }
+
     // Collect client name before confirm (phone already captured from WhatsApp).
     if (convState.current_step === CONVERSATION_STEPS.ASKING_NAME) {
       const nameNorm = normalized.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
       const wantsAbortName =
-        ['anuleaza', 'anulez', 'nu', 'renunt', 'meniu', 'menu'].some((k) => nameNorm === k || nameNorm.includes(k));
+        isExplicitCancelReply(textBody)
+        || ['renunt', 'meniu', 'menu'].some((k) => nameNorm === k || nameNorm.includes(k));
 
       if (wantsAbortName) {
         await handleBookingInteractiveReply({
@@ -273,6 +368,14 @@ async function processTwilioWebhook(body, requestId) {
         requestId,
       });
       if (handledName) return;
+
+      await abandonPendingConfirmation({
+        business,
+        recipientPhone,
+        draft: activeDraft,
+        requestId,
+      });
+      // fall through — treat the message as a new intent
     }
 
     // Mid modification flow first (confirm/abort cancel, pick reschedule slot)
@@ -302,9 +405,13 @@ async function processTwilioWebhook(body, requestId) {
       if (handled) return;
     }
 
-    // Instant triage BEFORE booking menus / drafts — cancel/reschedule must not open services
+    // Instant triage BEFORE booking menus / drafts — cancel/reschedule must not open services.
+    // Pending "2"/Anulează is handled above and must not start the confirmed-booking cancel flow.
     const triage = triageUserIntent(textBody, { businessType: business.business_type });
-    if (triage.intent === 'cancel' || triage.intent === 'reschedule') {
+    if (
+      !isPendingHold
+      && (triage.intent === 'cancel' || triage.intent === 'reschedule')
+    ) {
       console.log('[webhook] Modification intent', {
         intent: triage.intent,
         reason: triage.reason,
@@ -320,71 +427,27 @@ async function processTwilioWebhook(body, requestId) {
       return;
     }
 
-    // Numbered menu reply → interactive id (booking / entry menus)
-    const remembered = getRememberedMenuOptions(business.id, recipientPhone);
-    if (remembered?.length) {
-      const choiceId = resolveNumberedChoice(textBody, remembered);
-      if (choiceId) {
-        const handledMod = await handleModificationInteractive({
-          business,
-          recipientPhone,
-          replyId: choiceId,
-          convState,
-          requestId,
-        });
-        if (handledMod) return;
-
-        const handledByBooking = await handleBookingInteractiveReply({
-          business,
-          recipientPhone,
-          replyId: choiceId,
-          clientId,
-          requestId,
-        });
-        if (handledByBooking) return;
-
-        await handleMenuButtonPress({
-          business,
-          recipientPhone,
-          buttonId: choiceId,
-          clientId,
-          requestId,
-        });
-        return;
-      }
+    if (
+      lastIntent
+      && !activeDraft
+      && !pendingDismissed
+      && convState.current_step !== CONVERSATION_STEPS.OFFERING_RESUME
+      && wantsSameExpiredBooking(textBody, triage)
+    ) {
+      const offered = await offerResumeOrAlternatives({
+        business,
+        recipientPhone,
+        lastIntent,
+        clientId,
+        requestId,
+      });
+      if (offered) return;
     }
 
-    // Resume booking flow from conversation state or active draft
+    // Pending confirmation: 1/da confirms, 2/nu cancels. Any other free text
+    // abandons the old draft and is routed as a new intent (no nag loop).
     if (activeDraft?.state === 'pending_confirmation' || convState.current_step === CONVERSATION_STEPS.CONFIRMING) {
-      // Escape: leave stuck confirmation and answer normally
-      const escapeNorm = normalized
-        .normalize('NFD')
-        .replace(/[̀-ͯ]/g, '');
-      const wantsEscape = [
-        'meniu', 'menu', 'pret', 'preturi', 'detalii', 'info', 'contact',
-      ].some((k) => escapeNorm.includes(k))
-        || ['salut', 'buna', 'hello', 'hi'].includes(escapeNorm);
-
-      if (wantsEscape || normalized.includes('anuleaz') || normalized === '2' || normalized === 'nu') {
-        await handleBookingInteractiveReply({
-          business,
-          recipientPhone,
-          replyId: 'cancel_booking',
-          clientId,
-          requestId,
-        });
-        // After cancel, if they asked something else, continue routing below
-        if (wantsEscape && !normalized.includes('anuleaz') && normalized !== '2' && normalized !== 'nu') {
-          // fall through — re-fetch as if no draft
-        } else {
-          return;
-        }
-      } else if (
-        normalized === '1'
-        || ['da', 'confirm', 'confirma', 'confirmă', 'ok', 'yes'].some(
-          (k) => normalized === k || normalized.includes(k),
-        )
-      ) {
+      if (isExplicitConfirmReply(textBody)) {
         await handleBookingInteractiveReply({
           business,
           recipientPhone,
@@ -393,43 +456,87 @@ async function processTwilioWebhook(body, requestId) {
           requestId,
         });
         return;
-      } else {
-        // Re-show confirm buttons so numbered 1/2 work again after server restart
-        const { sendConfirmationPrompt } = await import('../services/bookingFlowService.js');
-        await sendTextMessage({
+      }
+
+      if (isExplicitCancelReply(textBody)) {
+        await handleBookingInteractiveReply({
           business,
           recipientPhone,
-          requestId,
-          text:
-            'Ai o programare neterminată de confirmat.\n' +
-            'Răspunde cu *1* (Confirm) sau *2* (Anulează).\n' +
-            'Sau scrie *meniu* / *prețuri* ca să renunți și să continui altceva.',
-        });
-        await sendConfirmationPrompt({
-          business,
-          recipientPhone,
-          draft: activeDraft,
+          replyId: 'cancel_booking',
+          clientId,
           requestId,
         });
         return;
+      }
+
+      await abandonPendingConfirmation({
+        business,
+        recipientPhone,
+        draft: activeDraft,
+        requestId,
+      });
+      // fall through — do not reuse leftover numbered menus from the old confirm prompt
+    } else {
+      // Numbered menu reply → interactive id (booking / entry menus)
+      const remembered = getRememberedMenuOptions(business.id, recipientPhone);
+      if (remembered?.length) {
+        const choiceId = resolveNumberedChoice(textBody, remembered);
+        if (choiceId) {
+          const handledMod = await handleModificationInteractive({
+            business,
+            recipientPhone,
+            replyId: choiceId,
+            convState,
+            requestId,
+          });
+          if (handledMod) return;
+
+          const handledByBooking = await handleBookingInteractiveReply({
+            business,
+            recipientPhone,
+            replyId: choiceId,
+            clientId,
+            requestId,
+          });
+          if (handledByBooking) return;
+
+          await handleMenuButtonPress({
+            business,
+            recipientPhone,
+            buttonId: choiceId,
+            clientId,
+            requestId,
+          });
+          return;
+        }
       }
     }
 
     // If we cancelled a stuck draft for escape, reload draft state
     const draftAfterEscape = await getActiveDraftBooking(business.id, recipientPhone);
+    if (draftAfterEscape?.state === 'pending_confirmation') {
+      await abandonPendingConfirmation({
+        business,
+        recipientPhone,
+        draft: draftAfterEscape,
+        requestId,
+      });
+    }
 
-    if (
-      draftAfterEscape?.state === 'browsing' ||
-      (isBookingFlowStep(convState.current_step) && draftAfterEscape)
-    ) {
-      if (draftAfterEscape?.selected_service && convState.current_step === CONVERSATION_STEPS.CHOOSING_SERVICE) {
+    const liveDraft =
+      draftAfterEscape?.state === 'pending_confirmation'
+        ? await getActiveDraftBooking(business.id, recipientPhone)
+        : draftAfterEscape;
+
+    if (liveDraft?.state === 'browsing') {
+      if (liveDraft.selected_service && convState.current_step === CONVERSATION_STEPS.CHOOSING_SERVICE) {
         await setConversationStep({
           businessId: business.id,
           rawPhone: recipientPhone,
           step: CONVERSATION_STEPS.SELECTING_SLOT,
           context: {
-            draft_id: draftAfterEscape.id,
-            service: draftAfterEscape.selected_service,
+            draft_id: liveDraft.id,
+            service: liveDraft.selected_service,
             intent: 'book',
           },
           requestId,
@@ -446,7 +553,7 @@ async function processTwilioWebhook(body, requestId) {
     }
 
     // Keyword triage for idle conversation (book / FAQ / contact / callback / menu)
-    if (triage.intent === 'book') {
+    if (triage.intent === 'book' || looksLikeDatetimeOrSlot(textBody)) {
       await handleBookingAction({
         business,
         recipientPhone,
@@ -475,6 +582,12 @@ async function processTwilioWebhook(body, requestId) {
         userMessage: textBody,
         clientId,
         requestId,
+        turnContext: buildConversationTurnContext({
+          step: convState.current_step,
+          lastIntent,
+          pendingDismissed,
+          pendingExpired: expiry.expired,
+        }),
       });
       return;
     }
@@ -538,8 +651,79 @@ async function processTwilioWebhook(body, requestId) {
       await resetConversationState({
         businessId: business.id,
         rawPhone: recipientPhone,
+        keepLastIntent: !pendingDismissed,
         requestId,
       });
+    }
+
+    const turnContext = buildConversationTurnContext({
+      step: convState.current_step,
+      lastIntent,
+      pendingDismissed,
+      pendingExpired: expiry.expired,
+    });
+
+    const interpreted = await interpretUserTurn({
+      business,
+      userMessage: textBody,
+      turnContext,
+      requestId,
+    });
+
+    if (interpreted?.action === 'resume' && lastIntent && !pendingDismissed) {
+      const offered = await offerResumeOrAlternatives({
+        business,
+        recipientPhone,
+        lastIntent,
+        clientId,
+        requestId,
+      });
+      if (offered) return;
+    }
+
+    if (interpreted?.action === 'book') {
+      await handleBookingAction({
+        business,
+        recipientPhone,
+        clientId,
+        hintText: textBody,
+        requestId,
+      });
+      return;
+    }
+
+    if (interpreted?.action === 'cancel' || interpreted?.action === 'reschedule') {
+      await handleGlobalModificationIntent({
+        business,
+        recipientPhone,
+        intent: interpreted.action,
+        activeDraft,
+        requestId,
+      });
+      return;
+    }
+
+    if (interpreted?.action === 'callback') {
+      await handleCallbackRequest({
+        business,
+        recipientPhone,
+        userMessage: textBody,
+        reason: 'ai_router_callback',
+        clientId,
+        requestId,
+      });
+      return;
+    }
+
+    if (interpreted?.message && (interpreted.action === 'faq' || interpreted.action === 'chat')) {
+      await simulateHumanDelay({ business, recipientPhone, requestId });
+      await sendTextMessage({
+        business,
+        recipientPhone,
+        requestId,
+        text: interpreted.message,
+      });
+      return;
     }
 
     console.log('[webhook] Routing free-text to AI', {
@@ -552,6 +736,7 @@ async function processTwilioWebhook(body, requestId) {
       userMessage: textBody,
       clientId,
       requestId,
+      turnContext,
     });
   } catch (error) {
     console.error('Eroare detalii:', error);

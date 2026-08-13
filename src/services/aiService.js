@@ -1,8 +1,13 @@
 import { logError } from '../db/loggerService.js';
+import { getBusinessById } from '../db/businessService.js';
 import { getBookingConfig, getConfiguredBusinessHours, formatBusinessHoursText } from '../utils/datetime.js';
 import { getBusinessContactInfo } from './contactService.js';
+import { CALLBACK_SENTINEL, DEFAULT_SYSTEM_PROMPT } from '../config/defaultSystemPrompt.js';
+import { getConversationLogic } from '../config/conversationConfig.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
+
+export { CALLBACK_SENTINEL, DEFAULT_SYSTEM_PROMPT };
 
 /**
  * @typedef {Object} AiResponse
@@ -13,8 +18,15 @@ import { getBusinessContactInfo } from './contactService.js';
  * @property {string} [callbackReason]
  */
 
-/** Sentinel the model must emit alone when the request is out of AI scope. */
-export const CALLBACK_SENTINEL = 'NEED_CALLBACK';
+/**
+ * @param {unknown} value
+ * @returns {number}
+ */
+function clampTemperature(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0.3;
+  return Math.min(2, Math.max(0, n));
+}
 
 /**
  * Builds a services catalog block for the AI system prompt.
@@ -109,54 +121,49 @@ function buildModeContext(business) {
   if (business.business_type === 'consulting') {
     return `
 MOD AFACERE: CONSULTING (fără calendar online).
-- Răspunde la FAQ (servicii, prețuri orientative, contact) pe scurt.
 - Nu oferi sloturi de calendar și nu pretinde că poți programa online.
-- Dacă clientul vrea întâlnire, ofertă personalizată sau să vorbească cu un specialist, răspunde EXACT cu linia: ${CALLBACK_SENTINEL}`;
+- Dacă clientul vrea întâlnire cu un specialist, emite exact: ${CALLBACK_SENTINEL}`;
   }
 
   return `
 MOD AFACERE: BOOKING (programări online).
-- Pentru programare nouă: îndrumă scurt să scrie *programare*.
-- Pentru anulare: îndrumă să scrie *anulează*.
-- Pentru reprogramare: îndrumă să scrie *reprogramare*.
-- Nu inventa disponibilitate — sloturile vin din Google Calendar prin fluxul de programare.`;
+- Nu inventa disponibilitate — orele libere vin din Google Calendar, în backend.
+- Poți recunoaște o cerere de programare din limbaj natural (zi/oră/serviciu).`;
 }
 
-const TRIAGE_AND_STYLE_RULES = `
-STIL & TRIAJ (obligatoriu):
-1. Răspunde politicos, la obiect, în română — maxim 2–4 propoziții scurte.
-2. Recunoaște instant intenția: FAQ (pret/program/contact/servicii) → răspunde din datele de mai jos; programare → *programare*; modificare → *reprogramare* / *anulează*.
-3. Nu folosi formulări vagi tip „te pot ajuta cu orice”. Fii concret.
-4. Nu inventa prețuri, ore, adrese, politici sau disponibilitate.
-5. Dacă cererea depășește atribuțiile tale (reclamatii complexe, facturare, legal, medical, oferte personalizate, negociere, sau orice lipsă din prompt), NU improviza — răspunde EXACT cu o singură linie: ${CALLBACK_SENTINEL}
-6. Nu explica sentinelul către client. Nu adăuga alt text pe aceeași linie cu ${CALLBACK_SENTINEL}.`;
-
-const ANTI_HALLUCINATION_RULES = `
-REGULI OBLIGATORII (anti-halucinație):
-1. Răspunde DOAR cu informații din acest system prompt (catalog, program, contact, facts, promptul afacerii).
-2. Dacă o informație lipsește, spune politicos că nu o ai — sau folosește ${CALLBACK_SENTINEL} dacă e nevoie de un om.
-3. Nu completa din cunoștințe generale despre frizerii/saloane/industrii.
-4. Nu inventa ore de lucru, prețuri, adrese, politici sau disponibilitate.`;
+/**
+ * @param {string | null | undefined} turnContext
+ */
+function buildTurnContextBlock(turnContext) {
+  if (!turnContext || !String(turnContext).trim()) return '';
+  return `\n\nSTARE SESIUNE LIVE (adevăr tehnic — nu o contradicta):\n${String(turnContext).trim()}`;
+}
 
 /**
+ * System prompt = live Admin instructions + conversation logic + catalog/hours/contact.
+ * Hardcoded routing slogans do not override the Admin prompt.
+ *
  * @param {Business} business
- * @returns {string}
+ * @param {{ turnContext?: string | null }} [opts]
  */
-function buildSystemPrompt(business) {
-  const base =
-    business.ai_system_prompt?.trim() ||
-    `Ești asistentul virtual al ${business.name}. Răspunde concis, politicos și util în română.`;
+export function buildSystemPrompt(business, opts = {}) {
+  const fromAdmin = typeof business.ai_system_prompt === 'string'
+    ? business.ai_system_prompt.trim()
+    : '';
+  const instructions = fromAdmin || DEFAULT_SYSTEM_PROMPT;
+  const logic = getConversationLogic(business);
 
   return (
-    base +
+    instructions +
+    `\n\nLOGICA DE CONVERSAȚIE (din Admin — respectă cu prioritate față de obiceiurile implicite):\n${logic}` +
     `\n\nNume afacere: ${business.name}` +
     buildModeContext(business) +
+    buildTurnContextBlock(opts.turnContext) +
     buildServicesCatalog(business) +
     buildBusinessHoursContext(business) +
     buildContactContext(business) +
     buildFactsContext(business) +
-    TRIAGE_AND_STYLE_RULES +
-    ANTI_HALLUCINATION_RULES
+    `\n\nPROTOCOL CALLBACK: dacă nu poți răspunde din datele de mai sus, emite exact o linie: ${CALLBACK_SENTINEL}`
   );
 }
 
@@ -282,28 +289,34 @@ function mockAiResponse(business, userMessage) {
  * @param {string | null} [params.requestId]
  * @returns {Promise<AiResponse | null>}
  */
-async function callOpenAi({ business, userMessage, requestId = null }) {
+async function callOpenAi({ business, userMessage, requestId = null, turnContext = null, jsonMode = false }) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return null;
   }
 
   try {
+    /** @type {Record<string, unknown>} */
+    const body = {
+      model: business.ai_model || 'gpt-4o-mini',
+      temperature: jsonMode ? Math.min(0.2, clampTemperature(business.ai_temperature)) : clampTemperature(business.ai_temperature),
+      max_tokens: jsonMode ? 220 : 280,
+      messages: [
+        { role: 'system', content: buildSystemPrompt(business, { turnContext }) },
+        { role: 'user', content: userMessage },
+      ],
+    };
+    if (jsonMode) {
+      body.response_format = { type: 'json_object' };
+    }
+
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: business.ai_model || 'gpt-4o-mini',
-        temperature: Math.min(Number(business.ai_temperature ?? 0.2), 0.25),
-        max_tokens: 280,
-        messages: [
-          { role: 'system', content: buildSystemPrompt(business) },
-          { role: 'user', content: userMessage },
-        ],
-      }),
+      body: JSON.stringify(body),
     });
 
     const data = await response.json();
@@ -355,18 +368,20 @@ async function callOpenAi({ business, userMessage, requestId = null }) {
  * @param {string | null} [params.requestId]
  * @returns {Promise<AiResponse>}
  */
-export async function generateAiReply({ business, userMessage, requestId = null }) {
-  const factual = factualReply(business, userMessage);
+export async function generateAiReply({ business, userMessage, requestId = null, turnContext = null }) {
+  const fresh = (await getBusinessById(business.id)) || business;
+
+  const factual = factualReply(fresh, userMessage);
   if (factual) {
     return { text: factual, mocked: false, model: 'rules', needsCallback: false };
   }
 
-  const live = await callOpenAi({ business, userMessage, requestId });
+  const live = await callOpenAi({ business: fresh, userMessage, requestId, turnContext });
   if (live) {
     return live;
   }
 
-  const mockedText = mockAiResponse(business, userMessage);
+  const mockedText = mockAiResponse(fresh, userMessage);
   const parsed = parseAiCallbackSignal(mockedText);
   return {
     text: parsed.cleanText || mockedText,
@@ -375,6 +390,90 @@ export async function generateAiReply({ business, userMessage, requestId = null 
     needsCallback: parsed.needsCallback,
     callbackReason: parsed.needsCallback ? 'ai_fallback_out_of_scope' : undefined,
   };
+}
+
+/**
+ * Snapshot of the WhatsApp session for the LLM (memory without locking the calendar).
+ * @param {Object} params
+ * @param {string} [params.step]
+ * @param {object | null} [params.lastIntent]
+ * @param {boolean} [params.pendingDismissed]
+ * @param {boolean} [params.pendingExpired]
+ */
+export function buildConversationTurnContext({
+  step = 'IDLE',
+  lastIntent = null,
+  pendingDismissed = false,
+  pendingExpired = false,
+}) {
+  const lines = [`- pas conversație: ${step || 'IDLE'}`];
+  if (pendingDismissed) {
+    lines.push('- clientul a anulat explicit hold-ul pending — NU reia slotul vechi');
+  } else if (lastIntent?.slot_start) {
+    const svc = lastIntent.service?.name ? String(lastIntent.service.name) : 'serviciu';
+    const label = lastIntent.slot_label ? String(lastIntent.slot_label) : lastIntent.slot_start;
+    lines.push(
+      `- ultima intenție reținută (slot eliberat în calendar${pendingExpired ? ', TTL expirat' : ''}): ${svc} · ${label}`,
+    );
+    lines.push('- dacă vrea aceeași oră → action=resume; dacă cere altă zi/oră → action=book');
+  } else {
+    lines.push('- nicio oră reținută');
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Admin-driven router: decides what the backend should do next.
+ * Calendar writes still happen only in bookingFlowService.
+ *
+ * @param {Object} params
+ * @param {Business} params.business
+ * @param {string} params.userMessage
+ * @param {string} [params.turnContext]
+ * @param {string | null} [params.requestId]
+ * @returns {Promise<{ action: string, message: string, sameSlot: boolean } | null>}
+ */
+export async function interpretUserTurn({
+  business,
+  userMessage,
+  turnContext = '',
+  requestId = null,
+}) {
+  const fresh = (await getBusinessById(business.id)) || business;
+  const routerPrompt =
+    `Clasifică mesajul clientului. Răspunde DOAR cu JSON:\n` +
+    `{"action":"book|resume|faq|cancel|reschedule|callback|chat","message":"...","same_slot":false}\n` +
+    `- book: programare nouă sau o zi/oră anume\n` +
+    `- resume: vrea aceeași oră reținută (TTL expirat)\n` +
+    `- faq / chat: răspunsul pentru client stă în "message"\n` +
+    `- cancel / reschedule: programare deja confirmată\n` +
+    `- callback: om din echipă\n` +
+    `- same_slot=true doar dacă vrea explicit slotul reținut\n` +
+    `- Nu inventa ore libere.\n\n` +
+    `Mesaj client: ${userMessage}`;
+
+  const live = await callOpenAi({
+    business: fresh,
+    userMessage: routerPrompt,
+    requestId,
+    turnContext,
+    jsonMode: true,
+  });
+  if (!live?.text) return null;
+
+  try {
+    const raw = live.text.replace(/```json\s*|```/g, '').trim();
+    const parsed = JSON.parse(raw);
+    const action = String(parsed.action || 'chat').toLowerCase();
+    const allowed = new Set(['book', 'resume', 'faq', 'cancel', 'reschedule', 'callback', 'chat']);
+    return {
+      action: allowed.has(action) ? action : 'chat',
+      message: typeof parsed.message === 'string' ? parsed.message.trim() : '',
+      sameSlot: Boolean(parsed.same_slot),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**

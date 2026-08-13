@@ -32,7 +32,7 @@ export const ROUTE_MAP = [
   { method: 'GET', path: '/calendar/event.ics', description: 'Add-to-calendar .ics download (client phones)' },
   { method: 'GET', path: '/', description: 'Admin dashboard (HTML)' },
   { method: 'POST', path: '/admin/login', description: 'Admin authentication' },
-  { method: 'GET', path: '/admin/businesses', description: 'List businesses (auth required)' },
+  { method: 'GET', path: '/admin/ai-defaults', description: 'Default AI system prompt for Admin' },
   { method: 'POST', path: '/admin/businesses', description: 'Create/update business (auth required)' },
   { method: 'PATCH', path: '/admin/businesses/:id/status', description: 'Suspend / activate business' },
   { method: 'DELETE', path: '/admin/businesses/:id', description: 'Delete business' },

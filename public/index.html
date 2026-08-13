@@ -266,7 +266,7 @@
             <label class="text-sm font-medium">Google Calendar ID (email calendar)</label>
             <input id="bf-calendar" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="salonulmeu@gmail.com" />
           </div>
-          <div class="grid sm:grid-cols-3 gap-3 mt-3">
+          <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
             <div>
               <label class="text-sm font-medium">Interval slot (min)</label>
               <input id="bf-slot-interval" type="number" min="5" max="240" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="30" />
@@ -278,6 +278,11 @@
             <div>
               <label class="text-sm font-medium">Buffer (min)</label>
               <input id="bf-buffer-minutes" type="number" min="0" max="120" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="0" />
+            </div>
+            <div>
+              <label class="text-sm font-medium">TTL pending (min)</label>
+              <input id="bf-pending-ttl" type="number" min="1" max="60" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="5" />
+              <p class="text-[10px] text-slate-500 mt-0.5">Hold-ul se eliberează singur. Implicit 5 min.</p>
             </div>
           </div>
         </div>
@@ -329,11 +334,17 @@
         <div class="border-t border-vidia-border pt-4">
           <h4 class="text-sm font-semibold mb-1">SMS Marketing (Twilio)</h4>
           <p class="text-xs text-slate-500 mb-3">
-            Trimite doar către clienți cu opt-in (`da sms` pe WhatsApp). Necesită număr SMS dedicat (E.164), nu WhatsApp SID.
+            Expeditorul (From) este un singur număr Twilio E.164. Destinatarii se pun în listă — câte un număr pe linie sau separați prin virgulă.
+            Clienții existenți fără opt-in (`da sms`) sunt săriți. Lista goală = toți clienții cu opt-in.
           </p>
           <div class="mb-3">
-            <label class="text-sm font-medium">Număr SMS From (obligatoriu pentru campanii)</label>
+            <label class="text-sm font-medium">Număr SMS From (expeditor Twilio, obligatoriu)</label>
             <input id="bf-sms-from" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="+407xxxxxxxx" />
+          </div>
+          <div class="mb-3">
+            <label class="text-sm font-medium">Destinatari campanie</label>
+            <textarea id="bf-sms-recipients" rows="5" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm font-mono" placeholder="Introdu numerele de telefon pe linii noi sau separate prin virgulă (ex: +407xxxxxxxx, +407yyyyyyyy)"></textarea>
+            <p class="text-xs text-slate-500 mt-1">Introdu numerele de telefon pe linii noi sau separate prin virgulă (ex: +407xxxxxxxx, +407yyyyyyyy).</p>
           </div>
           <div class="flex flex-col sm:flex-row gap-2">
             <textarea id="bf-sms-body" rows="2" class="flex-1 border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="Mesaj campanie SMS…"></textarea>
@@ -341,7 +352,7 @@
               Trimite campanie
             </button>
           </div>
-          <p id="bf-sms-status" class="text-xs text-slate-500 mt-2"></p>
+          <p id="bf-sms-status" class="text-xs text-slate-500 mt-2 whitespace-pre-wrap"></p>
           <p id="bf-sms-optin-count" class="text-xs text-slate-500 mt-1"></p>
         </div>
 
@@ -415,9 +426,32 @@
             <input id="bf-ai-temperature" type="number" min="0" max="1" step="0.05" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="0.3" />
           </div>
         </div>
-        <div>
-          <label class="text-sm font-medium">AI System Prompt</label>
-          <textarea id="bf-prompt" rows="4" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm"></textarea>
+        <div class="border-t border-vidia-border pt-4">
+          <h4 class="text-sm font-semibold mb-1">System Prompt AI</h4>
+          <p class="text-xs text-slate-500 mb-2">
+            Personalitatea asistentului. Se citește din baza de date la fiecare mesaj WhatsApp — nu din cod.
+            Catalogul, programul și contactul se adaugă automat.
+          </p>
+          <textarea id="bf-prompt" rows="8" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm font-mono" placeholder="Ex: Ești asistentul salonului X. Răspunde scurt, în română…"></textarea>
+          <div class="flex items-center justify-between gap-2 mt-1 flex-wrap">
+            <p class="text-xs text-slate-500">Salvează afacerea ca promptul să intre imediat în producție.</p>
+            <button type="button" id="bf-prompt-default" class="text-xs border border-vidia-border px-3 py-1.5 rounded-lg hover:bg-vidia-light whitespace-nowrap">
+              Încarcă prompt implicit
+            </button>
+          </div>
+        </div>
+        <div class="border-t border-vidia-border pt-4">
+          <h4 class="text-sm font-semibold mb-1">Logica de conversație</h4>
+          <p class="text-xs text-slate-500 mb-2">
+            Cum gândește asistentul: când programează, când reia un slot expirat, când răspunde FAQ.
+            Editezi aici — fără să mai atingi codul. Se aplică la următorul mesaj WhatsApp.
+          </p>
+          <textarea id="bf-conversation-logic" rows="8" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm font-mono" placeholder="Ex: Dacă clientul zice o zi și o oră, programează pe acel interval. Nu cere cuvântul programare."></textarea>
+          <div class="flex items-center justify-end gap-2 mt-1">
+            <button type="button" id="bf-logic-default" class="text-xs border border-vidia-border px-3 py-1.5 rounded-lg hover:bg-vidia-light whitespace-nowrap">
+              Încarcă logica implicită
+            </button>
+          </div>
         </div>
         <div>
           <label class="text-sm font-medium">Fapte AI (opțional)</label>
@@ -435,7 +469,7 @@
           <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
             <div>
               <h4 class="text-sm font-semibold">Erori / Activitate / Jurnale</h4>
-              <p class="text-xs text-slate-500">Date din Supabase pentru această afacere — fără acces manual la DB.</p>
+              <p class="text-xs text-slate-500">Date din Supabase. Sloturile pending expiră singure (TTL din Admin) — fără intervenție manuală.</p>
             </div>
             <button type="button" id="bf-journal-refresh" class="text-xs border border-vidia-border px-3 py-1.5 rounded-lg hover:bg-vidia-light">
               Reîmprospătează jurnal
@@ -446,6 +480,7 @@
             <button type="button" data-journal-tab="errors" class="journal-tab text-xs px-3 py-1.5 rounded-full border border-vidia-red bg-red-50 text-vidia-red">Erori</button>
             <button type="button" data-journal-tab="callbacks" class="journal-tab text-xs px-3 py-1.5 rounded-full border border-vidia-border text-slate-600">Callback-uri</button>
             <button type="button" data-journal-tab="bookings" class="journal-tab text-xs px-3 py-1.5 rounded-full border border-vidia-border text-slate-600">Programări</button>
+            <button type="button" data-journal-tab="sessions" class="journal-tab text-xs px-3 py-1.5 rounded-full border border-vidia-border text-slate-600">Sesiuni</button>
             <button type="button" data-journal-tab="sms" class="journal-tab text-xs px-3 py-1.5 rounded-full border border-vidia-border text-slate-600">SMS</button>
           </div>
           <div id="bf-journal-body" class="space-y-2 max-h-72 overflow-y-auto border border-vidia-border rounded-lg p-3 bg-vidia-light/40"></div>

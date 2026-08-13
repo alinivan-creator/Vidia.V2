@@ -63,7 +63,7 @@ export const adminLoginRateLimiter = rateLimit({
 /** Authenticated admin API */
 export const adminApiRateLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: env.isProduction ? 60 : 180,
+  max: env.isProduction ? 180 : 400,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => ipKey(req, 'admin-api'),

@@ -8,6 +8,7 @@ import {
 import { getActiveDraftBooking } from '../db/draftBookingService.js';
 import { logError } from '../db/loggerService.js';
 import { handleBookingInteractiveReply } from '../services/bookingFlowService.js';
+import { expirePendingIfNeeded } from '../services/pendingExpiryService.js';
 import {
   ensureClient,
   handleMenuButtonPress,
@@ -127,6 +128,14 @@ async function handleIncomingMessage({ business, message, requestId }) {
     await sendTypingIndicator({ business, recipientPhone, requestId });
 
     const { clientId } = await ensureClient({ business, recipientPhone, requestId });
+
+    const pendingDraft = await getActiveDraftBooking(business.id, recipientPhone);
+    await expirePendingIfNeeded({
+      business,
+      draft: pendingDraft,
+      recipientPhone,
+      requestId,
+    });
 
     if (messageType === 'interactive') {
       const interactive = /** @type {Record<string, unknown>} */ (message.interactive);

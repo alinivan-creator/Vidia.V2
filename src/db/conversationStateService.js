@@ -3,7 +3,7 @@ import { logError } from './loggerService.js';
 import { toE164 } from '../utils/phone.js';
 
 /**
- * @typedef {'IDLE' | 'CHOOSING_SERVICE' | 'CHOOSING_EMPLOYEE' | 'SELECTING_SLOT' | 'ASKING_NAME' | 'CONFIRMING' | 'MODIFYING' | 'RESCHEDULING' | 'CONFIRMING_CANCEL' | 'MODIFIED'} ConversationStep
+ * @typedef {'IDLE' | 'CHOOSING_SERVICE' | 'CHOOSING_EMPLOYEE' | 'SELECTING_SLOT' | 'ASKING_NAME' | 'CONFIRMING' | 'OFFERING_RESUME' | 'MODIFYING' | 'RESCHEDULING' | 'CONFIRMING_CANCEL' | 'MODIFIED'} ConversationStep
  */
 
 /**
@@ -23,6 +23,7 @@ export const CONVERSATION_STEPS = /** @type {const} */ ({
   SELECTING_SLOT: 'SELECTING_SLOT',
   ASKING_NAME: 'ASKING_NAME',
   CONFIRMING: 'CONFIRMING',
+  OFFERING_RESUME: 'OFFERING_RESUME',
   MODIFYING: 'MODIFYING',
   RESCHEDULING: 'RESCHEDULING',
   CONFIRMING_CANCEL: 'CONFIRMING_CANCEL',
@@ -182,18 +183,30 @@ export async function setConversationStep({
 }
 
 /**
- * Resets conversation to IDLE and clears context.
+ * Resets conversation to IDLE. Preserves last_booking_intent memory by default.
  * @param {Object} params
  * @param {string} params.businessId
  * @param {string} params.rawPhone
+ * @param {boolean} [params.keepLastIntent]
  * @param {string | null} [params.requestId]
  */
-export async function resetConversationState({ businessId, rawPhone, requestId = null }) {
+export async function resetConversationState({
+  businessId,
+  rawPhone,
+  keepLastIntent = true,
+  requestId = null,
+}) {
+  let lastIntent = null;
+  if (keepLastIntent) {
+    const existing = await getOrCreateConversationState(businessId, rawPhone);
+    lastIntent = existing.context_data?.last_booking_intent ?? null;
+  }
+
   return setConversationStep({
     businessId,
     rawPhone,
     step: CONVERSATION_STEPS.IDLE,
-    context: {},
+    context: lastIntent ? { last_booking_intent: lastIntent } : {},
     mergeContext: false,
     requestId,
   });

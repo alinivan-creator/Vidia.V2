@@ -5,13 +5,14 @@ import {
   setSelectedSlot,
   setDraftEmployee,
   confirmDraftBooking,
-  cancelOrResetDraft,
+  cancelActiveDraftsForPhone,
   startBrowsingFlow,
 } from '../db/draftBookingService.js';
 import {
   CONVERSATION_STEPS,
   setConversationStep,
   resetConversationState,
+  getOrCreateConversationState,
 } from '../db/conversationStateService.js';
 import { logError } from '../db/loggerService.js';
 import {
@@ -25,7 +26,10 @@ import {
   matchEmployeeMention,
   resolveEmployeeCalendarId,
 } from '../db/employeeService.js';
-import { getBookingConfig, formatSlotLabel, encodeSlotId, localToUtc, formatDateKey, slotNumberEmoji } from '../utils/datetime.js';
+import { getBookingConfig, formatSlotLabel, encodeSlotId, localToUtc, formatDateKey, slotNumberEmoji, getWeekdayInTimezone } from '../utils/datetime.js';
+import { expirePendingIfNeeded, resolveLastBookingIntent } from './pendingExpiryService.js';
+import { getPendingTtlMinutes } from '../config/conversationConfig.js';
+import { triageUserIntent, looksLikeDatetimeOrSlot } from './intentTriageService.js';
 import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
 import {
   buildBookingConfirmationMessage,
@@ -45,6 +49,7 @@ import {
   sendInteractiveButtons,
   simulateHumanDelay,
   rememberMenuOptions,
+  clearRememberedMenuOptions,
 } from './whatsappService.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
@@ -54,6 +59,8 @@ const PREFIX = {
   EMPLOYEE: 'emp_',
   CONFIRM: 'confirm_booking',
   CANCEL: 'cancel_booking',
+  RESUME_YES: 'resume_confirm',
+  RESUME_NO: 'resume_other_slots',
   RESCHEDULE: 'reschedule_booking',
   ANY_EMPLOYEE: 'emp_any',
 };
@@ -255,6 +262,16 @@ async function continueAfterServiceSelected({
       context: { draft_id: draft.id, service, intent: 'book' },
       requestId,
     });
+    if (hintText && looksLikeDatetimeOrSlot(hintText)) {
+      const handled = await handleFreeTextSlotRequest({
+        business,
+        recipientPhone,
+        draft,
+        textBody: hintText,
+        requestId,
+      });
+      if (handled) return;
+    }
     await sendSlotPicker({ business, recipientPhone, draft, requestId });
     return;
   }
@@ -284,6 +301,7 @@ async function continueAfterServiceSelected({
       draft,
       service,
       employee: chosen,
+      hintText,
       requestId,
     });
     return;
@@ -320,6 +338,7 @@ async function assignEmployeeAndShowSlots({
   draft,
   service,
   employee,
+  hintText = '',
   requestId = null,
 }) {
   const updated = await setDraftEmployee({
@@ -358,6 +377,16 @@ async function assignEmployeeAndShowSlots({
     requestId,
     text: `Te programez cu *${employee.name}*.`,
   });
+  if (hintText && looksLikeDatetimeOrSlot(hintText)) {
+    const handled = await handleFreeTextSlotRequest({
+      business,
+      recipientPhone,
+      draft: nextDraft,
+      textBody: hintText,
+      requestId,
+    });
+    if (handled) return;
+  }
   await sendSlotPicker({ business, recipientPhone, draft: nextDraft, requestId });
 }
 
@@ -519,6 +548,10 @@ export async function handleClientNameReply({
 
   const name = parseClientNameReply(textBody);
   if (!name) {
+    const triage = triageUserIntent(textBody, { businessType: business.business_type });
+    if (triage.intent !== 'unknown' || looksLikeDatetimeOrSlot(textBody)) {
+      return false;
+    }
     await simulateHumanDelay({ business, recipientPhone, requestId });
     await sendTextMessage({
       business,
@@ -600,11 +633,39 @@ export async function startBookingFlow({
     text: `Perfect! Hai să programăm o vizită la *${business.name}*. 📅`,
   });
 
+  const { services } = getBookingConfig(business);
+  if (services.length === 1) {
+    const service = services[0];
+    const updated = await setSelectedService({
+      draftId: draft.id,
+      businessId: business.id,
+      service,
+      context: {
+        ...draft.conversation_context,
+        step: 'select_slot',
+        service_id: service.id,
+        booking_hint: hintText || '',
+      },
+      requestId,
+    });
+    if (updated) {
+      await continueAfterServiceSelected({
+        business,
+        recipientPhone,
+        draft: updated,
+        service,
+        hintText,
+        requestId,
+      });
+      return;
+    }
+  }
+
   await setConversationStep({
     businessId: business.id,
     rawPhone: recipientPhone,
     step: CONVERSATION_STEPS.CHOOSING_SERVICE,
-    context: { draft_id: draft.id, intent: 'book' },
+    context: { draft_id: draft.id, intent: 'book', booking_hint: hintText || '' },
     mergeContext: false,
     requestId,
   });
@@ -623,15 +684,72 @@ export async function handleBookingInteractiveReply({
   clientId,
   requestId = null,
 }) {
-  const draft = await getActiveDraftBooking(business.id, recipientPhone);
+  if (replyId === PREFIX.CANCEL) {
+    await clearPendingBookingSession({
+      business,
+      recipientPhone,
+      requestId,
+    });
+    await simulateHumanDelay({ business, recipientPhone, requestId });
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: 'Programarea a fost anulată. Dacă dorești, poți începe o programare nouă oricând.',
+    });
+    return true;
+  }
 
-  if (replyId === PREFIX.CONFIRM || replyId === PREFIX.CANCEL) {
-    if (!draft) return false;
-    if (replyId === PREFIX.CONFIRM) {
-      await handleConfirmBooking({ business, recipientPhone, draft, requestId });
-    } else {
-      await handleCancelBooking({ business, recipientPhone, draft, requestId });
+  let draft = await getActiveDraftBooking(business.id, recipientPhone);
+  const expiry = await expirePendingIfNeeded({
+    business,
+    draft,
+    recipientPhone,
+    requestId,
+  });
+  if (expiry.expired) draft = null;
+
+  if (replyId === PREFIX.RESUME_YES || replyId === PREFIX.RESUME_NO) {
+    const conv = await getOrCreateConversationState(business.id, recipientPhone);
+    const lastIntent =
+      conv.context_data?.last_booking_intent
+      ?? expiry.lastIntent
+      ?? (await resolveLastBookingIntent(business, recipientPhone));
+    if (!lastIntent) return false;
+    return handleResumeOfferReply({
+      business,
+      recipientPhone,
+      replyId,
+      lastIntent,
+      clientId,
+      requestId,
+    });
+  }
+
+  if (replyId === PREFIX.CONFIRM) {
+    if (!draft) {
+      const lastIntent =
+        expiry.lastIntent ?? (await resolveLastBookingIntent(business, recipientPhone));
+      if (lastIntent) {
+        await sendTextMessage({
+          business,
+          recipientPhone,
+          requestId,
+          text:
+            'Timpul de rezervare a expirat și slotul a fost eliberat.\n' +
+            'Verific dacă mai este liber…',
+        });
+        return offerResumeOrAlternatives({
+          business,
+          recipientPhone,
+          lastIntent,
+          clientId,
+          requestId,
+        });
+      }
+      return false;
     }
+    await handleConfirmBooking({ business, recipientPhone, draft, requestId });
     return true;
   }
 
@@ -727,6 +845,10 @@ export async function handleBookingInteractiveReply({
       draft,
       service,
       employee,
+      hintText:
+        typeof draft.conversation_context?.booking_hint === 'string'
+          ? draft.conversation_context.booking_hint
+          : '',
       requestId,
     });
     return true;
@@ -778,6 +900,7 @@ export async function handleBookingInteractiveReply({
       businessId: business.id,
       slotStart,
       slotEnd,
+      ttlMinutes: getPendingTtlMinutes(business),
       context: { ...draft.conversation_context, step: 'confirm', slot_id: replyId },
       requestId,
     });
@@ -800,6 +923,33 @@ export async function handleBookingInteractiveReply({
 }
 
 async function handleConfirmBooking({ business, recipientPhone, draft, requestId }) {
+  const expiry = await expirePendingIfNeeded({
+    business,
+    draft,
+    recipientPhone,
+    requestId,
+  });
+  if (expiry.expired) {
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text:
+        'Timpul de rezervare a expirat și slotul a fost eliberat.\n' +
+        'Verific dacă mai este liber…',
+    });
+    if (expiry.lastIntent) {
+      await offerResumeOrAlternatives({
+        business,
+        recipientPhone,
+        lastIntent: expiry.lastIntent,
+        clientId: draft.client_id,
+        requestId,
+      });
+    }
+    return;
+  }
+
   if (draft.state !== 'pending_confirmation') {
     await sendTextMessage({
       business,
@@ -953,70 +1103,330 @@ async function handleConfirmBooking({ business, recipientPhone, draft, requestId
   }
 }
 
-async function handleCancelBooking({ business, recipientPhone, draft, requestId }) {
-  const empId = draftEmployeeId(draft);
-  const employee = empId ? await getEmployeeById(empId, business.id) : null;
-  const calendarId = resolveEmployeeCalendarId(business, employee);
+/**
+ * Immediately drops pending/browsing holds for this phone: DB state, slot lock,
+ * conversation memory, and numbered confirm menus. Does not touch confirmed bookings.
+ *
+ * @param {Object} params
+ * @param {Business} params.business
+ * @param {string} params.recipientPhone
+ * @param {string | null} [params.requestId]
+ */
+export async function clearPendingBookingSession({
+  business,
+  recipientPhone,
+  requestId = null,
+}) {
+  const active = await getActiveDraftBooking(business.id, recipientPhone);
 
-  const eventId = await resolveCalendarEventId({
-    business,
-    eventId: draft.google_event_id,
-    phoneNumber: draft.phone_number || recipientPhone,
-    startIso: draft.selected_slot_start,
-    endIso: draft.selected_slot_end,
-    calendarId,
-    requestId,
-  });
-
-  if (!isBusinessMockMode(business) && draft.state === 'confirmed') {
-    if (!eventId) {
-      await simulateHumanDelay({ business, recipientPhone, requestId });
-      await sendTextMessage({
+  if (active && ['browsing', 'pending_confirmation'].includes(active.state)) {
+    try {
+      const empId = draftEmployeeId(active);
+      const employee = empId ? await getEmployeeById(empId, business.id) : null;
+      const calendarId = resolveEmployeeCalendarId(business, employee);
+      const eventId = await resolveCalendarEventId({
         business,
-        recipientPhone,
+        eventId: active.google_event_id,
+        phoneNumber: active.phone_number || recipientPhone,
+        startIso: active.selected_slot_start,
+        endIso: active.selected_slot_end,
+        calendarId,
         requestId,
-        text:
-          'Nu am putut găsi evenimentul în Google Calendar, deci *nu am anulat* programarea.',
       });
-      return;
+      if (eventId) {
+        await deleteCalendarEvent({ business, eventId, calendarId, requestId });
+      }
+    } catch (error) {
+      console.warn('[booking] clearPendingBookingSession calendar cleanup', error);
     }
-    const del = await deleteCalendarEvent({ business, eventId, calendarId, requestId });
-    if (!del?.ok) {
-      await simulateHumanDelay({ business, recipientPhone, requestId });
-      await sendTextMessage({
-        business,
-        recipientPhone,
-        requestId,
-        text:
-          'Nu am putut șterge evenimentul din Google Calendar, deci *nu am anulat* programarea.',
-      });
-      return;
-    }
-  } else if (eventId) {
-    await deleteCalendarEvent({ business, eventId, calendarId, requestId });
   }
 
-  await cancelOrResetDraft({
-    draftId: draft.id,
-    businessId: business.id,
-    state: 'cancelled',
-    context: { ...draft.conversation_context, step: 'cancelled' },
-    requestId,
-  });
-
-  await resetConversationState({
+  await cancelActiveDraftsForPhone({
     businessId: business.id,
     rawPhone: recipientPhone,
+    context: {
+      ...(active?.conversation_context ?? {}),
+      step: 'cancelled_by_user',
+      last_booking_intent: null,
+    },
     requestId,
   });
 
+  clearRememberedMenuOptions(business.id, recipientPhone);
+
+  await setConversationStep({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    step: CONVERSATION_STEPS.IDLE,
+    context: { pending_dismissed: true },
+    mergeContext: false,
+    requestId,
+  });
+}
+
+/**
+ * Drops a stuck pending confirmation without nagging the client,
+ * so a new intent (another day, menu, FAQ) can be handled immediately.
+ *
+ * @param {Object} params
+ * @param {Business} params.business
+ * @param {string} params.recipientPhone
+ * @param {import('../db/draftBookingService.js').DraftBooking | null} [params.draft]
+ * @param {string | null} [params.requestId]
+ */
+export async function abandonPendingConfirmation({
+  business,
+  recipientPhone,
+  draft = null,
+  requestId = null,
+}) {
+  void draft;
+  await clearPendingBookingSession({
+    business,
+    recipientPhone,
+    requestId,
+  });
+}
+
+/**
+ * After TTL expiry: if the remembered slot is free, ask to resume confirmation;
+ * otherwise show the next available slots.
+ *
+ * @returns {Promise<boolean>}
+ */
+export async function offerResumeOrAlternatives({
+  business,
+  recipientPhone,
+  lastIntent,
+  clientId = null,
+  requestId = null,
+}) {
+  const service = lastIntent?.service;
+  const slotStart = lastIntent?.slot_start;
+  if (!service || !slotStart) return false;
+
+  const empId = typeof lastIntent.employee_id === 'string' ? lastIntent.employee_id : null;
+  const startDate = new Date(slotStart);
+  const slotId = encodeSlotId(startDate, business.timezone);
+  const duration = Number(service.duration_minutes) || 30;
+  const free = await isSlotAvailable({
+    business,
+    slotId,
+    durationMinutes: duration,
+    employeeId: empId,
+  });
+  const label = lastIntent.slot_label || formatSlotLabel(startDate, business.timezone);
+
+  if (free) {
+    await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: CONVERSATION_STEPS.OFFERING_RESUME,
+      context: { last_booking_intent: lastIntent },
+      mergeContext: false,
+      requestId,
+    });
+    await simulateHumanDelay({ business, recipientPhone, requestId });
+    await sendInteractiveButtons({
+      business,
+      recipientPhone,
+      requestId,
+      bodyText:
+        `Slotul *${label}* (${service.name}) este încă liber.\n` +
+        `Vrei să reiei confirmarea?`,
+      buttons: [
+        { id: PREFIX.RESUME_YES, title: '✅ Da, reia' },
+        { id: PREFIX.RESUME_NO, title: '📅 Alte ore' },
+      ],
+    });
+    return true;
+  }
+
+  await setConversationStep({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    step: CONVERSATION_STEPS.IDLE,
+    context: { last_booking_intent: lastIntent },
+    mergeContext: false,
+    requestId,
+  });
   await simulateHumanDelay({ business, recipientPhone, requestId });
   await sendTextMessage({
     business,
     recipientPhone,
     requestId,
-    text: 'Programarea a fost anulată. Dacă dorești, poți începe o programare nouă oricând.',
+    text:
+      `Intervalul *${label}* nu mai este disponibil — a fost rezervat între timp.\n` +
+      `Îți arăt următoarele ore libere:`,
   });
+  await resumeWithAlternativeSlots({
+    business,
+    recipientPhone,
+    lastIntent,
+    clientId,
+    requestId,
+  });
+  return true;
+}
+
+/**
+ * @returns {Promise<void>}
+ */
+async function resumeWithAlternativeSlots({
+  business,
+  recipientPhone,
+  lastIntent,
+  clientId = null,
+  requestId = null,
+}) {
+  const service = lastIntent?.service;
+  const draft = await startBrowsingFlow({
+    businessId: business.id,
+    clientId,
+    rawPhone: recipientPhone,
+    context: { step: 'select_slot', resumed_after_ttl: true },
+    requestId,
+  });
+  if (!draft || !service) return;
+
+  const updated = await setSelectedService({
+    draftId: draft.id,
+    businessId: business.id,
+    service,
+    context: { ...draft.conversation_context, step: 'select_slot', service_id: service.id },
+    requestId,
+  });
+  if (updated) {
+    await sendSlotPicker({
+      business,
+      recipientPhone,
+      draft: updated,
+      requestId,
+    });
+  }
+}
+
+/**
+ * Re-locks the remembered slot for 5 minutes and shows the confirmation prompt.
+ * @returns {Promise<boolean>}
+ */
+export async function relockRememberedSlot({
+  business,
+  recipientPhone,
+  lastIntent,
+  clientId = null,
+  requestId = null,
+}) {
+  const service = lastIntent?.service;
+  const slotStart = lastIntent?.slot_start;
+  if (!service || !slotStart) return false;
+
+  const empId = typeof lastIntent.employee_id === 'string' ? lastIntent.employee_id : null;
+  const startDate = new Date(slotStart);
+  const endDate = lastIntent.slot_end
+    ? new Date(lastIntent.slot_end)
+    : new Date(startDate.getTime() + (Number(service.duration_minutes) || 30) * 60_000);
+  const slotId = encodeSlotId(startDate, business.timezone);
+  const free = await isSlotAvailable({
+    business,
+    slotId,
+    durationMinutes: Number(service.duration_minutes) || 30,
+    employeeId: empId,
+  });
+
+  if (!free) {
+    await offerResumeOrAlternatives({
+      business,
+      recipientPhone,
+      lastIntent,
+      clientId,
+      requestId,
+    });
+    return true;
+  }
+
+  let draft = await startBrowsingFlow({
+    businessId: business.id,
+    clientId,
+    rawPhone: recipientPhone,
+    context: { step: 'confirm', resumed_after_ttl: true },
+    requestId,
+  });
+  if (!draft) return false;
+
+  draft = await setSelectedService({
+    draftId: draft.id,
+    businessId: business.id,
+    service,
+    context: { ...draft.conversation_context, service_id: service.id },
+    requestId,
+  });
+  if (!draft) return false;
+
+  if (empId) {
+    await setDraftEmployee({
+      draftId: draft.id,
+      businessId: business.id,
+      employeeId: empId,
+      requestId,
+    });
+  }
+
+  const locked = await setSelectedSlot({
+    draftId: draft.id,
+    businessId: business.id,
+    slotStart: startDate,
+    slotEnd: endDate,
+    ttlMinutes: getPendingTtlMinutes(business),
+    context: { ...draft.conversation_context, step: 'confirm', resumed_after_ttl: true },
+    requestId,
+  });
+  if (!locked) return false;
+
+  await continueAfterSlotSelected({
+    business,
+    recipientPhone,
+    draft: locked,
+    service,
+    slotStart: startDate,
+    slotEnd: endDate,
+    requestId,
+  });
+  return true;
+}
+
+/**
+ * Handles 1/2 (or buttons) on the post-TTL resume prompt.
+ * @returns {Promise<boolean>}
+ */
+export async function handleResumeOfferReply({
+  business,
+  recipientPhone,
+  replyId,
+  lastIntent,
+  clientId = null,
+  requestId = null,
+}) {
+  if (replyId === PREFIX.RESUME_YES || replyId === PREFIX.CONFIRM) {
+    return relockRememberedSlot({
+      business,
+      recipientPhone,
+      lastIntent,
+      clientId,
+      requestId,
+    });
+  }
+  if (replyId === PREFIX.RESUME_NO || replyId === PREFIX.CANCEL) {
+    await resumeWithAlternativeSlots({
+      business,
+      recipientPhone,
+      lastIntent,
+      clientId,
+      requestId,
+    });
+    return true;
+  }
+  return false;
 }
 
 export { PREFIX as BOOKING_PREFIXES };
@@ -1079,6 +1489,7 @@ export async function handleFreeTextSlotRequest({
     businessId: business.id,
     slotStart: parsed,
     slotEnd,
+    ttlMinutes: getPendingTtlMinutes(business),
     context: { ...draft.conversation_context, step: 'confirm', slot_id: slotId, free_text: textBody },
     requestId,
   });
@@ -1120,16 +1531,38 @@ export function parseRomanianDateTime(text, timezone) {
   if (hour > 23 || minute > 59) return null;
 
   const now = new Date();
-  let dayOffset = 0;
-  if (/\bmaine\b/.test(normalized)) dayOffset = 1;
-  else if (/\bazi\b/.test(normalized)) dayOffset = 0;
-  else if (/\bpoimaine\b/.test(normalized)) dayOffset = 2;
-
-  const target = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
-  const dateKey = formatDateKey(target, timezone);
   const hh = String(hour).padStart(2, '0');
   const mm = String(minute).padStart(2, '0');
 
+  const weekdayMap = {
+    duminica: 0,
+    luni: 1,
+    marti: 2,
+    miercuri: 3,
+    joi: 4,
+    vineri: 5,
+    sambata: 6,
+  };
+  const dayName = Object.keys(weekdayMap).find((d) => new RegExp(`\\b${d}\\b`).test(normalized));
+
+  let target = now;
+  if (dayName) {
+    const want = weekdayMap[/** @type {keyof typeof weekdayMap} */ (dayName)];
+    const current = getWeekdayInTimezone(now, timezone);
+    let add = (want - current + 7) % 7;
+    const dateKeyToday = formatDateKey(now, timezone);
+    const todayAt = localToUtc(dateKeyToday, `${hh}:${mm}`, timezone);
+    if (add === 0 && todayAt && todayAt.getTime() <= now.getTime()) add = 7;
+    target = new Date(now.getTime() + add * 24 * 60 * 60 * 1000);
+  } else {
+    let dayOffset = 0;
+    if (/\bmaine\b/.test(normalized)) dayOffset = 1;
+    else if (/\bazi\b/.test(normalized)) dayOffset = 0;
+    else if (/\bpoimaine\b/.test(normalized)) dayOffset = 2;
+    target = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
+  }
+
+  const dateKey = formatDateKey(target, timezone);
   return localToUtc(dateKey, `${hh}:${mm}`, timezone);
 }
 

@@ -74,6 +74,63 @@ export function detectModificationIntent(text) {
 }
 
 /**
+ * Free-text that looks like a new slot search ("vineri la 10", "mâine 14:00").
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function looksLikeDatetimeOrSlot(text) {
+  const n = normalize(text);
+  if (!n) return false;
+  const days = [
+    'luni', 'marti', 'miercuri', 'joi', 'vineri', 'sambata', 'duminica',
+    'maine', 'azi', 'poimaine', 'today', 'tomorrow',
+  ];
+  if (days.some((d) => n.includes(d))) return true;
+  if (/\b\d{1,2}([:.]h?\d{2})?\b/.test(n) && /\b(la|ora|pe|am|pm)\b/.test(n)) return true;
+  return false;
+}
+
+/**
+ * Exact confirm while waiting for 1 / 2 — not "ok vineri la 10".
+ * @param {string} text
+ */
+export function isExplicitConfirmReply(text) {
+  const n = normalize(text);
+  return n === '1' || ['da', 'confirm', 'confirma', 'ok', 'yes', 'sure'].includes(n);
+}
+
+/**
+ * Explicit cancel of the pending booking — not a new request that happens to contain "nu".
+ * @param {string} text
+ */
+export function isExplicitCancelReply(text) {
+  const n = normalize(text);
+  if (n === '2' || n === 'nu' || n === 'cancel') return true;
+  if (n === 'anuleaza' || n === 'anulez' || n === 'anulare') return true;
+  if (/(^|[^a-z])anuleaza([^a-z]|$)/.test(n)) return true;
+  return false;
+}
+
+/**
+ * Client likely wants the same slot they left pending (after TTL expiry).
+ * @param {string} text
+ * @param {TriageResult} triage
+ */
+export function wantsSameExpiredBooking(text, triage) {
+  const n = normalize(text);
+  if (!n) return false;
+  if (isExplicitConfirmReply(text)) return true;
+  if (
+    ['aceeasi', 'aceeasi ora', 'mai vreau', 'inca vreau', 'reia', 'rezerva'].some((k) => n.includes(k))
+  ) {
+    return true;
+  }
+  if (triage.intent === 'book' && !looksLikeDatetimeOrSlot(text)) return true;
+  if (/^(salut|buna|hello|hi|hey|ok)[\s!.]*$/i.test(n)) return true;
+  return false;
+}
+
+/**
  * Instant keyword triage — no LLM. Keeps WhatsApp routing snappy.
  * Order: modify → callback → book → contact → faq → menu → unknown.
  *

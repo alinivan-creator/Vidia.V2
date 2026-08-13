@@ -13,6 +13,19 @@ import {
 /** @typedef {import('../db/businessService.js').Business} Business */
 
 /**
+ * Expire overdue pending_confirmation locks before computing availability.
+ * @param {Business} business
+ */
+async function releaseExpiredLocks(business) {
+  try {
+    const { expireStalePendingForBusiness } = await import('../services/pendingExpiryService.js');
+    await expireStalePendingForBusiness(business);
+  } catch {
+    // Availability must still work if expiry helper fails
+  }
+}
+
+/**
  * @typedef {Object} BusyInterval
  * @property {Date} start
  * @property {Date} end
@@ -310,6 +323,8 @@ export async function getAvailableSlots({
   excludeDraftId = null,
   employeeId = null,
 }) {
+  await releaseExpiredLocks(business);
+
   const config = getBookingConfig(business);
   const timezone = business.timezone;
   const now = new Date();
@@ -388,6 +403,8 @@ export async function isSlotAvailable({
   excludeDraftId = null,
   employeeId = null,
 }) {
+  await releaseExpiredLocks(business);
+
   const start = decodeSlotId(slotId, business.timezone);
   if (!start) return false;
 

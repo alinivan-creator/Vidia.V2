@@ -191,6 +191,7 @@ export async function handleInfoAction({
   userMessage,
   clientId = null,
   requestId = null,
+  turnContext = null,
 }) {
   const prompt = userMessage?.trim() || buildInfoButtonPrompt(business);
 
@@ -198,7 +199,7 @@ export async function handleInfoAction({
   await simulateHumanDelay({ business, recipientPhone, requestId, delayMs: 1200 });
   await sendTypingIndicator({ business, recipientPhone, requestId });
 
-  const aiReply = await generateAiReply({ business, userMessage: prompt, requestId });
+  const aiReply = await generateAiReply({ business, userMessage: prompt, requestId, turnContext });
 
   if (aiReply.needsCallback) {
     await handleCallbackRequest({

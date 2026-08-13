@@ -128,7 +128,7 @@ export async function upsertBusinessAdmin(input) {
   if (id) {
     const { data: existing } = await supabase
       .from('businesses')
-      .select('menu_buttons, timezone, ai_model, ai_temperature, welcome_message')
+      .select('*')
       .eq('id', id)
       .maybeSingle();
     existingRow = /** @type {Record<string, unknown> | null} */ (existing);
@@ -147,9 +147,19 @@ export async function upsertBusinessAdmin(input) {
       ? /** @type {unknown[]} */ (/** @type {Record<string, unknown>} */ (input.booking_settings).services)
       : null;
 
+  const existingSettings =
+    existingRow?.booking_settings && typeof existingRow.booking_settings === 'object'
+      ? /** @type {Record<string, unknown>} */ (existingRow.booking_settings)
+      : {};
+  const incomingSettings =
+    input.booking_settings && typeof input.booking_settings === 'object'
+      ? /** @type {Record<string, unknown>} */ (input.booking_settings)
+      : {};
+
   /** @type {Record<string, unknown>} */
   const bookingSettings = {
-    ...(/** @type {Record<string, unknown>} */ (input.booking_settings ?? {})),
+    ...existingSettings,
+    ...incomingSettings,
   };
 
   // Keep JSON mirror for pre-migration / offline reads
@@ -157,7 +167,14 @@ export async function upsertBusinessAdmin(input) {
     bookingSettings.services = incomingServices;
   }
 
-  const existingGoogle = /** @type {Record<string, unknown>} */ (bookingSettings.google ?? {});
+  const existingGoogle = {
+    ...(typeof existingSettings.google === 'object' && existingSettings.google
+      ? /** @type {Record<string, unknown>} */ (existingSettings.google)
+      : {}),
+    ...(typeof bookingSettings.google === 'object' && bookingSettings.google
+      ? /** @type {Record<string, unknown>} */ (bookingSettings.google)
+      : {}),
+  };
   // Calendar Share model: only mock_mode in JSON bridge (no per-business OAuth secrets)
   bookingSettings.google = {
     ...existingGoogle,
@@ -167,7 +184,14 @@ export async function upsertBusinessAdmin(input) {
   delete bookingSettings.google.client_secret;
   delete bookingSettings.google.refresh_token;
 
-  const existingTwilio = /** @type {Record<string, unknown>} */ (bookingSettings.twilio ?? {});
+  const existingTwilio = {
+    ...(typeof existingSettings.twilio === 'object' && existingSettings.twilio
+      ? /** @type {Record<string, unknown>} */ (existingSettings.twilio)
+      : {}),
+    ...(typeof bookingSettings.twilio === 'object' && bookingSettings.twilio
+      ? /** @type {Record<string, unknown>} */ (bookingSettings.twilio)
+      : {}),
+  };
   /** @type {Record<string, unknown>} */
   const twilioBridge = { ...existingTwilio };
   if (input.twilio_account_sid) twilioBridge.account_sid = input.twilio_account_sid;
@@ -203,10 +227,22 @@ export async function upsertBusinessAdmin(input) {
         ? existingRow.welcome_message
         : `Bun venit la ${name}!`),
     menu_buttons: menuButtons,
-    whatsapp_phone_number_id: input.whatsapp_phone_number_id ?? null,
-    whatsapp_access_token: input.whatsapp_access_token ?? null,
-    google_calendar_id: input.google_calendar_id ?? null,
-    ai_system_prompt: String(input.ai_system_prompt ?? ''),
+    whatsapp_phone_number_id:
+      input.whatsapp_phone_number_id != null && String(input.whatsapp_phone_number_id).trim()
+        ? String(input.whatsapp_phone_number_id).trim()
+        : (id ? (existingRow?.whatsapp_phone_number_id ?? null) : null),
+    whatsapp_access_token:
+      input.whatsapp_access_token !== undefined
+        ? input.whatsapp_access_token
+        : (existingRow?.whatsapp_access_token ?? null),
+    google_calendar_id:
+      input.google_calendar_id != null && String(input.google_calendar_id).trim()
+        ? String(input.google_calendar_id).trim()
+        : (id ? (existingRow?.google_calendar_id ?? null) : null),
+    ai_system_prompt:
+      input.ai_system_prompt != null
+        ? String(input.ai_system_prompt)
+        : (typeof existingRow?.ai_system_prompt === 'string' ? existingRow.ai_system_prompt : ''),
     ai_model:
       aiModelFromInput
       || (typeof existingRow?.ai_model === 'string' && existingRow.ai_model
@@ -225,19 +261,26 @@ export async function upsertBusinessAdmin(input) {
 
   scrubSecrets(basePayload, ['whatsapp_access_token'], Boolean(id));
 
-  /** Prefer dedicated columns when migration 003 applied */
+  /**
+   * Prefer dedicated columns when migration 003 applied
+   */
   const fullPayload = {
     ...basePayload,
     google_calendar_mock_mode: mockMode,
-    twilio_account_sid: input.twilio_account_sid ?? null,
-    twilio_auth_token: input.twilio_auth_token ?? null,
+    twilio_account_sid:
+      input.twilio_account_sid !== undefined && input.twilio_account_sid !== null && String(input.twilio_account_sid).trim()
+        ? String(input.twilio_account_sid).trim()
+        : (existingRow?.twilio_account_sid ?? null),
+    twilio_auth_token:
+      input.twilio_auth_token !== undefined
+        ? input.twilio_auth_token
+        : (existingRow?.twilio_auth_token ?? null),
   };
 
-  scrubSecrets(
-    fullPayload,
-    ['twilio_auth_token'],
-    Boolean(id),
-  );
+  scrubSecrets(fullPayload, ['twilio_auth_token', 'whatsapp_access_token'], Boolean(id));
+  if (id && (fullPayload.twilio_account_sid === null || fullPayload.twilio_account_sid === '')) {
+    delete fullPayload.twilio_account_sid;
+  }
 
   /**
    * @param {Record<string, unknown>} payload
@@ -433,10 +476,10 @@ export async function getErrorLogsAdmin({
 export async function getBusinessJournalAdmin(businessId, opts = {}) {
   const limit = Math.min(Math.max(Number(opts.limit) || 40, 1), 100);
   if (!businessId) {
-    return { logs: [], callbacks: [], bookings: [], smsCampaigns: [], stats: {} };
+    return { logs: [], callbacks: [], bookings: [], smsCampaigns: [], sessions: [], stats: {} };
   }
 
-  const [logs, callbacksRes, bookingsRes, smsRes, unresolvedRes] = await Promise.all([
+  const [logs, callbacksRes, bookingsRes, smsRes, unresolvedRes, sessionsRes] = await Promise.all([
     getErrorLogsAdmin({ businessId, limit, unresolvedOnly: false }),
     supabase
       .from('callback_requests')
@@ -447,7 +490,7 @@ export async function getBusinessJournalAdmin(businessId, opts = {}) {
     supabase
       .from('draft_bookings')
       .select(
-        'id, phone_number, state, selected_service, selected_slot_start, selected_slot_end, google_event_id, created_at, updated_at',
+        'id, phone_number, state, selected_service, selected_slot_start, selected_slot_end, locked_until, pending_expires_at, google_event_id, conversation_context, created_at, updated_at',
       )
       .eq('business_id', businessId)
       .order('updated_at', { ascending: false })
@@ -463,6 +506,12 @@ export async function getBusinessJournalAdmin(businessId, opts = {}) {
       .select('id', { count: 'exact', head: true })
       .eq('business_id', businessId)
       .eq('resolved', false),
+    supabase
+      .from('conversation_states')
+      .select('id, client_phone, current_step, context_data, updated_at')
+      .eq('business_id', businessId)
+      .order('updated_at', { ascending: false })
+      .limit(limit),
   ]);
 
   const callbacks = callbacksRes.error ? [] : (callbacksRes.data ?? []);
@@ -471,27 +520,43 @@ export async function getBusinessJournalAdmin(businessId, opts = {}) {
     // Fallback if column set differs
     const retry = await supabase
       .from('draft_bookings')
-      .select('id, phone_number, state, selected_service, selected_slot_start, google_event_id, created_at')
+      .select('id, phone_number, state, selected_service, selected_slot_start, locked_until, google_event_id, created_at, updated_at')
       .eq('business_id', businessId)
       .order('created_at', { ascending: false })
       .limit(limit);
     bookings = retry.data ?? [];
   }
   const smsCampaigns = smsRes.error ? [] : (smsRes.data ?? []);
+  const sessions = sessionsRes.error ? [] : (sessionsRes.data ?? []);
 
   const pendingCallbacks = callbacks.filter((c) => c.status === 'pending').length;
   const openErrors = unresolvedRes.count ?? logs.filter((l) => !l.resolved).length;
+  const pendingHolds = bookings.filter((b) => b.state === 'pending_confirmation').length;
+  const liveSessions = sessions.filter((s) => s.current_step && s.current_step !== 'IDLE').length;
+
+  const pendingByPhone = new Map(
+    bookings
+      .filter((b) => b.state === 'pending_confirmation')
+      .map((b) => [b.phone_number, b]),
+  );
+  const sessionsWithHolds = sessions.map((s) => ({
+    ...s,
+    pending_draft: pendingByPhone.get(s.client_phone) ?? null,
+  }));
 
   return {
     logs,
     callbacks,
     bookings,
     smsCampaigns,
+    sessions: sessionsWithHolds,
     stats: {
       openErrors,
       pendingCallbacks,
       recentBookings: bookings.length,
       smsCampaigns: smsCampaigns.length,
+      pendingHolds,
+      liveSessions,
     },
   };
 }

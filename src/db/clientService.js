@@ -211,6 +211,13 @@ export function parseClientNameReply(text) {
   ];
   if (blocked.some((k) => n === k)) return null;
 
+  const dayHints = [
+    'luni', 'marti', 'miercuri', 'joi', 'vineri', 'sambata', 'duminica',
+    'maine', 'azi', 'poimaine',
+  ];
+  if (dayHints.some((d) => n.includes(d))) return null;
+  if (/\b\d{1,2}([:.]h?\d{2})?\b/.test(n) && /\b(la|ora|pe)\b/.test(n)) return null;
+
   // Reject obvious non-names (URLs, emails)
   if (/https?:\/\//i.test(cleaned) || /@/.test(cleaned)) return null;
 

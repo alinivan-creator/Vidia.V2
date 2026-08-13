@@ -159,6 +159,15 @@ export function rememberMenuOptions(businessId, recipientPhone, options) {
 }
 
 /**
+ * Drops the last numbered menu so "1"/"2" cannot re-trigger an old confirm card.
+ * @param {string} businessId
+ * @param {string} recipientPhone
+ */
+export function clearRememberedMenuOptions(businessId, recipientPhone) {
+  lastMenuOptions.delete(menuKey(businessId, recipientPhone));
+}
+
+/**
  * @param {string} businessId
  * @param {string} recipientPhone
  * @returns {{ id: string; title: string }[] | null}

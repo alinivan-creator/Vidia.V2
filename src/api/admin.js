@@ -35,6 +35,8 @@ import {
   listSmsOptedInClients,
 } from '../services/smsMarketingService.js';
 import { logError } from '../db/loggerService.js';
+import { DEFAULT_SYSTEM_PROMPT } from '../config/defaultSystemPrompt.js';
+import { DEFAULT_CONVERSATION_LOGIC } from '../config/conversationConfig.js';
 
 export const adminRouter = Router();
 
@@ -55,6 +57,13 @@ adminRouter.post('/logout', (_req, res) => {
 });
 
 adminRouter.use(requireAdminAuth);
+
+adminRouter.get('/ai-defaults', (_req, res) => {
+  res.json({
+    system_prompt: DEFAULT_SYSTEM_PROMPT,
+    conversation_logic: DEFAULT_CONVERSATION_LOGIC,
+  });
+});
 
 adminRouter.get('/businesses', async (_req, res) => {
   const businesses = await listAllBusinessesAdmin();
@@ -259,18 +268,17 @@ adminRouter.post('/businesses/:id/sms-campaigns', async (req, res) => {
 
     const body = String(req.body?.body ?? '').trim();
     const clientIds = Array.isArray(req.body?.client_ids) ? req.body.client_ids : null;
+    const phones = req.body?.phones ?? req.body?.recipients ?? null;
 
     const result = await sendSmsCampaign({
       business,
       body,
+      phones,
       clientIds,
       createdBy: 'admin',
     });
 
-    if (!result.ok) {
-      return res.status(400).json(result);
-    }
-    res.status(201).json(result);
+    res.status(result.ok ? 201 : 200).json(result);
   } catch (error) {
     await logError({
       message: 'POST /admin/businesses/:id/sms-campaigns failed',
