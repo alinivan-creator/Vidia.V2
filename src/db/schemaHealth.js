@@ -2,6 +2,7 @@ import { supabase } from '../config/supabase.js';
 import { logError } from './loggerService.js';
 import {
   classifyDbError,
+  isMissingColumnError,
   isMissingTableError,
   USER_DEGRADED_REPLY,
 } from './schemaErrors.js';
@@ -41,6 +42,10 @@ export const STARTUP_TABLES = ['employees', 'businesses', 'services', 'appointme
 
 /** @type {Map<string, { status: 'ok' | 'missing' | 'error'; until: number; message?: string }>} */
 const probeCache = new Map();
+
+/** @type {{ at: number; value: object } | null} */
+let snapshotCache = null;
+const SNAPSHOT_TTL_MS = 20_000;
 
 /** @type {Map<string, number>} */
 const alertCooldown = new Map();
@@ -93,8 +98,12 @@ export async function probeTable(table) {
  * @returns {Promise<boolean>}
  */
 export async function isTableAvailable(table) {
-  const status = await probeTable(table);
-  return status === 'ok' || status === 'error';
+  const cached = probeCache.get(table);
+  if (cached && Date.now() < cached.until) {
+    return cached.status !== 'missing';
+  }
+  // Optimistic: do not probe on the WhatsApp hot path — let the real query fail.
+  return true;
 }
 
 /**
@@ -123,6 +132,7 @@ export async function isModuleEnabled(module) {
  * @param {string} [table]
  */
 export function invalidateSchemaHealth(table) {
+  snapshotCache = null;
   if (table) {
     probeCache.delete(table);
     return;
@@ -190,6 +200,11 @@ export async function reportQueryFailure({
   businessId = null,
   critical = false,
 }) {
+  if (isMissingColumnError(error) && !isMissingTableError(error)) {
+    console.warn(`[schema-health] Coloană opțională lipsă la ${op} (${table}) — se folosește fallback.`);
+    return null;
+  }
+
   const classified = classifyDbError(error, { table });
   if (classified) {
     markTableMissing(classified.table || table);
@@ -259,9 +274,11 @@ export async function runStartupHealthCheck(opts = {}) {
   /** @type {Array<{ kind: string; table: string; message: string; hint: string; module: string }>} */
   const alerts = [];
 
+  await Promise.all(STARTUP_TABLES.map((name) => probeTable(name)));
+
   for (const name of STARTUP_TABLES) {
     const spec = TABLE_SPECS[name] || { module: name, critical: false, label: name };
-    const status = await probeTable(name);
+    const status = probeCache.get(name)?.status || 'error';
     const cached = probeCache.get(name);
     tables[name] = {
       status,
@@ -312,17 +329,16 @@ export async function runStartupHealthCheck(opts = {}) {
   };
 }
 
-/**
- * Full snapshot for Admin banner (all known tables, not only startup set).
- */
-export async function getSchemaHealthSnapshot() {
+async function buildSchemaSnapshot() {
   /** @type {Record<string, { ok: boolean; tables: Record<string, string>; message?: string }>} */
   const modules = {};
   /** @type {Array<{ kind: string; table: string; message: string; hint: string; module: string }>} */
   const alerts = [];
 
+  await Promise.all(Object.keys(TABLE_SPECS).map((name) => probeTable(name)));
+
   for (const [name, spec] of Object.entries(TABLE_SPECS)) {
-    const status = await probeTable(name);
+    const status = probeCache.get(name)?.status || (await probeTable(name));
     if (!modules[spec.module]) {
       modules[spec.module] = { ok: true, tables: {} };
     }
@@ -347,6 +363,19 @@ export async function getSchemaHealthSnapshot() {
 }
 
 /**
+ * Full snapshot for Admin banner (all known tables, not only startup set).
+ * @param {{ force?: boolean }} [opts]
+ */
+export async function getSchemaHealthSnapshot(opts = {}) {
+  if (!opts.force && snapshotCache && Date.now() - snapshotCache.at < SNAPSHOT_TTL_MS) {
+    return snapshotCache.value;
+  }
+  const value = await buildSchemaSnapshot();
+  snapshotCache = { at: Date.now(), value };
+  return value;
+}
+
+/**
  * Ask PostgREST to reload its schema cache, then re-probe local module flags.
  * @returns {Promise<{ ok: boolean; rpc: boolean; message: string; health: Awaited<ReturnType<typeof getSchemaHealthSnapshot>> }>}
  */
@@ -368,7 +397,7 @@ export async function refreshSchemaCache() {
   }
 
   invalidateSchemaHealth();
-  const health = await getSchemaHealthSnapshot();
+  const health = await getSchemaHealthSnapshot({ force: true });
 
   return {
     ok: health.status === 'ok',

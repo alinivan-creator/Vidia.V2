@@ -754,7 +754,18 @@ async function processTwilioWebhook(body, requestId) {
         toClean,
         bodyPreview: textBody.slice(0, 200),
         messageSid: body?.MessageSid,
+        alert: true,
       },
     });
+    try {
+      await sendTextMessage({
+        business,
+        recipientPhone,
+        requestId,
+        text: 'Momentan nu pot finaliza această acțiune. Te rog încearcă din nou în câteva minute.',
+      });
+    } catch (sendError) {
+      console.error('Eroare detalii:', sendError);
+    }
   }
 }

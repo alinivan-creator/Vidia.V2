@@ -282,6 +282,17 @@ function mockAiResponse(business, userMessage) {
   );
 }
 
+const OPENAI_TIMEOUT_MS = 8000;
+let openaiUnavailableUntil = 0;
+
+function markOpenAiDown() {
+  openaiUnavailableUntil = Date.now() + 30_000;
+}
+
+export function isOpenAiTemporarilyDown() {
+  return Date.now() < openaiUnavailableUntil;
+}
+
 /**
  * @param {Object} params
  * @param {Business} params.business
@@ -294,6 +305,12 @@ async function callOpenAi({ business, userMessage, requestId = null, turnContext
   if (!apiKey) {
     return null;
   }
+  if (isOpenAiTemporarilyDown()) {
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
 
   try {
     /** @type {Record<string, unknown>} */
@@ -317,19 +334,23 @@ async function callOpenAi({ business, userMessage, requestId = null, turnContext
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
 
     const data = await response.json();
 
     if (!response.ok) {
+      if (response.status === 429 || response.status >= 500) {
+        markOpenAiDown();
+      }
       await logError({
-        message: 'OpenAI API call failed',
+        message: `Eroare: OpenAI a eșuat (HTTP ${response.status})`,
         source: 'ai',
         severity: 'error',
         businessId: business.id,
         requestId,
         httpStatus: response.status,
-        details: { response: data },
+        details: { response: data, alert: true, alertKind: 'openai' },
       });
       return null;
     }
@@ -349,15 +370,22 @@ async function callOpenAi({ business, userMessage, requestId = null, turnContext
     };
   } catch (error) {
     console.error('Eroare detalii:', error);
+    const aborted = error instanceof Error && (error.name === 'AbortError' || /aborted/i.test(error.message));
+    markOpenAiDown();
     await logError({
-      message: 'OpenAI API network error',
+      message: aborted
+        ? `Eroare: OpenAI nu a răspuns (timeout ${OPENAI_TIMEOUT_MS / 1000}s)`
+        : 'Eroare: OpenAI — eroare de rețea',
       source: 'ai',
       severity: 'error',
       businessId: business.id,
       requestId,
       error,
+      details: { alert: true, alertKind: 'openai', timeoutMs: OPENAI_TIMEOUT_MS },
     });
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

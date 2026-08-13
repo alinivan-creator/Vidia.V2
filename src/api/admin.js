@@ -39,7 +39,6 @@ import {
   getSchemaHealthSnapshot,
   isTableAvailable,
   refreshSchemaCache,
-  runStartupHealthCheck,
 } from '../db/schemaHealth.js';
 import { DEFAULT_SYSTEM_PROMPT } from '../config/defaultSystemPrompt.js';
 import { DEFAULT_CONVERSATION_LOGIC } from '../config/conversationConfig.js';
@@ -307,7 +306,6 @@ adminRouter.get('/session', (_req, res) => {
 
 adminRouter.get('/health', async (_req, res) => {
   try {
-    await runStartupHealthCheck({ persist: true });
     const health = await getSchemaHealthSnapshot();
     res.json(health);
   } catch (error) {

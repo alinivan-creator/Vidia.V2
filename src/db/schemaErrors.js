@@ -4,7 +4,7 @@
  */
 
 const MISSING_TABLE_RE =
-  /does not exist|PGRST205|42P01|schema cache|Could not find the table/i;
+  /PGRST205|42P01|schema cache|Could not find the table|relation ["'].+["'] does not exist/i;
 
 const TABLE_IN_MESSAGE_RE = /(?:public\.)?([a-z_][a-z0-9_]*)/i;
 
@@ -12,6 +12,21 @@ const TABLE_IN_MESSAGE_RE = /(?:public\.)?([a-z_][a-z0-9_]*)/i;
  * @param {unknown} error
  * @returns {boolean}
  */
+/**
+ * PostgREST PGRST204 — column missing from schema (migration not applied yet).
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export function isMissingColumnError(error) {
+  if (!error || typeof error !== 'object') return false;
+  const code = /** @type {{ code?: string }} */ (error).code ?? '';
+  const message = /** @type {{ message?: string }} */ (error).message ?? '';
+  return (
+    code === 'PGRST204' ||
+    /PGRST204|pending_expires_at|Could not find the ['"].+['"] column/i.test(message)
+  );
+}
+
 export function isMissingTableError(error) {
   if (!error || typeof error !== 'object') return false;
   const code = /** @type {{ code?: string }} */ (error).code ?? '';

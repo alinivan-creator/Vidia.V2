@@ -20,14 +20,8 @@ export async function safeQuery(table, build, opts = {}) {
   const fallback = opts.fallback ?? null;
 
   try {
-    if (!(await isTableAvailable(table))) {
-      await reportQueryFailure({
-        table,
-        error: { code: 'PGRST205', message: `Could not find the table 'public.${table}' in the schema cache` },
-        op: opts.op || `safeQuery:${table}`,
-        businessId: opts.businessId ?? null,
-        critical: opts.critical,
-      });
+    const cachedMissing = !(await isTableAvailable(table));
+    if (cachedMissing) {
       return { data: fallback, error: { code: 'MODULE_DISABLED', message: `Tabela ${table} indisponibilă` }, degraded: true };
     }
 

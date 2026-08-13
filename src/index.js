@@ -8,7 +8,7 @@ import { adminRouter } from './api/admin.js';
 import { calendarRouter } from './api/calendar.js';
 import { logError, registerProcessErrorHandlers } from './db/loggerService.js';
 import { getActiveBusinesses } from './db/businessService.js';
-import { getSchemaHealthSnapshot, runStartupHealthCheck } from './db/schemaHealth.js';
+import { runStartupHealthCheck } from './db/schemaHealth.js';
 import { runConnectionTest, testSupabaseConnection, printConnectionReport } from './db/testConnection.js';
 import {
   globalRateLimiter,
@@ -76,27 +76,14 @@ app.use(globalRateLimiter);
 // Routes
 // ---------------------------------------------------------------------------
 app.get('/health', async (_req, res) => {
-  const [businesses, schema] = await Promise.all([
-    getActiveBusinesses(),
-    runStartupHealthCheck({ persist: true }).then(() => getSchemaHealthSnapshot()).catch(() => null),
-  ]);
-  const degraded = schema?.status === 'degraded';
-    res.json({
-    status: degraded ? 'degraded' : 'ok',
+  const businesses = await getActiveBusinesses();
+  res.json({
+    status: 'ok',
     service: 'vidia-v2',
     environment: env.nodeEnv,
     activeBusinesses: businesses.length,
     messagingProvider: 'twilio',
     timestamp: new Date().toISOString(),
-    schema: schema
-      ? {
-          status: schema.status,
-          missing: (schema.alerts || []).map((a) => a.table),
-          summary: degraded
-            ? `${schema.alerts.length} module(s) în degradare — aplicația rămâne pornită`
-            : 'ok',
-        }
-      : null,
   });
 });
 

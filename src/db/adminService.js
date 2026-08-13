@@ -519,9 +519,6 @@ export async function getBusinessJournalAdmin(businessId, opts = {}) {
   if (callbacksRes.error) {
     void reportQueryFailure({ table: 'callback_requests', error: callbacksRes.error, op: 'journal.callbacks', businessId });
   }
-  if (bookingsRes.error) {
-    void reportQueryFailure({ table: 'draft_bookings', error: bookingsRes.error, op: 'journal.bookings', businessId, critical: true });
-  }
   if (smsRes.error) {
     void reportQueryFailure({ table: 'sms_campaigns', error: smsRes.error, op: 'journal.sms', businessId });
   }
@@ -532,14 +529,22 @@ export async function getBusinessJournalAdmin(businessId, opts = {}) {
   const callbacks = callbacksRes.error ? [] : (callbacksRes.data ?? []);
   let bookings = bookingsRes.error ? [] : (bookingsRes.data ?? []);
   if (bookingsRes.error) {
-    // Fallback if column set differs
     const retry = await supabase
       .from('draft_bookings')
-      .select('id, phone_number, state, selected_service, selected_slot_start, locked_until, google_event_id, created_at, updated_at')
+      .select('id, phone_number, state, selected_service, selected_slot_start, selected_slot_end, locked_until, google_event_id, conversation_context, created_at, updated_at')
       .eq('business_id', businessId)
-      .order('created_at', { ascending: false })
+      .order('updated_at', { ascending: false })
       .limit(limit);
     bookings = retry.data ?? [];
+    if (retry.error) {
+      void reportQueryFailure({
+        table: 'draft_bookings',
+        error: retry.error,
+        op: 'journal.bookings',
+        businessId,
+        critical: true,
+      });
+    }
   }
   const smsCampaigns = smsRes.error ? [] : (smsRes.data ?? []);
   const sessions = sessionsRes.error ? [] : (sessionsRes.data ?? []);
