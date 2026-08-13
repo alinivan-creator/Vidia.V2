@@ -1,5 +1,6 @@
 import { supabase } from '../config/supabase.js';
 import { logError } from './loggerService.js';
+import { getSchemaHealthSnapshot, reportQueryFailure } from './schemaHealth.js';
 import { hydrateBusiness } from './businessService.js';
 import { listServicesForBusiness, replaceServicesForBusiness } from './serviceCatalog.js';
 
@@ -476,10 +477,10 @@ export async function getErrorLogsAdmin({
 export async function getBusinessJournalAdmin(businessId, opts = {}) {
   const limit = Math.min(Math.max(Number(opts.limit) || 40, 1), 100);
   if (!businessId) {
-    return { logs: [], callbacks: [], bookings: [], smsCampaigns: [], sessions: [], stats: {} };
+    return { logs: [], callbacks: [], bookings: [], smsCampaigns: [], sessions: [], schemaAlerts: [], stats: {} };
   }
 
-  const [logs, callbacksRes, bookingsRes, smsRes, unresolvedRes, sessionsRes] = await Promise.all([
+  const [logs, callbacksRes, bookingsRes, smsRes, unresolvedRes, sessionsRes, schema] = await Promise.all([
     getErrorLogsAdmin({ businessId, limit, unresolvedOnly: false }),
     supabase
       .from('callback_requests')
@@ -512,7 +513,21 @@ export async function getBusinessJournalAdmin(businessId, opts = {}) {
       .eq('business_id', businessId)
       .order('updated_at', { ascending: false })
       .limit(limit),
+    getSchemaHealthSnapshot().catch(() => ({ alerts: [], status: 'ok' })),
   ]);
+
+  if (callbacksRes.error) {
+    void reportQueryFailure({ table: 'callback_requests', error: callbacksRes.error, op: 'journal.callbacks', businessId });
+  }
+  if (bookingsRes.error) {
+    void reportQueryFailure({ table: 'draft_bookings', error: bookingsRes.error, op: 'journal.bookings', businessId, critical: true });
+  }
+  if (smsRes.error) {
+    void reportQueryFailure({ table: 'sms_campaigns', error: smsRes.error, op: 'journal.sms', businessId });
+  }
+  if (sessionsRes.error) {
+    void reportQueryFailure({ table: 'conversation_states', error: sessionsRes.error, op: 'journal.sessions', businessId });
+  }
 
   const callbacks = callbacksRes.error ? [] : (callbacksRes.data ?? []);
   let bookings = bookingsRes.error ? [] : (bookingsRes.data ?? []);
@@ -550,6 +565,7 @@ export async function getBusinessJournalAdmin(businessId, opts = {}) {
     bookings,
     smsCampaigns,
     sessions: sessionsWithHolds,
+    schemaAlerts: schema.alerts || [],
     stats: {
       openErrors,
       pendingCallbacks,
@@ -557,6 +573,7 @@ export async function getBusinessJournalAdmin(businessId, opts = {}) {
       smsCampaigns: smsCampaigns.length,
       pendingHolds,
       liveSessions,
+      schemaDegraded: schema.status === 'degraded',
     },
   };
 }

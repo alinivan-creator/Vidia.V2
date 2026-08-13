@@ -1,4 +1,9 @@
 import { supabase } from '../config/supabase.js';
+import { classifyDbError } from './schemaErrors.js';
+
+const ALERT_DEDUPE_MS = 10 * 60 * 1000;
+/** @type {Map<string, number>} */
+const alertDedupe = new Map();
 
 /**
  * @typedef {'debug' | 'info' | 'warning' | 'error' | 'critical'} ErrorSeverity
@@ -54,10 +59,35 @@ export async function logError({
   httpStatus = null,
   error = null,
 }) {
+  const classified = classifyDbError(error, {
+    table: typeof details.table === 'string' ? details.table : undefined,
+  });
+  const finalMessage = classified && !String(message).startsWith('Eroare:')
+    ? classified.adminMessage
+    : message;
+
   const mergedDetails = {
     ...details,
+    ...(classified
+      ? {
+          alert: true,
+          alertKind: classified.kind,
+          table: classified.table,
+          hint: classified.hint,
+        }
+      : {}),
     ...(error ? { error: serializeError(error) } : {}),
   };
+
+  if (classified) {
+    const key = `${classified.kind}:${classified.table || 'unknown'}`;
+    const prev = alertDedupe.get(key) ?? 0;
+    if (Date.now() - prev < ALERT_DEDUPE_MS) {
+      console.error(`[loggerService] ${finalMessage}`);
+      return null;
+    }
+    alertDedupe.set(key, Date.now());
+  }
 
   try {
     const { data, error: dbError } = await supabase
@@ -66,8 +96,7 @@ export async function logError({
         business_id: businessId,
         severity,
         source,
-        message,
-        details: mergedDetails,
+        message: finalMessage,
         request_id: requestId,
         phone_number: phoneNumber,
         draft_booking_id: draftBookingId,

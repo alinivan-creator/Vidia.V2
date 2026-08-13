@@ -1,5 +1,6 @@
 import { supabase } from '../config/supabase.js';
 import { logError } from './loggerService.js';
+import { isTableAvailable, reportQueryFailure } from './schemaHealth.js';
 
 /**
  * @typedef {Object} BusinessService
@@ -13,30 +14,11 @@ import { logError } from './loggerService.js';
  * @property {boolean} [is_active]
  */
 
-/** @type {boolean | null} */
-let servicesTableAvailable = null;
-
 /**
  * @returns {Promise<boolean>}
  */
 export async function isServicesTableAvailable() {
-  if (servicesTableAvailable !== null) return servicesTableAvailable;
-
-  const { error } = await supabase.from('services').select('id').limit(1);
-
-  if (!error) {
-    servicesTableAvailable = true;
-    return true;
-  }
-
-  if (/does not exist|PGRST205|Could not find the table/i.test(error.message ?? '') || error.code === '42P01') {
-    servicesTableAvailable = false;
-    return false;
-  }
-
-  // Table exists but query failed for another reason
-  servicesTableAvailable = true;
-  return true;
+  return isTableAvailable('services');
 }
 
 /**
@@ -83,16 +65,11 @@ export async function listServicesForBusiness(businessId, opts = {}) {
   const { data, error } = await query;
 
   if (error) {
-    if (/does not exist|PGRST205|Could not find the table/i.test(error.message ?? '')) {
-      servicesTableAvailable = false;
-      return [];
-    }
-    await logError({
-      message: 'listServicesForBusiness failed',
-      source: 'database',
-      severity: 'error',
-      businessId,
+    await reportQueryFailure({
+      table: 'services',
       error,
+      op: 'listServicesForBusiness',
+      businessId,
     });
     return [];
   }
@@ -108,7 +85,13 @@ export async function listServicesForBusiness(businessId, opts = {}) {
  */
 export async function replaceServicesForBusiness(businessId, services) {
   if (!(await isServicesTableAvailable())) {
-    return { ok: false, error: 'Tabela services lipsește — rulează migration 003', services: [] };
+    await reportQueryFailure({
+      table: 'services',
+      error: { code: 'PGRST205', message: "Could not find the table 'public.services' in the schema cache" },
+      op: 'replaceServicesForBusiness',
+      businessId,
+    });
+    return { ok: false, error: 'Eroare: Tabelă lipsă — public.services', services: [] };
   }
 
   const { error: delError } = await supabase

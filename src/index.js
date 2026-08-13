@@ -8,6 +8,7 @@ import { adminRouter } from './api/admin.js';
 import { calendarRouter } from './api/calendar.js';
 import { logError, registerProcessErrorHandlers } from './db/loggerService.js';
 import { getActiveBusinesses } from './db/businessService.js';
+import { getSchemaHealthSnapshot, runStartupHealthCheck } from './db/schemaHealth.js';
 import { runConnectionTest, testSupabaseConnection, printConnectionReport } from './db/testConnection.js';
 import {
   globalRateLimiter,
@@ -38,6 +39,8 @@ export const ROUTE_MAP = [
   { method: 'DELETE', path: '/admin/businesses/:id', description: 'Delete business' },
   { method: 'GET', path: '/admin/system-settings/google-master', description: 'Master Google settings' },
   { method: 'PUT', path: '/admin/system-settings/google-master', description: 'Update Master Google settings' },
+  { method: 'GET', path: '/admin/health', description: 'Schema / module health (auth required)' },
+  { method: 'POST', path: '/admin/schema/refresh', description: 'Reload PostgREST schema cache' },
   { method: 'GET', path: '/admin/logs', description: 'Error logs (auth required)' },
   { method: 'GET', path: '/admin/businesses/:id/journal', description: 'Per-business errors / activity journal' },
   { method: 'GET', path: '/admin/businesses/:id/callbacks', description: 'Callback request queue' },
@@ -73,14 +76,27 @@ app.use(globalRateLimiter);
 // Routes
 // ---------------------------------------------------------------------------
 app.get('/health', async (_req, res) => {
-  const businesses = await getActiveBusinesses();
-  res.json({
-    status: 'ok',
+  const [businesses, schema] = await Promise.all([
+    getActiveBusinesses(),
+    runStartupHealthCheck({ persist: true }).then(() => getSchemaHealthSnapshot()).catch(() => null),
+  ]);
+  const degraded = schema?.status === 'degraded';
+    res.json({
+    status: degraded ? 'degraded' : 'ok',
     service: 'vidia-v2',
     environment: env.nodeEnv,
     activeBusinesses: businesses.length,
     messagingProvider: 'twilio',
     timestamp: new Date().toISOString(),
+    schema: schema
+      ? {
+          status: schema.status,
+          missing: (schema.alerts || []).map((a) => a.table),
+          summary: degraded
+            ? `${schema.alerts.length} module(s) în degradare — aplicația rămâne pornită`
+            : 'ok',
+        }
+      : null,
   });
 });
 
@@ -148,6 +164,13 @@ if (!process.env.VERCEL) {
     console.log('[vidia-v2] Routes exposed:');
     for (const route of ROUTE_MAP) {
       console.log(`  ${route.method.padEnd(6)} ${route.path}`);
+    }
+
+    try {
+      const health = await runStartupHealthCheck({ persist: true });
+      console.log(`[schema-health] ${health.summary}`);
+    } catch (error) {
+      console.error('[schema-health] Startup check failed (server stays up):', error);
     }
 
     if (!env.isProduction) {

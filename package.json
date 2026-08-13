@@ -9,6 +9,7 @@
     "start": "node src/index.js",
     "dev": "node --watch-path=./src src/index.js",
     "test:db": "node src/db/testConnection.js",
+    "schema:refresh": "node scripts/refresh-schema-cache.js",
     "tunnel": "npx --yes cloudflared tunnel --url http://127.0.0.1:3000"
   },
   "engines": {

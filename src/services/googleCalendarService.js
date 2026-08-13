@@ -9,6 +9,7 @@ import {
 } from '../db/systemSettingsService.js';
 import { upsertBusyEvents, removeStaleGoogleEvents } from '../db/cacheService.js';
 import { logError } from '../db/loggerService.js';
+import { reportCalendarConfigMissing } from '../db/schemaHealth.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -478,6 +479,11 @@ export async function createCalendarEvent({
   }
 
   if (!resolvedCalendarId) {
+    await reportCalendarConfigMissing({
+      businessId: business.id,
+      employeeId,
+      op: 'createCalendarEvent',
+    });
     return { ok: false, eventId: null, htmlLink: null, error: 'Missing google_calendar_id' };
   }
 

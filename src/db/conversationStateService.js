@@ -1,6 +1,7 @@
 import { supabase } from '../config/supabase.js';
 import { logError } from './loggerService.js';
 import { toE164 } from '../utils/phone.js';
+import { isTableAvailable, reportQueryFailure } from './schemaHealth.js';
 
 /**
  * @typedef {'IDLE' | 'CHOOSING_SERVICE' | 'CHOOSING_EMPLOYEE' | 'SELECTING_SLOT' | 'ASKING_NAME' | 'CONFIRMING' | 'OFFERING_RESUME' | 'MODIFYING' | 'RESCHEDULING' | 'CONFIRMING_CANCEL' | 'MODIFIED'} ConversationStep
@@ -30,29 +31,7 @@ export const CONVERSATION_STEPS = /** @type {const} */ ({
   MODIFIED: 'MODIFIED',
 });
 
-/** @type {boolean | null} */
-let tableAvailable = null;
-
 const COLUMNS = 'id, business_id, client_phone, current_step, context_data, updated_at';
-
-/**
- * @returns {Promise<boolean>}
- */
-async function isTableAvailable() {
-  if (tableAvailable !== null) return tableAvailable;
-
-  const { error } = await supabase.from('conversation_states').select('id').limit(1);
-  if (!error) {
-    tableAvailable = true;
-    return true;
-  }
-  if (/does not exist|PGRST205|Could not find the table/i.test(error.message ?? '') || error.code === '42P01') {
-    tableAvailable = false;
-    return false;
-  }
-  tableAvailable = true;
-  return true;
-}
 
 /**
  * @param {string} businessId
@@ -70,7 +49,7 @@ export async function getOrCreateConversationState(businessId, rawPhone) {
     updated_at: new Date().toISOString(),
   });
 
-  if (!clientPhone || !(await isTableAvailable())) {
+  if (!clientPhone || !(await isTableAvailable('conversation_states'))) {
     return idle;
   }
 
@@ -82,16 +61,11 @@ export async function getOrCreateConversationState(businessId, rawPhone) {
     .maybeSingle();
 
   if (error) {
-    if (/does not exist|PGRST205/i.test(error.message ?? '')) {
-      tableAvailable = false;
-      return idle;
-    }
-    await logError({
-      message: 'getOrCreateConversationState read failed',
-      source: 'database',
-      businessId,
-      phoneNumber: clientPhone,
+    await reportQueryFailure({
+      table: 'conversation_states',
       error,
+      op: 'getOrCreateConversationState',
+      businessId,
     });
     return idle;
   }
@@ -144,7 +118,7 @@ export async function setConversationStep({
   requestId = null,
 }) {
   const clientPhone = toE164(rawPhone);
-  if (!clientPhone || !(await isTableAvailable())) return null;
+  if (!clientPhone || !(await isTableAvailable('conversation_states'))) return null;
 
   const existing = await getOrCreateConversationState(businessId, clientPhone);
   const nextContext = mergeContext
@@ -174,7 +148,7 @@ export async function setConversationStep({
       requestId,
       phoneNumber: clientPhone,
       error,
-      details: { step },
+      details: { step, table: 'conversation_states' },
     });
     return null;
   }

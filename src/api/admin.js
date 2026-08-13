@@ -35,6 +35,12 @@ import {
   listSmsOptedInClients,
 } from '../services/smsMarketingService.js';
 import { logError } from '../db/loggerService.js';
+import {
+  getSchemaHealthSnapshot,
+  isTableAvailable,
+  refreshSchemaCache,
+  runStartupHealthCheck,
+} from '../db/schemaHealth.js';
 import { DEFAULT_SYSTEM_PROMPT } from '../config/defaultSystemPrompt.js';
 import { DEFAULT_CONVERSATION_LOGIC } from '../config/conversationConfig.js';
 
@@ -226,8 +232,13 @@ adminRouter.patch('/businesses/:id/callbacks/:callbackId', async (req, res) => {
 
 // --- Employees (multi-calendar) ---
 adminRouter.get('/businesses/:id/employees', async (req, res) => {
-  const employees = await listEmployees(req.params.id, { activeOnly: false });
-  res.json({ employees });
+  const available = await isTableAvailable('employees');
+  const employees = available ? await listEmployees(req.params.id, { activeOnly: false }) : [];
+  res.json({
+    employees,
+    module: available ? 'ok' : 'unavailable',
+    warning: available ? null : 'Eroare: Tabelă lipsă — public.employees',
+  });
 });
 
 adminRouter.post('/businesses/:id/employees', async (req, res) => {
@@ -292,4 +303,35 @@ adminRouter.post('/businesses/:id/sms-campaigns', async (req, res) => {
 
 adminRouter.get('/session', (_req, res) => {
   res.json({ authenticated: true });
+});
+
+adminRouter.get('/health', async (_req, res) => {
+  try {
+    await runStartupHealthCheck({ persist: true });
+    const health = await getSchemaHealthSnapshot();
+    res.json(health);
+  } catch (error) {
+    await logError({
+      message: 'GET /admin/health failed',
+      source: 'system',
+      severity: 'error',
+      error,
+    });
+    res.status(500).json({ status: 'error', alerts: [], modules: {} });
+  }
+});
+
+adminRouter.post('/schema/refresh', async (_req, res) => {
+  try {
+    const result = await refreshSchemaCache();
+    res.json(result);
+  } catch (error) {
+    await logError({
+      message: 'POST /admin/schema/refresh failed',
+      source: 'system',
+      severity: 'error',
+      error,
+    });
+    res.status(500).json({ ok: false, message: 'Reîmprospătarea schemei a eșuat' });
+  }
 });

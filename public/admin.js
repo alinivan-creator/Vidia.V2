@@ -51,11 +51,66 @@ function showDashboard() {
   $('#dashboard').classList.remove('hidden');
 }
 
+async function loadSchemaHealth() {
+  const banner = $('#schema-alert-banner');
+  const list = $('#schema-alert-list');
+  if (!banner || !list) return;
+  try {
+    const health = await api('/health', { optional: true });
+    const alerts = health.alerts || [];
+    if (!alerts.length) {
+      banner.classList.add('hidden');
+      list.innerHTML = '';
+      return;
+    }
+    list.innerHTML = alerts.map((a) => `
+      <p><strong>${esc(a.message)}</strong>${a.hint ? ` — ${esc(a.hint)}` : ''}</p>
+    `).join('');
+    banner.classList.remove('hidden');
+  } catch {
+    banner.classList.add('hidden');
+  }
+}
+
+$('#schema-refresh-btn')?.addEventListener('click', async () => {
+  const btn = $('#schema-refresh-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Se reîmprospătează…';
+  }
+  try {
+    const result = await api('/schema/refresh', { method: 'POST' });
+    await loadSchemaHealth();
+    if (result.message) {
+      const list = $('#schema-alert-list');
+      if (list && !result.ok) {
+        list.innerHTML = `<p>${esc(result.message)}</p>` + list.innerHTML;
+        $('#schema-alert-banner')?.classList.remove('hidden');
+      }
+    }
+  } catch (err) {
+    const list = $('#schema-alert-list');
+    if (list) {
+      list.innerHTML = `<p>Reîmprospătarea a eșuat: ${esc(err.message || 'eroare')}</p>`;
+      $('#schema-alert-banner')?.classList.remove('hidden');
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Reîmprospătează schema';
+    }
+  }
+});
+
+$('#schema-alert-logs-btn')?.addEventListener('click', () => {
+  document.querySelector('[data-tab="logs"]')?.click();
+});
+
 async function checkSession() {
   try {
     await api('/session');
     showDashboard();
-    await Promise.all([loadBusinesses(), loadAiDefaults()]);
+    await Promise.all([loadBusinesses(), loadAiDefaults(), loadSchemaHealth()]);
     startLogsPoll();
   } catch {
     showLogin();
@@ -70,7 +125,7 @@ $('#login-form').addEventListener('submit', async (e) => {
   try {
     await api('/login', { method: 'POST', body: JSON.stringify({ password }) });
     showDashboard();
-    await Promise.all([loadBusinesses(), loadAiDefaults()]);
+    await Promise.all([loadBusinesses(), loadAiDefaults(), loadSchemaHealth()]);
     startLogsPoll();
   } catch (err) {
     $('#login-error').textContent = err.message || 'Parolă incorectă';
@@ -433,15 +488,33 @@ $('#bf-add-employee')?.addEventListener('click', () => {
 });
 
 async function loadEmployeesForBusiness(businessId) {
+  const warn = $('#bf-employees-warning');
   if (!businessId) {
     renderEmployeesRows([]);
+    if (warn) {
+      warn.classList.add('hidden');
+      warn.textContent = '';
+    }
     return;
   }
   try {
     const data = await api(`/businesses/${businessId}/employees`, { optional: true });
     renderEmployeesRows(data.employees || []);
+    if (warn) {
+      if (data.warning) {
+        warn.textContent = data.warning;
+        warn.classList.remove('hidden');
+      } else {
+        warn.classList.add('hidden');
+        warn.textContent = '';
+      }
+    }
   } catch {
     renderEmployeesRows([]);
+    if (warn) {
+      warn.textContent = 'Eroare: nu am putut încărca angajații.';
+      warn.classList.remove('hidden');
+    }
   }
 }
 
@@ -667,7 +740,11 @@ async function loadBusinessJournal(businessId) {
   try {
     currentJournal = await api(`/businesses/${businessId}/journal?limit=40`, { optional: true });
     const s = currentJournal.stats || {};
+    const schemaAlerts = currentJournal.schemaAlerts || [];
     stats.innerHTML = [
+      schemaAlerts.length
+        ? `<span class="px-2 py-1 rounded-full bg-red-100 text-red-800 font-medium">Alertă schemă: ${schemaAlerts.length}</span>`
+        : '',
       `<span class="px-2 py-1 rounded-full bg-red-50 text-red-700">Erori deschise: ${s.openErrors ?? 0}</span>`,
       `<span class="px-2 py-1 rounded-full bg-blue-50 text-blue-700">Callback pending: ${s.pendingCallbacks ?? 0}</span>`,
       `<span class="px-2 py-1 rounded-full bg-slate-100 text-slate-700">Programări recente: ${s.recentBookings ?? 0}</span>`,
@@ -707,11 +784,18 @@ function renderJournalTab(tab) {
 
   if (tab === 'errors') {
     const logs = currentJournal.logs || [];
-    if (!logs.length) {
+    const schemaAlerts = currentJournal.schemaAlerts || [];
+    if (!logs.length && !schemaAlerts.length) {
       body.innerHTML = '<p class="text-xs text-slate-500">Nicio eroare / eveniment în jurnal.</p>';
       return;
     }
-    body.innerHTML = logs.map((log) => `
+    const alertHtml = schemaAlerts.map((a) => `
+      <div class="bg-red-50 border border-red-200 rounded-lg p-2.5">
+        <p class="text-xs font-semibold text-red-800">${esc(a.message)}</p>
+        ${a.hint ? `<p class="text-[10px] text-red-700 mt-0.5">${esc(a.hint)}</p>` : ''}
+      </div>
+    `).join('');
+    body.innerHTML = alertHtml + logs.map((log) => `
       <div class="bg-white border border-vidia-border rounded-lg p-2.5 ${log.resolved ? 'opacity-60' : ''}">
         <div class="flex flex-wrap gap-2 items-center mb-1">
           <span class="text-[10px] font-medium px-1.5 py-0.5 rounded ${log.severity === 'critical' || log.severity === 'error' ? 'bg-red-100 text-red-800' : 'bg-slate-100 text-slate-700'}">${esc(log.severity)}</span>
@@ -983,7 +1067,7 @@ function renderLogs(logs) {
     const bizName = biz ? biz.name : (log.business_id ? log.business_id.slice(0, 8) : 'system');
 
     return `
-      <div class="bg-white border border-vidia-border rounded-xl p-4 ${log.resolved ? 'opacity-60' : ''}">
+      <div class="bg-white border ${log.details?.alert ? 'border-red-300 ring-1 ring-red-100' : 'border-vidia-border'} rounded-xl p-4 ${log.resolved ? 'opacity-60' : ''}">
         <div class="flex flex-wrap items-center gap-2 mb-2">
           <span class="text-xs font-medium px-2 py-0.5 rounded-full ${sevColors[log.severity] || sevColors.error}">${log.severity}</span>
           <span class="text-xs bg-vidia-light px-2 py-0.5 rounded-full">${log.source}</span>
@@ -1009,6 +1093,7 @@ function startLogsPoll() {
   stopLogsPoll();
   logsPollInterval = setInterval(() => {
     if (!$('#tab-logs').classList.contains('hidden')) loadLogs();
+    loadSchemaHealth();
   }, 10000);
 }
 

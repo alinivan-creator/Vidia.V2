@@ -1,6 +1,6 @@
 import { supabase } from '../config/supabase.js';
 import { normalizeBusinessPhoneKey } from '../utils/phone.js';
-import { logError } from './loggerService.js';
+import { reportQueryFailure } from './schemaHealth.js';
 import { listServicesForBusiness } from './serviceCatalog.js';
 
 /** @typedef {'booking' | 'consulting'} BusinessType */
@@ -107,13 +107,12 @@ export async function withServices(business) {
  * @returns {null}
  */
 function handleQueryError(dbError, context, businessId = null) {
-  logError({
-    message: context,
-    source: 'database',
-    severity: 'error',
-    businessId,
-    details: { code: dbError.code, hint: dbError.hint, details: dbError.details },
+  void reportQueryFailure({
+    table: 'businesses',
     error: dbError,
+    op: context,
+    businessId,
+    critical: true,
   });
   return null;
 }

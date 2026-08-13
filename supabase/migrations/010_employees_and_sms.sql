@@ -115,3 +115,5 @@ REVOKE ALL ON TABLE public.sms_campaigns FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON TABLE public.sms_campaign_sends FROM PUBLIC, anon, authenticated;
 GRANT ALL ON TABLE public.sms_campaigns TO service_role;
 GRANT ALL ON TABLE public.sms_campaign_sends TO service_role;
+
+NOTIFY pgrst, 'reload schema';
