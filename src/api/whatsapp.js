@@ -47,6 +47,7 @@ import { setClientSmsOptIn } from '../services/smsMarketingService.js';
 import {
   interpretUserTurn,
   buildConversationTurnContext,
+  isOpenAiTemporarilyDown,
 } from '../services/aiService.js';
 import {
   getRememberedMenuOptions,
@@ -646,12 +647,15 @@ async function processTwilioWebhook(body, requestId) {
       pendingExpired: expiry.expired,
     });
 
-    const interpreted = await interpretUserTurn({
-      business,
-      userMessage: textBody,
-      turnContext,
-      requestId,
-    });
+    const skipRouter = !process.env.OPENAI_API_KEY || isOpenAiTemporarilyDown();
+    const interpreted = skipRouter
+      ? null
+      : await interpretUserTurn({
+          business,
+          userMessage: textBody,
+          turnContext,
+          requestId,
+        });
 
     if (interpreted?.action === 'resume' && lastIntent && !pendingDismissed) {
       const offered = await offerResumeOrAlternatives({

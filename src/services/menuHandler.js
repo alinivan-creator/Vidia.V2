@@ -196,7 +196,7 @@ export async function handleInfoAction({
   const prompt = userMessage?.trim() || buildInfoButtonPrompt(business);
 
   // Typing… while we prepare / generate the AI reply
-  await simulateHumanDelay({ business, recipientPhone, requestId, delayMs: 1200 });
+  await simulateHumanDelay({ business, recipientPhone, requestId, delayMs: 400 });
   await sendTypingIndicator({ business, recipientPhone, requestId });
 
   const aiReply = await generateAiReply({ business, userMessage: prompt, requestId, turnContext });
@@ -214,11 +214,14 @@ export async function handleInfoAction({
     return;
   }
 
+  const text = String(aiReply?.text ?? '').trim()
+    || `Bună! Sunt asistentul *${business.name}*. Cu ce te pot ajuta?`;
+
   await sendTextMessage({
     business,
     recipientPhone,
     requestId,
-    text: aiReply.text,
+    text,
   });
 }
 

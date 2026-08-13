@@ -14,9 +14,14 @@ export async function continueAfterResponse(work) {
   });
 
   if (process.env.VERCEL) {
-    waitUntil(promise);
-    return;
+    try {
+      waitUntil(promise);
+    } catch (error) {
+      console.warn('[afterResponse] waitUntil unavailable — awaiting inline', error);
+    }
   }
 
+  // Always await: Twilio already got HTTP 200. Returning here used to freeze
+  // the Vercel isolate before OpenAI/Twilio send finished (silent no-reply).
   await promise;
 }
