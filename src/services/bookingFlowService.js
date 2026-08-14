@@ -35,9 +35,10 @@ import {
   hoursUnsetClientMessage,
   resolveServiceDurationMinutes,
 } from '../utils/workingHours.js';
+import { persistPendingOffer } from './pendingOfferService.js';
 import { expirePendingIfNeeded, resolveLastBookingIntent } from './pendingExpiryService.js';
 import { getPendingTtlMinutes } from '../config/conversationConfig.js';
-import { triageUserIntent, looksLikeDatetimeOrSlot } from './intentTriageService.js';
+import { triageUserIntent, looksLikeDatetimeOrSlot, isAffirmativeReply } from './intentTriageService.js';
 import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
 import {
   buildBookingConfirmationMessage,
@@ -156,6 +157,11 @@ export async function tryApplyBookingStepReply({
     if (!replyId) {
       const mentioned = matchEmployeeMention(textBody, employees);
       if (mentioned) replyId = `${PREFIX.EMPLOYEE}${mentioned.id}`;
+    }
+    if (!replyId && isAffirmativeReply(textBody)) {
+      const suggestedId = convState?.context_data?.suggested_employee_id;
+      const suggested = employees.find((e) => e.id === suggestedId) || employees[0] || null;
+      if (suggested) replyId = `${PREFIX.EMPLOYEE}${suggested.id}`;
     }
     if (!replyId) return false;
     return handleBookingInteractiveReply({
@@ -464,6 +470,14 @@ async function continueAfterServiceSelected({
   /** @type {import('../db/employeeService.js').Employee | null} */
   let chosen = mentioned;
 
+  if (!chosen) {
+    const existingEmpId = draftEmployeeId(draft);
+    if (existingEmpId) {
+      chosen = employees.find((e) => e.id === existingEmpId)
+        || await getEmployeeById(existingEmpId, business.id);
+    }
+  }
+
   if (!chosen && employees.length === 1) {
     chosen = employees[0];
   }
@@ -478,7 +492,7 @@ async function continueAfterServiceSelected({
     });
   }
 
-  if (chosen && (mentioned || employees.length === 1)) {
+  if (chosen && (mentioned || draftEmployeeId(draft) || employees.length === 1)) {
     await assignEmployeeAndShowSlots({
       business,
       recipientPhone,
@@ -593,6 +607,19 @@ export async function sendEmployeePicker({
   options.push({ id: PREFIX.ANY_EMPLOYEE, title: 'Primul disponibil' });
 
   await rememberMenuOptions(business.id, recipientPhone, options, 'employee');
+
+  if (suggested?.id) {
+    await persistPendingOffer({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      offer: {
+        kind: 'employee',
+        id: suggested.id,
+        name: suggested.name,
+      },
+      requestId,
+    });
+  }
 
   const lines = ['Cu cine preferi programarea?', ''];
   options.forEach((opt, i) => {

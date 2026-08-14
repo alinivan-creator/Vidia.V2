@@ -25,6 +25,14 @@ import {
   triageUserIntent,
 } from './intentTriageService.js';
 import {
+  acceptClarifiedOffer,
+  rememberOfferFromAssistant,
+  resolveAcceptedOffer,
+  readPendingOffer,
+  readClarified,
+  historyWithoutResolvedObjections,
+} from './pendingOfferService.js';
+import {
   resolveNumberedChoice,
   sendTextMessage,
   simulateHumanDelay,
@@ -118,12 +126,26 @@ export async function handlePendingHoldTurn({
     if (handledName) return true;
   }
 
+  const acceptedOffer = await acceptClarifiedOffer({
+    business,
+    recipientPhone,
+    textBody,
+    convState,
+    draft: activeDraft,
+    clientId,
+    requestId,
+  });
+  if (acceptedOffer) return true;
+
   const staff = await listEmployees(business.id, { activeOnly: true });
   const staffNames = staff.map((e) => e.name).filter(Boolean);
   const pendingHold = describePendingHold(business, activeDraft, staffNames);
-  const recentTurns = Array.isArray(convState?.context_data?.recent_turns)
-    ? convState.context_data.recent_turns
-    : [];
+  const recentTurns = historyWithoutResolvedObjections(
+    Array.isArray(convState?.context_data?.recent_turns)
+      ? convState.context_data.recent_turns
+      : [],
+    convState,
+  );
 
   const turnContext = buildConversationTurnContext({
     step,
@@ -132,6 +154,8 @@ export async function handlePendingHoldTurn({
     pendingExpired,
     pendingHold,
     recentTurns,
+    pendingOffer: readPendingOffer(convState),
+    clarified: readClarified(convState),
   });
 
   const skipRouter = !process.env.OPENAI_API_KEY || isOpenAiTemporarilyDown();
@@ -168,11 +192,17 @@ export async function handlePendingHoldTurn({
   }
 
   if (interpreted?.action === 'change_employee') {
+    const staffForOffer = staff.length ? staff : [];
+    const resolved = resolveAcceptedOffer({
+      convState,
+      employees: staffForOffer,
+      services: [],
+    });
     await applyPendingEmployeeChange({
       business,
       recipientPhone,
       draft: activeDraft,
-      textBody,
+      textBody: resolved?.employee?.name || textBody,
       requestId,
     });
     return true;
@@ -224,6 +254,12 @@ export async function handlePendingHoldTurn({
       recipientPhone,
       requestId,
       text: interpreted.message,
+    });
+    await rememberOfferFromAssistant({
+      business,
+      recipientPhone,
+      text: interpreted.message,
+      requestId,
     });
     return true;
   }

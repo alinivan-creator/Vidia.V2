@@ -196,6 +196,7 @@ export function buildSystemPrompt(business, opts = {}) {
       `- same_slot=true doar dacă vrea explicit slotul reținut\n` +
       `- Nu inventa ore libere. Nu cere clientului să scrie cuvântul „programare”.\n` +
       `- Dacă Admin zice închis, mesajul către client trebuie să zică închis.\n` +
+      `- Dacă ai corectat un angajat/serviciu inexistent și clientul acceptă alternativa (da/ok/bine), avansează. NU reexplica aceeași obiecție.\n` +
       `- Citește mesajul integral + istoricul. Nu ignora textul liber.`;
   }
 
@@ -484,6 +485,8 @@ export function buildConversationTurnContext({
   pendingExpired = false,
   pendingHold = null,
   recentTurns = [],
+  pendingOffer = null,
+  clarified = [],
 }) {
   const lines = [`- pas conversație: ${step || 'IDLE'}`];
   if (step === 'CHOOSING_SERVICE') {
@@ -492,6 +495,26 @@ export function buildConversationTurnContext({
     lines.push('- alege angajatul; NU retrimite lista de staff');
   } else if (step === 'SELECTING_SLOT') {
     lines.push('- alege ora; NU retrimite lista de sloturi decât dacă cere explicit alte ore');
+  }
+  if (pendingOffer?.name) {
+    lines.push(
+      `- OFERTĂ ACTIVĂ: ai propus ${pendingOffer.kind === 'service' ? 'serviciul' : 'angajatul'} ${pendingOffer.name}. ` +
+      'Dacă clientul zice da/ok/bine, action=change_employee sau book pe ACEASTĂ alternativă. NU reexplica obiecția.',
+    );
+    if (pendingOffer.rejected) {
+      lines.push(`- Clarificat: ${pendingOffer.rejected} nu e pe listă. NU mai menționa ca problemă.`);
+    }
+  }
+  if (Array.isArray(clarified) && clarified.length) {
+    for (const item of clarified.slice(-3)) {
+      if (item?.rejected) {
+        lines.push(
+          `- Deja clarificat: ${item.rejected} nu e disponibil` +
+          (item.accepted ? `; clientul a acceptat ${item.accepted}` : '') +
+          '. NU repeta avertismentul.',
+        );
+      }
+    }
   }
   if (pendingHold) {
     lines.push('- HOLD ACTIV (pending_confirmation): NU elibera slotul pentru o întrebare sau o schimbare de preferință');

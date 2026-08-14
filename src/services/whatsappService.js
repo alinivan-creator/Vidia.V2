@@ -1,6 +1,6 @@
 import twilio from 'twilio';
 import { logError } from '../db/loggerService.js';
-import { persistLastMenu } from '../db/conversationStateService.js';
+import { persistLastMenu, appendRecentTurn } from '../db/conversationStateService.js';
 import { toMetaPhone, toTwilioWhatsApp, toE164 } from '../utils/phone.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
@@ -11,6 +11,30 @@ import { toMetaPhone, toTwilioWhatsApp, toE164 } from '../utils/phone.js';
  * @property {unknown} data
  * @property {number} status
  */
+
+/**
+ * Stores the assistant reply in conversation memory so the next turn
+ * does not re-argue an objection that was already answered.
+ * @param {Business} business
+ * @param {string} recipientPhone
+ * @param {string} body
+ * @param {string | null} [requestId]
+ */
+async function rememberAssistantTurn(business, recipientPhone, body, requestId = null) {
+  const text = String(body ?? '').trim();
+  if (!text || !business?.id) return;
+  try {
+    await appendRecentTurn({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      role: 'assistant',
+      text,
+      requestId,
+    });
+  } catch (error) {
+    console.warn('[whatsapp] rememberAssistantTurn failed', error);
+  }
+}
 
 /**
  * Resolves Twilio credentials exclusively from the business row (Supabase).
@@ -231,6 +255,7 @@ async function sendTwilioMessage({ business, recipientPhone, body, requestId = n
       to,
       preview: body.slice(0, 200),
     });
+    await rememberAssistantTurn(business, recipientPhone, body, requestId);
     return { ok: true, data: { mocked: true }, status: 200 };
   }
 
@@ -244,6 +269,8 @@ async function sendTwilioMessage({ business, recipientPhone, body, requestId = n
     });
 
     console.log('[twilio] Message sent:', { sid: message.sid, status: message.status, to });
+
+    await rememberAssistantTurn(business, recipientPhone, body, requestId);
 
     return {
       ok: true,

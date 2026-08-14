@@ -96,7 +96,43 @@ export function looksLikeDatetimeOrSlot(text) {
  */
 export function isExplicitConfirmReply(text) {
   const n = normalize(text);
-  return n === '1' || ['da', 'confirm', 'confirma', 'ok', 'yes', 'sure'].includes(n);
+  return n === '1' || [
+    'da',
+    'confirm',
+    'confirma',
+    'ok',
+    'okay',
+    'yes',
+    'sure',
+    'bine',
+    'merge',
+    'perfect',
+    'de acord',
+  ].includes(n);
+}
+
+/**
+ * Client accepted the last alternative (employee/service), without a new constraint.
+ * Not "1"/"2" — those stay numbered-menu shortcuts.
+ * @param {string} text
+ */
+export function isAffirmativeReply(text) {
+  const n = normalize(text);
+  if (!n || n === '1' || n === '2') return false;
+  if ([
+    'da',
+    'confirm',
+    'confirma',
+    'ok',
+    'okay',
+    'yes',
+    'sure',
+    'bine',
+    'merge',
+    'perfect',
+    'de acord',
+  ].includes(n)) return true;
+  return /^(okey|va rog|te rog|da te rog|da va rog|hai|super|excelent|da rog)[\s!.]*$/.test(n);
 }
 
 /**

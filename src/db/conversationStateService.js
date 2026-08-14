@@ -128,7 +128,7 @@ export async function setConversationStep({
     nextContext = { ...existingCtx, ...context };
   } else {
     nextContext = { ...context };
-    for (const key of ['recent_turns', 'last_menu', 'last_booking_intent']) {
+    for (const key of ['recent_turns', 'last_menu', 'last_booking_intent', 'pending_offer', 'clarified']) {
       if (!Object.prototype.hasOwnProperty.call(context, key) && existingCtx[key] !== undefined) {
         nextContext[key] = existingCtx[key];
       }

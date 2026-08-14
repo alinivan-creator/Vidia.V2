@@ -4,6 +4,7 @@ import { logError } from '../db/loggerService.js';
 import { startBookingFlow, handleFreeTextSlotRequest } from './bookingFlowService.js';
 import { getActiveDraftBooking } from '../db/draftBookingService.js';
 import { generateAiReply, buildInfoButtonPrompt } from './aiService.js';
+import { rememberOfferFromAssistant } from './pendingOfferService.js';
 import { formatContactMessage } from './contactService.js';
 import { buildAiTransparencyWelcome } from '../utils/businessMessages.js';
 import {
@@ -230,6 +231,12 @@ export async function handleInfoAction({
     recipientPhone,
     requestId,
     text,
+  });
+  await rememberOfferFromAssistant({
+    business,
+    recipientPhone,
+    text,
+    requestId,
   });
 }
 

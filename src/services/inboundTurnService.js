@@ -23,8 +23,10 @@ import {
   offerResumeOrAlternatives,
   tryApplyBookingStepReply,
   handleFreeTextSlotRequest,
+  applyPendingEmployeeChange,
 } from './bookingFlowService.js';
 import { handlePendingHoldTurn } from './pendingHoldService.js';
+import { acceptClarifiedOffer, rememberOfferFromAssistant, readPendingOffer, readClarified, historyWithoutResolvedObjections } from './pendingOfferService.js';
 import {
   handleGlobalModificationIntent,
   handleModificationInteractive,
@@ -81,9 +83,12 @@ export async function routeInboundTurn({
 }) {
   const step = convState.current_step;
   const lastMenu = readLastMenu(convState);
-  const recentTurns = Array.isArray(convState.context_data?.recent_turns)
-    ? convState.context_data.recent_turns
-    : [];
+  const recentTurns = historyWithoutResolvedObjections(
+    Array.isArray(convState.context_data?.recent_turns)
+      ? convState.context_data.recent_turns
+      : [],
+    convState,
+  );
   const triage = triageUserIntent(textBody, { businessType: business.business_type });
 
   const isPendingHold =
@@ -164,6 +169,17 @@ export async function routeInboundTurn({
     requestId,
   });
   if (appliedStep) return;
+
+  const acceptedOffer = await acceptClarifiedOffer({
+    business,
+    recipientPhone,
+    textBody,
+    convState,
+    draft: activeDraft,
+    clientId,
+    requestId,
+  });
+  if (acceptedOffer) return;
 
   if (step === CONVERSATION_STEPS.OFFERING_RESUME && lastIntent) {
     if (isExplicitConfirmReply(textBody) || isExplicitCancelReply(textBody)) {
@@ -338,6 +354,8 @@ export async function routeInboundTurn({
     pendingExpired,
     recentTurns,
     pendingHold: null,
+    pendingOffer: readPendingOffer(convState),
+    clarified: readClarified(convState),
   });
 
   const skipRouter = !process.env.OPENAI_API_KEY || isOpenAiTemporarilyDown();
@@ -360,6 +378,27 @@ export async function routeInboundTurn({
       requestId,
     });
     if (offered) return;
+  }
+
+  if (interpreted?.action === 'change_employee') {
+    if (activeDraft) {
+      await applyPendingEmployeeChange({
+        business,
+        recipientPhone,
+        draft: activeDraft,
+        textBody: readPendingOffer(convState)?.name || textBody,
+        requestId,
+      });
+    } else {
+      await handleBookingAction({
+        business,
+        recipientPhone,
+        clientId,
+        hintText: readPendingOffer(convState)?.name || textBody,
+        requestId,
+      });
+    }
+    return;
   }
 
   if (interpreted?.action === 'book') {
@@ -436,6 +475,12 @@ export async function routeInboundTurn({
       recipientPhone,
       requestId,
       text: interpreted.message,
+    });
+    await rememberOfferFromAssistant({
+      business,
+      recipientPhone,
+      text: interpreted.message,
+      requestId,
     });
     return;
   }
