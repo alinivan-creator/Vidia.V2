@@ -34,6 +34,7 @@ import {
   hasConfiguredOpenDay,
   hoursUnsetClientMessage,
   resolveServiceDurationMinutes,
+  unknownInfoClientMessage,
 } from '../utils/workingHours.js';
 import { persistPendingOffer } from './pendingOfferService.js';
 import { expirePendingIfNeeded, resolveLastBookingIntent } from './pendingExpiryService.js';
@@ -257,7 +258,7 @@ export async function sendServicePicker({ business, recipientPhone, draft, reque
       business,
       recipientPhone,
       requestId,
-      text: 'Nu există servicii configurate. Contactează administratorul.',
+      text: unknownInfoClientMessage(),
     });
     return;
   }
@@ -1287,27 +1288,12 @@ async function handleConfirmBooking({ business, recipientPhone, draft, requestId
       result,
     });
 
-    let adminHint =
-      '_Administrator: configurează Master Google în Admin → Setări sistem, ' +
-      'setează google_calendar_id pe afacere sau pe angajat și oprește Mock Mode._';
-
-    if (business.google_calendar_mock_mode === true) {
-      adminHint =
-        '_Administrator: Mock Mode este activ pe această afacere — ' +
-        'opriți Mock Mode și configurați Master Google + partajarea calendarului._';
-    } else if (!calendarId) {
-      adminHint =
-        '_Administrator: lipsește google_calendar_id pe afacere sau pe angajatul selectat._';
-    }
-
     await sendTextMessage({
       business,
       recipientPhone,
       requestId,
       text:
-        'Nu am putut salva programarea în Google Calendar, deci *nu am confirmat-o*.\n\n' +
-        'Te rog încearcă din nou după ce administratorul configurează calendarul.\n\n' +
-        adminHint,
+        'Din păcate nu am putut confirma programarea. Te rog încearcă din nou sau scrie *contact*.',
     });
     return;
   }

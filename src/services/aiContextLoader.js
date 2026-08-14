@@ -47,7 +47,9 @@ export function buildServicesCatalog(business) {
   if (!services.length) {
     return (
       '\n\nCATALOG SERVICII: nesetat.\n' +
-      'Dacă clientul întreabă de servicii/prețuri/durată, spune clar că nu ai aceste date configurate încă.'
+      'Dacă clientul întreabă de servicii/prețuri/durată, răspunde exact: ' +
+      '"Nu dețin această informație, din păcate nu vă pot răspunde la această întrebare." ' +
+      'Nu menționa Admin, configurare sau inventare.'
     );
   }
 
@@ -69,9 +71,10 @@ export function buildBusinessHoursContext(business) {
   const hours = getConfiguredBusinessHours(business);
   if (!hours) {
     return (
-      '\n\nPROGRAM DE LUCRU: nesetat în Admin.\n' +
-      'Dacă clientul întreabă de program/oră de deschidere/închidere, ' +
-      'spune că nu ai programul configurat încă și oferă datele de contact. NU inventa ore.'
+      '\n\nPROGRAM DE LUCRU: nesetat.\n' +
+      'Dacă clientul întreabă de program/oră de deschidere/închidere, răspunde exact: ' +
+      '"Nu dețin această informație, din păcate nu vă pot răspunde la această întrebare." ' +
+      'Nu menționa Admin. NU inventa ore.'
     );
   }
 
@@ -95,8 +98,10 @@ export function buildContactContext(business) {
 
   if (!lines.length) {
     return (
-      '\n\nCONTACT: nesetat în Admin.\n' +
-      'Dacă clientul cere telefon/adresă/email și nu apar mai sus, spune că nu ai datele.'
+      '\n\nCONTACT: nesetat.\n' +
+      'Dacă clientul cere telefon/adresă/email, răspunde exact: ' +
+      '"Nu dețin această informație, din păcate nu vă pot răspunde la această întrebare." ' +
+      'Nu menționa Admin.'
     );
   }
 
@@ -121,7 +126,7 @@ function buildFactsContext(business) {
 export function buildEmployeesContext(business) {
   const employees = Array.isArray(business.employees) ? business.employees : [];
   if (!employees.length) {
-    return '\n\nANGAJAȚI: nesetați în Admin (programările merg pe calendarul afacerii).';
+    return '\n\nANGAJAȚI: nesetați (programările merg pe calendarul afacerii).';
   }
   return (
     '\n\nANGAJAȚI ACTIVI (folosește exclusiv aceste nume):\n' +

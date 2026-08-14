@@ -15,6 +15,7 @@ import {
   looksLikeNewBookingRequest,
   triageUserIntent,
 } from '../src/services/intentTriageService.js';
+import { looksLikePersonName } from '../src/services/turnExtract.js';
 
 const TZ = 'Europe/Bucharest';
 const HOURS_09_18 = { open: '09:00', close: '18:00' };
@@ -189,5 +190,32 @@ describe('existing appointments vs new booking', () => {
     assert.equal(triageUserIntent('cand sunteti deschisi').intent, 'faq');
     assert.equal(triageUserIntent('ce program aveti').intent, 'faq');
     assert.equal(looksLikeNewBookingRequest('ce program aveti'), false);
+  });
+
+  it('still books when the request is wrapped in insults', () => {
+    assert.equal(
+      looksLikeNewBookingRequest('da ma prostule, vreau sa fac o programare'),
+      true,
+    );
+  });
+});
+
+describe('off-topic vs client name', () => {
+  it('returns a configured fact and stays silent when the fact is missing', async () => {
+    const { lookupAdminFact } = await import('../src/services/turnExecute.js');
+    const withParking = { booking_settings: { ai_facts: 'Avem parcare în curte, gratuită pentru clienți.' } };
+    const empty = { booking_settings: { ai_facts: '' } };
+    assert.match(lookupAdminFact(withParking, 'aveti parcare?') || '', /parcare/i);
+    assert.equal(lookupAdminFact(empty, 'aveti parcare?'), null);
+  });
+
+  it('answers missing facts without mentioning Admin or inventing', async () => {
+    const { unknownInfoClientMessage } = await import('../src/utils/workingHours.js');
+    const msg = unknownInfoClientMessage();
+    assert.equal(
+      msg,
+      'Nu dețin această informație, din păcate nu vă pot răspunde la această întrebare.',
+    );
+    assert.equal(/admin|invent|setat|configur/i.test(msg), false);
   });
 });

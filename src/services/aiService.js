@@ -1,5 +1,5 @@
 import { getBookingConfig, getConfiguredBusinessHours, formatBusinessHoursText } from '../utils/datetime.js';
-import { hasConfiguredOpenDay } from '../utils/workingHours.js';
+import { hasConfiguredOpenDay, unknownInfoClientMessage } from '../utils/workingHours.js';
 import { getBusinessContactInfo } from './contactService.js';
 import { CALLBACK_SENTINEL, DEFAULT_SYSTEM_PROMPT } from '../config/defaultSystemPrompt.js';
 import { getConversationLogic } from '../config/conversationConfig.js';
@@ -72,10 +72,10 @@ function factualReply(business, userMessage) {
   if (asksHours) {
     const hours = getConfiguredBusinessHours(business);
     if (!hours) {
-      return `Nu am programul de lucru configurat încă pentru *${business.name}*.`;
+      return unknownInfoClientMessage();
     }
     if (!hasConfiguredOpenDay(business)) {
-      return `*${business.name}* are toate zilele marcate ca închise în programul din Admin.`;
+      return unknownInfoClientMessage();
     }
     return (
       `*Program de lucru — ${business.name}*\n\n` +
@@ -92,7 +92,7 @@ function factualReply(business, userMessage) {
     if (info.website) lines.push(`• Website: ${info.website}`);
     if (info.mapsUrl) lines.push(`• Hartă: ${info.mapsUrl}`);
     if (lines.length === 2) {
-      return `Nu am datele de contact configurate încă pentru *${business.name}*.`;
+      return unknownInfoClientMessage();
     }
     return lines.join('\n');
   }
@@ -100,7 +100,7 @@ function factualReply(business, userMessage) {
   if (asksPrice || asksDuration || asksServices) {
     const { services } = getBookingConfig(business);
     if (!services.length) {
-      return `Nu am lista de servicii/prețuri configurată încă pentru *${business.name}*.`;
+      return unknownInfoClientMessage();
     }
     const lines = [`*Servicii — ${business.name}*`, ''];
     for (const s of services) {

@@ -255,10 +255,13 @@ function extractFromChoiceId(choiceId, base, business) {
   return emptyExtract({ ...base, action: 'unknown', choice_id: choiceId, source: 'menu' });
 }
 
-function looksLikePersonName(text) {
+export function looksLikePersonName(text) {
   const n = normalize(text);
   if (!n || n.length > 60 || /\d/.test(n) || /[?]/.test(String(text ?? ''))) return false;
   if (looksLikeExistingAppointmentQuery(n) || looksLikeNewBookingRequest(n) || looksLikeDatetimeOrSlot(n)) {
+    return false;
+  }
+  if (/\b(cum|ce|cine|unde|cand|de ce|ai|esti|sunt|fac|faci|cheama|numele|parcare|mancat|prost|pula|fut|idiot)\b/.test(n)) {
     return false;
   }
   const words = n.split(' ').filter(Boolean);
@@ -350,6 +353,8 @@ function mapExtractionToTurnExtract(parsed, { textBody, isPendingHold, inModify,
   else if (parsed.intent === 'services') action = 'services';
   else if (parsed.intent === 'contact') action = 'contact';
   else if (parsed.intent === 'menu') action = 'menu';
+  else if (parsed.intent === 'off_topic') action = 'off_topic';
+  else if (parsed.intent === 'missing_info') action = 'missing_info';
   else if (parsed.intent === 'reschedule') action = 'reschedule';
   else if (
     parsed.intent === 'book'
@@ -651,7 +656,10 @@ export async function extractTurnIntent({
         extraction: nlu,
       });
     }
-    const direct = new Set(['hours', 'services', 'contact', 'menu', 'confirm', 'cancel', 'cancel_pending', 'reschedule']);
+    const direct = new Set([
+      'hours', 'services', 'contact', 'menu', 'confirm', 'cancel', 'cancel_pending',
+      'reschedule', 'off_topic', 'missing_info',
+    ]);
     if (direct.has(mapped.action)) return mapped;
     if (mapped.action === 'unknown') {
       return emptyExtract({ action: 'chat', confidence: 'low', source: 'nlu', extraction: nlu });

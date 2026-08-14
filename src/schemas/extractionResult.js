@@ -13,6 +13,8 @@ export const EXTRACTION_INTENTS = /** @type {const} */ ([
   'services',
   'contact',
   'menu',
+  'off_topic',
+  'missing_info',
   'unknown',
 ]);
 

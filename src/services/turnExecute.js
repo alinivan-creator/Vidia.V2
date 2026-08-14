@@ -51,6 +51,7 @@ import {
   hasConfiguredOpenDay,
   hoursUnsetClientMessage,
   resolveServiceDurationMinutes,
+  unknownInfoClientMessage,
 } from '../utils/workingHours.js';
 import { getPendingTtlMinutes } from '../config/conversationConfig.js';
 import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
@@ -322,7 +323,7 @@ async function missingService(business, recipientPhone, draft, requestId) {
     return handlerResult({
       status: 'ERROR',
       user_message_template_key: 'ERROR_GENERIC',
-      data: { client_message: 'Nu există servicii configurate în Admin.' },
+      data: { client_message: unknownInfoClientMessage() },
     });
   }
   await setConversationStep({
@@ -827,7 +828,7 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
       user_message_template_key: 'ERROR_CALENDAR',
       data: {
         client_message:
-          'Nu am putut salva programarea în Google Calendar, deci *nu am confirmat-o*.',
+          'Din păcate nu am putut confirma programarea. Te rog încearcă din nou.',
       },
     });
   }
@@ -902,7 +903,7 @@ async function executeCancelAppointment({ business, recipientPhone, appointment,
         user_message_template_key: 'ERROR_CALENDAR',
         data: {
           client_message:
-            'Nu am putut găsi evenimentul în Google Calendar, deci *nu am anulat* programarea.',
+            'Din păcate nu am putut anula programarea. Te rog încearcă din nou.',
         },
       });
     }
@@ -913,7 +914,7 @@ async function executeCancelAppointment({ business, recipientPhone, appointment,
         user_message_template_key: 'ERROR_CALENDAR',
         data: {
           client_message:
-            'Nu am putut șterge evenimentul din Google Calendar, deci *nu am anulat* programarea.',
+            'Din păcate nu am putut anula programarea. Te rog încearcă din nou.',
         },
       });
     }
@@ -1050,7 +1051,7 @@ async function applyReschedule({
         user_message_template_key: 'ERROR_CALENDAR',
         data: {
           client_message:
-            'Nu am găsit evenimentul în Google Calendar, deci *nu am reprogramat*.',
+            'Din păcate nu am putut reprograma. Te rog încearcă din nou.',
         },
       });
     }
@@ -1071,7 +1072,7 @@ async function applyReschedule({
         user_message_template_key: 'ERROR_CALENDAR',
         data: {
           client_message:
-            'Nu am putut actualiza Google Calendar, deci *nu am reprogramat*.',
+            'Din păcate nu am putut reprograma. Te rog încearcă din nou.',
         },
       });
     }
@@ -1454,11 +1455,65 @@ async function executeListAppointments({ business, recipientPhone, activeDraft }
 }
 
 async function executeChat(business) {
+  return executeOffTopic(business);
+}
+
+function normalizeFactText(text) {
+  return String(text ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+/**
+ * Answer only from Admin ai_facts lines. Never invent a yes/no.
+ * @param {Business} business
+ * @param {string} text
+ * @returns {string | null}
+ */
+export function lookupAdminFact(business, text) {
+  const facts = business?.booking_settings?.ai_facts;
+  if (typeof facts !== 'string' || !facts.trim()) return null;
+  const q = normalizeFactText(text);
+  const tokens = q.split(/[^a-z0-9]+/).filter((t) => t.length >= 4);
+  const stop = new Set([
+    'vreau', 'aveti', 'avem', 'este', 'sunt', 'pentru', 'aceasta', 'acesta',
+    'informatie', 'spune', 'puteti', 'poate', 'despre', 'care',
+  ]);
+  const keys = tokens.filter((t) => !stop.has(t));
+  if (!keys.length) return null;
+  const lines = facts.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  const hit = lines.find((line) => {
+    const nl = normalizeFactText(line);
+    return keys.some((k) => nl.includes(k));
+  });
+  return hit || null;
+}
+
+function executeOffTopic(business) {
   return handlerResult({
     status: 'CHAT',
     action_performed: null,
     next_required_step: null,
-    user_message_template_key: 'CHAT_FALLBACK',
+    user_message_template_key: 'OFF_TOPIC',
+    data: { business_name: business.name },
+  });
+}
+
+function executeMissingInfo(business, textBody = '') {
+  const fact = lookupAdminFact(business, textBody);
+  if (fact) {
+    return handlerResult({
+      status: 'SUCCESS',
+      action_performed: 'FACT_LOOKUP',
+      user_message_template_key: 'ADMIN_FACT',
+      data: { fact, business_name: business.name },
+    });
+  }
+  return handlerResult({
+    status: 'CHAT',
+    action_performed: null,
+    user_message_template_key: 'MISSING_INFO',
     data: { business_name: business.name },
   });
 }
@@ -1781,6 +1836,8 @@ async function dispatchExecute({
   if (action === 'set_name') {
     return executeSetName({ business, recipientPhone, extract, activeDraft: draft, requestId });
   }
+  if (action === 'off_topic') return executeOffTopic(business);
+  if (action === 'missing_info') return executeMissingInfo(business, textBody);
 
   return executeChat(business);
 }

@@ -17,6 +17,7 @@ import {
 } from './whatsappService.js';
 import { formatMachineAction, formatterSystemHint } from '../lib/ai/responseFormatter.js';
 import { MACHINE_ACTIONS } from '../lib/booking/stateMachine.js';
+import { unknownInfoClientMessage } from '../utils/workingHours.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 /** @typedef {import('./handlerResult.js').HandlerResult} HandlerResult */
@@ -170,7 +171,7 @@ export function renderHandlerResult(business, result) {
       return String(d.client_message || 'A apărut o eroare. Încearcă din nou sau scrie *contact*.');
     case 'SERVICES_LIST': {
       const services = d.services || [];
-      if (!services.length) return 'Nu există servicii configurate încă în Admin.';
+      if (!services.length) return unknownInfoClientMessage();
       const lines = ['📋 *Servicii:*', ''];
       services.forEach((s) => {
         lines.push(`*${s.name}*`);
@@ -182,7 +183,7 @@ export function renderHandlerResult(business, result) {
     }
     case 'HOURS_LIST':
       if (!d.hours_configured || !d.hours_text) {
-        return 'Programul de lucru nu este setat încă în Admin. Nu pot oferi ore.';
+        return unknownInfoClientMessage();
       }
       return `🕐 *Program ${business.name}*\n\n${d.hours_text}`;
     case 'CONTACT':
@@ -206,9 +207,15 @@ export function renderHandlerResult(business, result) {
       );
     }
     case 'CHAT_FALLBACK':
+    case 'OFF_TOPIC':
       return (
-        `Spune-mi ce ai nevoie, pe scurt: vrei să vezi programările existente, să faci una nouă, sau altceva?`
+        `Sunt asistentul de programări al *${d.business_name || business.name}*. ` +
+        `Nu pot discuta asta. Te pot ajuta cu o programare, programul de lucru sau datele de contact.`
       );
+    case 'MISSING_INFO':
+      return unknownInfoClientMessage();
+    case 'ADMIN_FACT':
+      return String(d.fact || unknownInfoClientMessage());
     default:
       return String(d.client_message || 'Spune-mi cum te pot ajuta.');
   }

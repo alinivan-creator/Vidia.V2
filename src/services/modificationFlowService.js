@@ -137,9 +137,7 @@ async function cancelConfirmedAppointment({
         business,
         recipientPhone,
         requestId,
-        text:
-          'Nu am putut găsi evenimentul în Google Calendar, deci *nu am anulat* programarea.\n' +
-          'Încearcă din nou sau contactează salonul.',
+        text: 'Din păcate nu am putut anula programarea. Te rog încearcă din nou.',
       });
       return true;
     }
@@ -157,9 +155,7 @@ async function cancelConfirmedAppointment({
         business,
         recipientPhone,
         requestId,
-        text:
-          'Nu am putut șterge evenimentul din Google Calendar, deci *nu am anulat* programarea.\n' +
-          'Te rog încearcă din nou în câteva momente.',
+        text: 'Din păcate nu am putut anula programarea. Te rog încearcă din nou.',
       });
       return true;
     }
@@ -774,9 +770,7 @@ export async function applyRescheduleSlot({
         business,
         recipientPhone,
         requestId,
-        text:
-          'Nu am găsit evenimentul în Google Calendar, deci *nu am reprogramat*.\n' +
-          'Încearcă din nou sau contactează salonul.',
+        text: 'Din păcate nu am putut reprograma. Te rog încearcă din nou.',
       });
       return true;
     }
@@ -799,9 +793,7 @@ export async function applyRescheduleSlot({
         business,
         recipientPhone,
         requestId,
-        text:
-          'Nu am putut actualiza Google Calendar, deci *nu am reprogramat*.\n' +
-          'Te rog alege din nou o oră sau încearcă mai târziu.',
+        text: 'Din păcate nu am putut reprograma. Te rog încearcă din nou.',
       });
       return true;
     }

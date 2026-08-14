@@ -1,4 +1,5 @@
 import { getConfiguredBusinessHours, formatBusinessHoursText } from '../utils/datetime.js';
+import { unknownInfoClientMessage } from '../utils/workingHours.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -60,7 +61,7 @@ export function formatContactMessage(business) {
   if (lines.length <= 2) {
     return (
       `📞 *Contact — ${business.name}*\n\n` +
-      'Datele de contact nu sunt configurate încă. Te rugăm să revii în curând.'
+      unknownInfoClientMessage()
     );
   }
 

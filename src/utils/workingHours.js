@@ -73,15 +73,14 @@ export function assertWithinWorkingHours(business, start, end) {
     return {
       ok: false,
       reason: 'hours_unset',
-      message:
-        'Programul de lucru nu este configurat încă în Admin. Nu pot oferi sau confirma ore.',
+      message: 'Din păcate nu vă pot oferi ore de programare momentan.',
     };
   }
   if (!info.open || !info.dayHours) {
     return {
       ok: false,
       reason: 'closed',
-      message: `*${info.dayName}* suntem *închiși* (conform programului din Admin).`,
+      message: `*${info.dayName}* suntem *închiși*.`,
     };
   }
 
@@ -123,13 +122,19 @@ export function resolveServiceDurationMinutes(business, service) {
 }
 
 export function hoursUnsetClientMessage() {
-  return 'Programul de lucru nu este setat în Admin (sau toate zilele sunt închise). Nu pot oferi ore de programare.';
+  return 'Din păcate nu vă pot oferi ore de programare momentan.';
+}
+
+/**
+ * Unknown business fact (parking, prices extras, etc.). Never mentions Admin.
+ */
+export function unknownInfoClientMessage() {
+  return 'Nu dețin această informație, din păcate nu vă pot răspunde la această întrebare.';
 }
 
 /**
  * @param {string | null | undefined} serviceName
  */
 export function durationMissingClientMessage(serviceName) {
-  const label = serviceName ? `*${serviceName}*` : 'selectat';
-  return `Serviciul ${label} nu are o durată validă în Admin. Nu pot genera sau confirma ore.`;
+  return 'Din păcate nu pot confirma această programare momentan.';
 }
