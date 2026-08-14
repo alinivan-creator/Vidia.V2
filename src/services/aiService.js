@@ -308,6 +308,10 @@ function markOpenAiDown() {
   openaiUnavailableUntil = Date.now() + 30_000;
 }
 
+export function markOpenAiUnavailable() {
+  markOpenAiDown();
+}
+
 export function isOpenAiTemporarilyDown() {
   return Date.now() < openaiUnavailableUntil;
 }

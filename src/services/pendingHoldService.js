@@ -2,19 +2,17 @@ import { CONVERSATION_STEPS, readLastMenu } from '../db/conversationStateService
 import { listEmployees, matchEmployeeMention } from '../db/employeeService.js';
 import { formatSlotLabel } from '../utils/datetime.js';
 import {
-  interpretUserTurn,
   buildConversationTurnContext,
   isOpenAiTemporarilyDown,
 } from './aiService.js';
+import { runFunctionCallingTurn } from './aiAgentService.js';
 import {
   handleBookingInteractiveReply,
   handleClientNameReply,
   handleFreeTextSlotRequest,
   applyPendingEmployeeChange,
-  abandonPendingConfirmation,
 } from './bookingFlowService.js';
 import {
-  handleBookingAction,
   handleInfoAction,
   handleCallbackRequest,
   handleContactAction,
@@ -27,7 +25,6 @@ import {
 import {
   acceptClarifiedOffer,
   rememberOfferFromAssistant,
-  resolveAcceptedOffer,
   readPendingOffer,
   readClarified,
   historyWithoutResolvedObjections,
@@ -158,110 +155,47 @@ export async function handlePendingHoldTurn({
     clarified: readClarified(convState),
   });
 
-  const skipRouter = !process.env.OPENAI_API_KEY || isOpenAiTemporarilyDown();
-  const interpreted = skipRouter
-    ? null
-    : await interpretUserTurn({
-        business,
-        userMessage: textBody,
-        turnContext,
-        history: recentTurns,
-        requestId,
-      });
-
-  if (interpreted?.action === 'confirm') {
-    await handleBookingInteractiveReply({
-      business,
-      recipientPhone,
-      replyId: 'confirm_booking',
-      clientId,
-      requestId,
-    });
-    return true;
-  }
-
-  if (interpreted?.action === 'cancel_pending' || interpreted?.action === 'cancel') {
-    await handleBookingInteractiveReply({
-      business,
-      recipientPhone,
-      replyId: 'cancel_booking',
-      clientId,
-      requestId,
-    });
-    return true;
-  }
-
-  if (interpreted?.action === 'change_employee') {
-    const staffForOffer = staff.length ? staff : [];
-    const resolved = resolveAcceptedOffer({
-      convState,
-      employees: staffForOffer,
-      services: [],
-    });
-    await applyPendingEmployeeChange({
-      business,
-      recipientPhone,
-      draft: activeDraft,
-      textBody: resolved?.employee?.name || textBody,
-      requestId,
-    });
-    return true;
-  }
-
-  if (interpreted?.action === 'book' || interpreted?.action === 'reschedule') {
-    if (activeDraft?.selected_service && looksLikeDatetimeOrSlot(textBody)) {
-      const handled = await handleFreeTextSlotRequest({
-        business,
-        recipientPhone,
-        draft: activeDraft,
-        textBody,
-        requestId,
-      });
-      if (handled) return true;
-    }
-    await abandonPendingConfirmation({
-      business,
-      recipientPhone,
-      draft: activeDraft,
-      requestId,
-    });
-    await handleBookingAction({
-      business,
-      recipientPhone,
-      clientId,
-      hintText: textBody,
-      requestId,
-    });
-    return true;
-  }
-
-  if (interpreted?.action === 'callback') {
-    await handleCallbackRequest({
+  const skipAgent = !process.env.OPENAI_API_KEY || isOpenAiTemporarilyDown();
+  if (!skipAgent) {
+    const result = await runFunctionCallingTurn({
       business,
       recipientPhone,
       userMessage: textBody,
-      reason: 'ai_router_callback',
       clientId,
       requestId,
+      turnContext,
+      history: recentTurns,
+      draft: activeDraft,
+      convState,
     });
-    return true;
-  }
-
-  if (interpreted?.message && (interpreted.action === 'faq' || interpreted.action === 'chat')) {
-    await simulateHumanDelay({ business, recipientPhone, requestId });
-    await sendTextMessage({
-      business,
-      recipientPhone,
-      requestId,
-      text: interpreted.message,
-    });
-    await rememberOfferFromAssistant({
-      business,
-      recipientPhone,
-      text: interpreted.message,
-      requestId,
-    });
-    return true;
+    if (result.needsCallback) {
+      await handleCallbackRequest({
+        business,
+        recipientPhone,
+        userMessage: textBody,
+        reason: result.callbackReason || 'ai_tool_callback',
+        clientId,
+        requestId,
+      });
+      return true;
+    }
+    if (result.uiSent) return true;
+    if (result.text) {
+      await simulateHumanDelay({ business, recipientPhone, requestId });
+      await sendTextMessage({
+        business,
+        recipientPhone,
+        requestId,
+        text: result.text,
+      });
+      await rememberOfferFromAssistant({
+        business,
+        recipientPhone,
+        text: result.text,
+        requestId,
+      });
+      return true;
+    }
   }
 
   // OpenAI down / unclear: keep the hold, never restart booking from a template

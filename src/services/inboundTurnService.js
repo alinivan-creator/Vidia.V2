@@ -13,20 +13,19 @@ import {
   readLastMenu,
 } from '../db/conversationStateService.js';
 import {
-  interpretUserTurn,
   buildConversationTurnContext,
   isOpenAiTemporarilyDown,
 } from './aiService.js';
+import { runFunctionCallingTurn } from './aiAgentService.js';
 import {
   handleBookingInteractiveReply,
   handleResumeOfferReply,
   offerResumeOrAlternatives,
   tryApplyBookingStepReply,
   handleFreeTextSlotRequest,
-  applyPendingEmployeeChange,
 } from './bookingFlowService.js';
 import { handlePendingHoldTurn } from './pendingHoldService.js';
-import { acceptClarifiedOffer, rememberOfferFromAssistant, readPendingOffer, readClarified, historyWithoutResolvedObjections } from './pendingOfferService.js';
+import { acceptClarifiedOffer, readPendingOffer, readClarified, historyWithoutResolvedObjections } from './pendingOfferService.js';
 import {
   handleGlobalModificationIntent,
   handleModificationInteractive,
@@ -304,29 +303,7 @@ export async function routeInboundTurn({
     return;
   }
 
-  // New booking only from idle — never restart the service list mid-flow
-  if (!inBooking && (triage.intent === 'book' || looksLikeDatetimeOrSlot(textBody))) {
-    await handleBookingAction({
-      business,
-      recipientPhone,
-      clientId,
-      hintText: textBody,
-      requestId,
-    });
-    return;
-  }
-
-  if (!inBooking && triage.intent === 'contact') {
-    await handleMenuButtonPress({
-      business,
-      recipientPhone,
-      buttonId: 'contact',
-      clientId,
-      requestId,
-    });
-    return;
-  }
-
+  // Guard fast-path: already picking a slot, parse the datetime without another LLM round.
   if (inBooking && activeDraft?.selected_service && looksLikeDatetimeOrSlot(textBody)) {
     const handled = await handleFreeTextSlotRequest({
       business,
@@ -358,73 +335,24 @@ export async function routeInboundTurn({
     clarified: readClarified(convState),
   });
 
-  const skipRouter = !process.env.OPENAI_API_KEY || isOpenAiTemporarilyDown();
-  const interpreted = skipRouter
-    ? null
-    : await interpretUserTurn({
-        business,
-        userMessage: textBody,
-        turnContext,
-        history: recentTurns,
-        requestId,
-      });
-
-  if (interpreted?.action === 'resume' && lastIntent && !pendingDismissed) {
-    const offered = await offerResumeOrAlternatives({
+  const skipAgent = !process.env.OPENAI_API_KEY || isOpenAiTemporarilyDown();
+  if (!skipAgent) {
+    const handled = await dispatchFunctionCallingTurn({
       business,
       recipientPhone,
-      lastIntent,
+      textBody,
       clientId,
       requestId,
+      convState,
+      activeDraft,
+      turnContext,
+      recentTurns,
     });
-    if (offered) return;
+    if (handled) return;
   }
 
-  if (interpreted?.action === 'change_employee') {
-    if (activeDraft) {
-      await applyPendingEmployeeChange({
-        business,
-        recipientPhone,
-        draft: activeDraft,
-        textBody: readPendingOffer(convState)?.name || textBody,
-        requestId,
-      });
-    } else {
-      await handleBookingAction({
-        business,
-        recipientPhone,
-        clientId,
-        hintText: readPendingOffer(convState)?.name || textBody,
-        requestId,
-      });
-    }
-    return;
-  }
-
-  if (interpreted?.action === 'book') {
-    if (inBooking && activeDraft?.selected_service && looksLikeDatetimeOrSlot(textBody)) {
-      const handled = await handleFreeTextSlotRequest({
-        business,
-        recipientPhone,
-        draft: activeDraft,
-        textBody,
-        requestId,
-      });
-      if (handled) return;
-    }
-    if (inBooking) {
-      // Already in a booking step — do not restart the service picker.
-      await handleInfoAction({
-        business,
-        recipientPhone,
-        userMessage: textBody,
-        clientId,
-        requestId,
-        turnContext,
-        history: recentTurns,
-      });
-      return;
-    }
+  // Fallback when OpenAI is down: keyword routing + info.
+  if (!inBooking && (triage.intent === 'book' || looksLikeDatetimeOrSlot(textBody))) {
     await handleBookingAction({
       business,
       recipientPhone,
@@ -435,51 +363,12 @@ export async function routeInboundTurn({
     return;
   }
 
-  if (interpreted?.action === 'cancel' || interpreted?.action === 'reschedule') {
-    if (isPendingHold) {
-      await handleBookingInteractiveReply({
-        business,
-        recipientPhone,
-        replyId: 'cancel_booking',
-        clientId,
-        requestId,
-      });
-      return;
-    }
-    await handleGlobalModificationIntent({
+  if (!inBooking && triage.intent === 'contact') {
+    await handleMenuButtonPress({
       business,
       recipientPhone,
-      intent: interpreted.action,
-      activeDraft,
-      requestId,
-    });
-    return;
-  }
-
-  if (interpreted?.action === 'callback') {
-    await handleCallbackRequest({
-      business,
-      recipientPhone,
-      userMessage: textBody,
-      reason: 'ai_router_callback',
+      buttonId: 'contact',
       clientId,
-      requestId,
-    });
-    return;
-  }
-
-  if (interpreted?.message && (interpreted.action === 'faq' || interpreted.action === 'chat')) {
-    await simulateHumanDelay({ business, recipientPhone, requestId });
-    await sendTextMessage({
-      business,
-      recipientPhone,
-      requestId,
-      text: interpreted.message,
-    });
-    await rememberOfferFromAssistant({
-      business,
-      recipientPhone,
-      text: interpreted.message,
       requestId,
     });
     return;
@@ -506,4 +395,59 @@ export async function routeInboundTurn({
     turnContext,
     history: recentTurns,
   });
+}
+
+/**
+ * Brain (OpenAI tools) + Guard (backend executor). Sends at most one client
+ * message unless a tool already wrote to WhatsApp (ui_sent).
+ */
+async function dispatchFunctionCallingTurn({
+  business,
+  recipientPhone,
+  textBody,
+  clientId,
+  requestId,
+  convState,
+  activeDraft,
+  turnContext,
+  recentTurns,
+}) {
+  const result = await runFunctionCallingTurn({
+    business,
+    recipientPhone,
+    userMessage: textBody,
+    clientId,
+    requestId,
+    turnContext,
+    history: recentTurns,
+    draft: activeDraft,
+    convState,
+  });
+
+  if (result.needsCallback) {
+    await handleCallbackRequest({
+      business,
+      recipientPhone,
+      userMessage: textBody,
+      reason: result.callbackReason || 'ai_out_of_scope',
+      clientId,
+      requestId,
+    });
+    return true;
+  }
+
+  if (result.uiSent) return true;
+
+  if (result.text) {
+    await simulateHumanDelay({ business, recipientPhone, requestId });
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: result.text,
+    });
+    return true;
+  }
+
+  return false;
 }
