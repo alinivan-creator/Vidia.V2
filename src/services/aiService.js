@@ -1,8 +1,9 @@
 import { logError } from '../db/loggerService.js';
-import { getBusinessById } from '../db/businessService.js';
 import { getBookingConfig, getConfiguredBusinessHours, formatBusinessHoursText } from '../utils/datetime.js';
+import { hasConfiguredOpenDay } from '../utils/workingHours.js';
 import { getBusinessContactInfo } from './contactService.js';
 import { CALLBACK_SENTINEL, DEFAULT_SYSTEM_PROMPT } from '../config/defaultSystemPrompt.js';
+import { loadBusinessContext } from './businessContext.js';
 import { getConversationLogic } from '../config/conversationConfig.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
@@ -85,9 +86,6 @@ export function buildContactContext(business) {
   if (info.address) lines.push(`- Adresă: ${info.address}`);
   if (info.website) lines.push(`- Website: ${info.website}`);
   if (info.mapsUrl) lines.push(`- Hartă: ${info.mapsUrl}`);
-  if (!getConfiguredBusinessHours(business) && info.hours) {
-    lines.push(`- Program (text): ${info.hours}`);
-  }
 
   if (!lines.length) {
     return (
@@ -116,6 +114,21 @@ function buildFactsContext(business) {
  * @param {Business} business
  * @returns {string}
  */
+export function buildEmployeesContext(business) {
+  const employees = Array.isArray(business.employees) ? business.employees : [];
+  if (!employees.length) {
+    return '\n\nANGAJAȚI: nesetați în Admin (programările merg pe calendarul afacerii).';
+  }
+  return (
+    '\n\nANGAJAȚI ACTIVI (folosește exclusiv aceste nume):\n' +
+    employees.map((e) => `- ${e.name}`).join('\n')
+  );
+}
+
+/**
+ * @param {Business} business
+ * @returns {string}
+ */
 function buildModeContext(business) {
   if (business.business_type === 'consulting') {
     return `
@@ -126,8 +139,11 @@ MOD AFACERE: CONSULTING (fără calendar online).
 
   return `
 MOD AFACERE: BOOKING (programări online).
-- Nu inventa disponibilitate — orele libere vin din Google Calendar, în backend.
-- Poți recunoaște o cerere de programare din limbaj natural (zi/oră/serviciu).`;
+- Programul din Admin este legea absolută. Zilele marcate „închis” sunt închise — spune-o clientului, fără excepții.
+- Backend-ul respinge orice oră în afara programului, fără să interogheze Google Calendar.
+- Nu oferi și nu inventa ore în zile închise sau în afara intervalului din Admin.
+- Durata fiecărui serviciu este cea din catalog. Nu estima durate.
+- Nu inventa disponibilitate — sloturile libere vin din backend, doar după filtrul de program.`;
 }
 
 /**
@@ -160,6 +176,7 @@ export function buildSystemPrompt(business, opts = {}) {
     buildTurnContextBlock(opts.turnContext) +
     buildServicesCatalog(business) +
     buildBusinessHoursContext(business) +
+    buildEmployeesContext(business) +
     buildContactContext(business) +
     buildFactsContext(business) +
     `\n\nPROTOCOL CALLBACK: dacă nu poți răspunde din datele de mai sus, emite exact o linie: ${CALLBACK_SENTINEL}`;
@@ -178,6 +195,7 @@ export function buildSystemPrompt(business, opts = {}) {
       `- callback: om din echipă\n` +
       `- same_slot=true doar dacă vrea explicit slotul reținut\n` +
       `- Nu inventa ore libere. Nu cere clientului să scrie cuvântul „programare”.\n` +
+      `- Dacă Admin zice închis, mesajul către client trebuie să zică închis.\n` +
       `- Citește mesajul integral + istoricul. Nu ignora textul liber.`;
   }
 
@@ -205,11 +223,10 @@ function factualReply(business, userMessage) {
   if (asksHours) {
     const hours = getConfiguredBusinessHours(business);
     if (!hours) {
-      const legacy = getBusinessContactInfo(business).hours;
-      if (legacy) {
-        return `*Program — ${business.name}*\n\n${legacy}`;
-      }
       return `Nu am programul de lucru configurat încă pentru *${business.name}*.`;
+    }
+    if (!hasConfiguredOpenDay(business)) {
+      return `*${business.name}* are toate zilele marcate ca închise în programul din Admin.`;
     }
     return (
       `*Program de lucru — ${business.name}*\n\n` +
@@ -422,7 +439,8 @@ export async function generateAiReply({
   turnContext = null,
   history = [],
 }) {
-  const fresh = (await getBusinessById(business.id)) || business;
+  const ctx = await loadBusinessContext(business.id);
+  const fresh = ctx?.business || business;
 
   const live = await callOpenAi({
     business: fresh,
@@ -529,7 +547,8 @@ export async function interpretUserTurn({
   history = [],
   requestId = null,
 }) {
-  const fresh = (await getBusinessById(business.id)) || business;
+  const ctx = await loadBusinessContext(business.id);
+  const fresh = ctx?.business || business;
 
   const live = await callOpenAi({
     business: fresh,

@@ -29,12 +29,13 @@ export async function isServicesTableAvailable() {
 export function mapServiceRow(row) {
   const slug = typeof row.slug === 'string' && row.slug ? row.slug : null;
   const id = slug || String(row.id);
+  const duration = Number(row.duration_minutes);
 
   return {
     id,
     name: String(row.name ?? 'Serviciu'),
     price_ron: row.price_ron != null ? Number(row.price_ron) : null,
-    duration_minutes: Number(row.duration_minutes ?? 30),
+    duration_minutes: Number.isFinite(duration) && duration > 0 ? duration : 0,
     _db_id: String(row.id),
   };
 }
@@ -74,7 +75,9 @@ export async function listServicesForBusiness(businessId, opts = {}) {
     return [];
   }
 
-  return (data ?? []).map((row) => mapServiceRow(/** @type {Record<string, unknown>} */ (row)));
+  return (data ?? [])
+    .map((row) => mapServiceRow(/** @type {Record<string, unknown>} */ (row)))
+    .filter((s) => Number(s.duration_minutes) > 0);
 }
 
 /**
@@ -111,7 +114,7 @@ export async function replaceServicesForBusiness(businessId, services) {
   }
 
   const rows = (services ?? [])
-    .filter((s) => String(s.name ?? '').trim())
+    .filter((s) => String(s.name ?? '').trim() && Number(s.duration_minutes) > 0)
     .map((s, index) => {
       const name = String(s.name).trim();
       const rawId = s.id ? String(s.id) : '';
@@ -122,7 +125,7 @@ export async function replaceServicesForBusiness(businessId, services) {
         name,
         slug: looksUuid ? slugifyService(name) : (rawId || slugifyService(name)),
         price_ron: s.price_ron != null && s.price_ron !== '' ? Number(s.price_ron) : null,
-        duration_minutes: Number(s.duration_minutes ?? 30) || 30,
+        duration_minutes: Number(s.duration_minutes),
         sort_order: index,
         is_active: true,
       };

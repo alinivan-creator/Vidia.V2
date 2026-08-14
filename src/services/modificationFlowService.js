@@ -15,6 +15,13 @@ import {
 } from '../db/conversationStateService.js';
 import { getAvailableSlots, isSlotAvailable } from '../db/cacheService.js';
 import { formatSlotLabel, decodeSlotId, slotNumberEmoji } from '../utils/datetime.js';
+import {
+  assertWithinWorkingHours,
+  durationMissingClientMessage,
+  hasConfiguredOpenDay,
+  hoursUnsetClientMessage,
+  resolveServiceDurationMinutes,
+} from '../utils/workingHours.js';
 import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
 import { buildGdprNote, buildMapsInviteLine } from '../utils/businessMessages.js';
 import {
@@ -406,7 +413,28 @@ async function sendRescheduleSlotPicker({ business, recipientPhone, appointment,
   const service = /** @type {{ duration_minutes?: number; name?: string }} */ (
     appointment.selected_service ?? {}
   );
-  const duration = Number(service.duration_minutes ?? 30);
+  const duration = resolveServiceDurationMinutes(business, service);
+
+  if (!hasConfiguredOpenDay(business)) {
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: hoursUnsetClientMessage(),
+    });
+    return;
+  }
+
+  if (!duration) {
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: durationMissingClientMessage(service.name),
+    });
+    return;
+  }
+
   const { employeeId, calendarId } = await resolveAppointmentStaff(business, appointment);
 
   // Force live Google sync on the employee's calendar (not only business default)
@@ -640,7 +668,7 @@ export async function applyRescheduleSlot({
   const service = /** @type {{ name?: string; duration_minutes?: number }} */ (
     convState.context_data?.service ?? {}
   );
-  const duration = Number(service.duration_minutes ?? 30);
+  const duration = resolveServiceDurationMinutes(business, service);
   const storedEventId = /** @type {string | null} */ (convState.context_data?.google_event_id ?? null);
 
   if (!appointmentId) {
@@ -680,6 +708,28 @@ export async function applyRescheduleSlot({
     return true;
   }
 
+  if (!duration) {
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: durationMissingClientMessage(service.name),
+    });
+    return true;
+  }
+
+  const slotEnd = new Date(slotStart.getTime() + duration * 60_000);
+  const hoursCheck = assertWithinWorkingHours(business, slotStart, slotEnd);
+  if (!hoursCheck.ok) {
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: hoursCheck.message,
+    });
+    return true;
+  }
+
   // Re-sync employee calendar right before accept
   await lazySyncCalendar({
     business,
@@ -707,8 +757,6 @@ export async function applyRescheduleSlot({
     await sendRescheduleSlotPicker({ business, recipientPhone, appointment, requestId });
     return true;
   }
-
-  const slotEnd = new Date(slotStart.getTime() + duration * 60_000);
 
   const eventId = await resolveCalendarEventId({
     business,

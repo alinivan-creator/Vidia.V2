@@ -10,6 +10,7 @@ import {
 import { upsertBusyEvents, removeStaleGoogleEvents } from '../db/cacheService.js';
 import { logError } from '../db/loggerService.js';
 import { reportCalendarConfigMissing } from '../db/schemaHealth.js';
+import { assertWithinWorkingHours, hasConfiguredOpenDay } from '../utils/workingHours.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -382,12 +383,6 @@ export async function syncEventsToCache({
  * @param {import('../db/businessService.js').Business} params.business
  * @param {string | null} [params.requestId]
  * @param {boolean} [params.force]
- */
-/**
- * @param {Object} params
- * @param {import('../db/businessService.js').Business} params.business
- * @param {string | null} [params.requestId]
- * @param {boolean} [params.force]
  * @param {string | null} [params.calendarId]
  * @param {string | null} [params.employeeId]
  */
@@ -398,6 +393,10 @@ export async function lazySyncCalendar({
   calendarId = null,
   employeeId = null,
 }) {
+  if (!hasConfiguredOpenDay(business)) {
+    return { skipped: true, reason: 'admin_hours_closed' };
+  }
+
   const horizonDays = Number(business.booking_settings?.booking_horizon_days ?? 7);
   const timeMin = new Date();
   const timeMax = new Date(Date.now() + horizonDays * 24 * 60 * 60 * 1000);
@@ -452,6 +451,17 @@ export async function createCalendarEvent({
   employeeId = null,
   requestId = null,
 }) {
+  const hoursCheck = assertWithinWorkingHours(business, event.startIso, event.endIso);
+  if (!hoursCheck.ok) {
+    return {
+      ok: false,
+      eventId: null,
+      htmlLink: null,
+      error: hoursCheck.message,
+      reason: hoursCheck.reason,
+    };
+  }
+
   const resolvedCalendarId = calendarId || business.google_calendar_id;
 
   if (isBusinessMockMode(business)) {
@@ -556,6 +566,14 @@ export async function updateCalendarEvent({
     /** @type {{ dateTime?: string } | undefined} */ (updates.start)?.dateTime ?? null;
   const endIso =
     /** @type {{ dateTime?: string } | undefined} */ (updates.end)?.dateTime ?? null;
+
+  if (startIso && endIso) {
+    const hoursCheck = assertWithinWorkingHours(business, startIso, endIso);
+    if (!hoursCheck.ok) {
+      return { ok: false, error: hoursCheck.message, reason: hoursCheck.reason };
+    }
+  }
+
   const resolvedCalendarId = calendarId || business.google_calendar_id;
 
   const syncLocalCache = async () => {

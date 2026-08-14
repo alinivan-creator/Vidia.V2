@@ -6,7 +6,7 @@
  * @property {string} close "HH:mm"
  */
 
-/** Default hours used only for slot generation when Admin has not configured any. */
+/** Placeholder for the Admin hours editor only — NEVER used to generate live slots. */
 export const DEFAULT_BUSINESS_HOURS = /** @type {Record<string, DayHours | null>} */ ({
   '0': null,
   '1': { open: '09:00', close: '18:00' },
@@ -15,6 +15,16 @@ export const DEFAULT_BUSINESS_HOURS = /** @type {Record<string, DayHours | null>
   '4': { open: '09:00', close: '18:00' },
   '5': { open: '09:00', close: '18:00' },
   '6': { open: '10:00', close: '14:00' },
+});
+
+const ALL_CLOSED_HOURS = /** @type {Record<string, DayHours | null>} */ ({
+  '0': null,
+  '1': null,
+  '2': null,
+  '3': null,
+  '4': null,
+  '5': null,
+  '6': null,
 });
 
 export const WEEKDAY_LABELS_RO = {
@@ -71,15 +81,16 @@ export function getBookingConfig(business) {
     ? business.services
     : null;
 
+  const adminHours = getConfiguredBusinessHours(business);
+
   return {
     slotIntervalMinutes: Number(settings.slot_interval_minutes ?? 30),
     bookingHorizonDays: Number(settings.booking_horizon_days ?? 7),
     bufferMinutes: Number(settings.buffer_minutes ?? 0),
-    businessHours: /** @type {Record<string, DayHours | null>} */ (
-      getConfiguredBusinessHours(business) ?? DEFAULT_BUSINESS_HOURS
-    ),
+    hoursConfigured: Boolean(adminHours),
+    businessHours: /** @type {Record<string, DayHours | null>} */ (adminHours ?? ALL_CLOSED_HOURS),
     services: /** @type {{ id: string; name: string; duration_minutes: number; price_ron?: number | null }[]} */ (
-      fromBusiness ?? settings.services ?? []
+      (fromBusiness ?? settings.services ?? []).filter((s) => Number(s?.duration_minutes) > 0)
     ),
   };
 }

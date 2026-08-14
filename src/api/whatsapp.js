@@ -6,6 +6,7 @@ import {
 } from '../db/businessService.js';
 import { appendRecentTurn } from '../db/conversationStateService.js';
 import { logError } from '../db/loggerService.js';
+import { loadBusinessContext } from '../services/businessContext.js';
 import { routeInboundTurn } from '../services/inboundTurnService.js';
 import { triageUserIntent } from '../services/intentTriageService.js';
 import {
@@ -152,7 +153,9 @@ async function processTwilioWebhook(body, requestId) {
     return;
   }
 
-  const business = await getBusinessByWhatsAppToNumber(toClean, { includeInactive: true });
+  const matched = await getBusinessByWhatsAppToNumber(toClean, { includeInactive: true });
+  const ctx = matched ? await loadBusinessContext(matched.id) : null;
+  const business = ctx?.business ?? matched ?? null;
 
   console.log('[webhook] Business match:', {
     toClean,

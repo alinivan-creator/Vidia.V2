@@ -28,6 +28,13 @@ import {
   resolveEmployeeCalendarId,
 } from '../db/employeeService.js';
 import { getBookingConfig, formatSlotLabel, encodeSlotId, localToUtc, formatDateKey, slotNumberEmoji, getWeekdayInTimezone } from '../utils/datetime.js';
+import {
+  assertWithinWorkingHours,
+  durationMissingClientMessage,
+  hasConfiguredOpenDay,
+  hoursUnsetClientMessage,
+  resolveServiceDurationMinutes,
+} from '../utils/workingHours.js';
 import { expirePendingIfNeeded, resolveLastBookingIntent } from './pendingExpiryService.js';
 import { getPendingTtlMinutes } from '../config/conversationConfig.js';
 import { triageUserIntent, looksLikeDatetimeOrSlot } from './intentTriageService.js';
@@ -168,13 +175,16 @@ export async function tryApplyBookingStepReply({
       : null;
     if (!replyId && draft.selected_service) {
       const service = /** @type {{ duration_minutes: number }} */ (draft.selected_service);
-      const slots = await getAvailableSlots({
-        business,
-        durationMinutes: service.duration_minutes,
-        limit: 10,
-        excludeDraftId: draft.id,
-        employeeId: draftEmployeeId(draft),
-      });
+      const duration = catalogDuration(business, service);
+      const slots = duration
+        ? await getAvailableSlots({
+            business,
+            durationMinutes: duration,
+            limit: 10,
+            excludeDraftId: draft.id,
+            employeeId: draftEmployeeId(draft),
+          })
+        : [];
       const options = slots.map((s) => ({
         id: s.id,
         title: formatSlotLabel(s.start, business.timezone),
@@ -214,6 +224,15 @@ function draftEmployeeId(draft) {
   if (draft.employee_id) return draft.employee_id;
   const ctxEmp = draft.conversation_context?.employee_id;
   return typeof ctxEmp === 'string' ? ctxEmp : null;
+}
+
+/**
+ * Catalog duration for this tenant — never a hardcoded guess.
+ * @param {Business} business
+ * @param {{ id?: string, name?: string, duration_minutes?: number } | null | undefined} service
+ */
+function catalogDuration(business, service) {
+  return resolveServiceDurationMinutes(business, service);
 }
 
 /**
@@ -287,6 +306,29 @@ export async function sendSlotPicker({ business, recipientPhone, draft, requestI
     return;
   }
 
+  await simulateHumanDelay({ business, recipientPhone, requestId });
+
+  if (!hasConfiguredOpenDay(business)) {
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: hoursUnsetClientMessage(),
+    });
+    return;
+  }
+
+  const duration = catalogDuration(business, service);
+  if (!duration) {
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: durationMissingClientMessage(service.name),
+    });
+    return;
+  }
+
   const empId = draftEmployeeId(draft);
   const employee = empId ? await getEmployeeById(empId, business.id) : null;
   const calendarId = resolveEmployeeCalendarId(business, employee);
@@ -300,13 +342,11 @@ export async function sendSlotPicker({ business, recipientPhone, draft, requestI
 
   const slots = await getAvailableSlots({
     business,
-    durationMinutes: service.duration_minutes,
+    durationMinutes: duration,
     limit: 10,
     excludeDraftId: draft.id,
     employeeId: empId,
   });
-
-  await simulateHumanDelay({ business, recipientPhone, requestId });
 
   if (slots.length === 0) {
     await sendTextMessage({
@@ -355,6 +395,10 @@ export async function sendSlotPicker({ business, recipientPhone, draft, requestI
  * @returns {Promise<import('../db/employeeService.js').Employee | null>}
  */
 async function findFirstAvailableEmployee({ business, durationMinutes, draftId, requestId }) {
+  const duration = Number(durationMinutes);
+  if (!Number.isFinite(duration) || duration <= 0) return null;
+  if (!hasConfiguredOpenDay(business)) return null;
+
   const employees = await listEmployees(business.id, { activeOnly: true });
   for (const emp of employees) {
     const calendarId = resolveEmployeeCalendarId(business, emp);
@@ -428,7 +472,7 @@ async function continueAfterServiceSelected({
     // Prefer first available; if none, still show picker
     chosen = await findFirstAvailableEmployee({
       business,
-      durationMinutes: service.duration_minutes,
+      durationMinutes: catalogDuration(business, service),
       draftId: draft.id,
       requestId,
     });
@@ -963,7 +1007,7 @@ export async function handleBookingInteractiveReply({
     if (replyId === PREFIX.ANY_EMPLOYEE) {
       employee = await findFirstAvailableEmployee({
         business,
-        durationMinutes: service.duration_minutes,
+        durationMinutes: catalogDuration(business, service),
         draftId: draft.id,
         requestId,
       });
@@ -1020,11 +1064,34 @@ export async function handleBookingInteractiveReply({
       return true;
     }
 
+    const duration = catalogDuration(business, service);
+    if (!duration) {
+      await sendTextMessage({
+        business,
+        recipientPhone,
+        requestId,
+        text: durationMissingClientMessage(service.name),
+      });
+      return true;
+    }
+
+    const slotEnd = new Date(slotStart.getTime() + duration * 60_000);
+    const hoursCheck = assertWithinWorkingHours(business, slotStart, slotEnd);
+    if (!hoursCheck.ok) {
+      await sendTextMessage({
+        business,
+        recipientPhone,
+        requestId,
+        text: hoursCheck.message,
+      });
+      return true;
+    }
+
     const empId = draftEmployeeId(draft);
     const available = await isSlotAvailable({
       business,
       slotId: replyId,
-      durationMinutes: service.duration_minutes,
+      durationMinutes: duration,
       excludeDraftId: draft.id,
       employeeId: empId,
     });
@@ -1039,8 +1106,6 @@ export async function handleBookingInteractiveReply({
       await sendSlotPicker({ business, recipientPhone, draft, requestId });
       return true;
     }
-
-    const slotEnd = new Date(slotStart.getTime() + service.duration_minutes * 60_000);
 
     const updated = await setSelectedSlot({
       draftId: draft.id,
@@ -1109,11 +1174,34 @@ async function handleConfirmBooking({ business, recipientPhone, draft, requestId
 
   const service = /** @type {{ name: string; duration_minutes: number }} */ (draft.selected_service);
   const slotStart = draft.selected_slot_start;
-  const slotEnd = draft.selected_slot_end;
 
-  if (!service || !slotStart || !slotEnd) return;
+  if (!service || !slotStart) return;
 
   await simulateHumanDelay({ business, recipientPhone, requestId });
+
+  const duration = catalogDuration(business, service);
+  if (!duration) {
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: durationMissingClientMessage(service.name),
+    });
+    return;
+  }
+
+  const startDate = new Date(slotStart);
+  const endDate = new Date(startDate.getTime() + duration * 60_000);
+  const hoursCheck = assertWithinWorkingHours(business, startDate, endDate);
+  if (!hoursCheck.ok) {
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: hoursCheck.message,
+    });
+    return;
+  }
 
   const phoneE164 = draft.phone_number;
   const client = await getClientByPhone({
@@ -1139,8 +1227,8 @@ async function handleConfirmBooking({ business, recipientPhone, draft, requestId
         `Telefon: ${phoneE164}\n` +
         (employee ? `Angajat: ${employee.name}\n` : '') +
         `Draft: ${draft.id}`,
-      startIso: slotStart,
-      endIso: slotEnd,
+      startIso: startDate.toISOString(),
+      endIso: endDate.toISOString(),
     },
     requestId,
   });
@@ -1152,6 +1240,16 @@ async function handleConfirmBooking({ business, recipientPhone, draft, requestId
 
   // Nu confirmăm niciodată o programare care nu a fost scrisă în Google Calendar real.
   if (!result.ok || !result.eventId || isMockEvent) {
+    if (result.reason === 'closed' || result.reason === 'outside_hours' || result.reason === 'hours_unset' || result.reason === 'invalid_range') {
+      await sendTextMessage({
+        business,
+        recipientPhone,
+        requestId,
+        text: result.error || hoursUnsetClientMessage(),
+      });
+      return;
+    }
+
     console.error('Eroare detalii:', {
       reason: 'createCalendarEvent failed or mock — refusing confirmation',
       mockMode: business.google_calendar_mock_mode === true,
@@ -1205,8 +1303,8 @@ async function handleConfirmBooking({ business, recipientPhone, draft, requestId
   const calendarInvite = buildBookingCalendarInvite({
     business,
     serviceName: service.name,
-    startIso: slotStart,
-    endIso: slotEnd,
+    startIso: startDate.toISOString(),
+    endIso: endDate.toISOString(),
   });
   const mapsInvite = buildMapsInviteLine(business);
 
@@ -1419,11 +1517,34 @@ export async function applyPendingEmployeeChange({
     && !Number.isNaN(slotStart.getTime());
 
   if (keepSlot) {
+    const duration = catalogDuration(business, service);
+    if (!duration) {
+      await sendTextMessage({
+        business,
+        recipientPhone,
+        requestId,
+        text: durationMissingClientMessage(service.name),
+      });
+      return true;
+    }
+
     const slotId = encodeSlotId(slotStart, business.timezone);
+    const slotEnd = new Date(slotStart.getTime() + duration * 60_000);
+    const hoursCheck = assertWithinWorkingHours(business, slotStart, slotEnd);
+    if (!hoursCheck.ok) {
+      await sendTextMessage({
+        business,
+        recipientPhone,
+        requestId,
+        text: hoursCheck.message,
+      });
+      return true;
+    }
+
     const available = await isSlotAvailable({
       business,
       slotId,
-      durationMinutes: service.duration_minutes,
+      durationMinutes: duration,
       excludeDraftId: draft.id,
       employeeId: mentioned.id,
     });
@@ -1440,7 +1561,6 @@ export async function applyPendingEmployeeChange({
         },
         requestId,
       });
-      const slotEnd = new Date(slotStart.getTime() + service.duration_minutes * 60_000);
       const updated = await setSelectedSlot({
         draftId: draft.id,
         businessId: business.id,
@@ -1533,13 +1653,15 @@ export async function offerResumeOrAlternatives({
   const empId = typeof lastIntent.employee_id === 'string' ? lastIntent.employee_id : null;
   const startDate = new Date(slotStart);
   const slotId = encodeSlotId(startDate, business.timezone);
-  const duration = Number(service.duration_minutes) || 30;
-  const free = await isSlotAvailable({
-    business,
-    slotId,
-    durationMinutes: duration,
-    employeeId: empId,
-  });
+  const duration = catalogDuration(business, service);
+  const free = duration
+    ? await isSlotAvailable({
+        business,
+        slotId,
+        durationMinutes: duration,
+        employeeId: empId,
+      })
+    : false;
   const label = lastIntent.slot_label || formatSlotLabel(startDate, business.timezone);
 
   if (free) {
@@ -1649,14 +1771,27 @@ export async function relockRememberedSlot({
 
   const empId = typeof lastIntent.employee_id === 'string' ? lastIntent.employee_id : null;
   const startDate = new Date(slotStart);
-  const endDate = lastIntent.slot_end
-    ? new Date(lastIntent.slot_end)
-    : new Date(startDate.getTime() + (Number(service.duration_minutes) || 30) * 60_000);
+  const duration = catalogDuration(business, service);
+  if (!duration) return false;
+
+  const endDate = new Date(startDate.getTime() + duration * 60_000);
   const slotId = encodeSlotId(startDate, business.timezone);
+  const hoursCheck = assertWithinWorkingHours(business, startDate, endDate);
+  if (!hoursCheck.ok) {
+    await offerResumeOrAlternatives({
+      business,
+      recipientPhone,
+      lastIntent,
+      clientId,
+      requestId,
+    });
+    return true;
+  }
+
   const free = await isSlotAvailable({
     business,
     slotId,
-    durationMinutes: Number(service.duration_minutes) || 30,
+    durationMinutes: duration,
     employeeId: empId,
   });
 
@@ -1773,16 +1908,41 @@ export async function handleFreeTextSlotRequest({
   );
   if (!service) return false;
 
+  const duration = catalogDuration(business, service);
+  if (!duration) {
+    await simulateHumanDelay({ business, recipientPhone, requestId });
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: durationMissingClientMessage(service.name),
+    });
+    return true;
+  }
+
   const parsed = parseRomanianDateTime(textBody, business.timezone);
   if (!parsed) {
     return false;
+  }
+
+  const slotEnd = new Date(parsed.getTime() + duration * 60_000);
+  const hoursCheck = assertWithinWorkingHours(business, parsed, slotEnd);
+  if (!hoursCheck.ok) {
+    await simulateHumanDelay({ business, recipientPhone, requestId });
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: hoursCheck.message,
+    });
+    return true;
   }
 
   const slotId = encodeSlotId(parsed, business.timezone);
   const available = await isSlotAvailable({
     business,
     slotId,
-    durationMinutes: service.duration_minutes,
+    durationMinutes: duration,
     excludeDraftId: draft.id,
     employeeId: draftEmployeeId(draft),
   });
@@ -1798,7 +1958,6 @@ export async function handleFreeTextSlotRequest({
     return false;
   }
 
-  const slotEnd = new Date(parsed.getTime() + service.duration_minutes * 60_000);
   const updated = await setSelectedSlot({
     draftId: draft.id,
     businessId: business.id,

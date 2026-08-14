@@ -9,6 +9,7 @@ import {
   localToUtc,
   encodeSlotId,
 } from '../utils/datetime.js';
+import { assertWithinWorkingHours, hasConfiguredOpenDay } from '../utils/workingHours.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -323,6 +324,10 @@ export async function getAvailableSlots({
   excludeDraftId = null,
   employeeId = null,
 }) {
+  const duration = Number(durationMinutes);
+  if (!Number.isFinite(duration) || duration <= 0) return [];
+  if (!hasConfiguredOpenDay(business)) return [];
+
   await releaseExpiredLocks(business);
 
   const config = getBookingConfig(business);
@@ -351,7 +356,7 @@ export async function getAvailableSlots({
     const weekday = getWeekdayInTimezone(day, timezone);
     const hours = config.businessHours[String(weekday)];
 
-    if (!hours) continue;
+    if (!hours || !hours.open || !hours.close) continue;
 
     const dateKey = new Intl.DateTimeFormat('en-CA', {
       timeZone: timezone,
@@ -363,13 +368,14 @@ export async function getAvailableSlots({
     let cursor = localToUtc(dateKey, hours.open, timezone);
     const dayClose = localToUtc(dateKey, hours.close, timezone);
 
-    while (cursor.getTime() + durationMinutes * 60_000 <= dayClose.getTime() && slots.length < limit) {
-      const slotEnd = new Date(cursor.getTime() + durationMinutes * 60_000);
+    while (cursor.getTime() + duration * 60_000 <= dayClose.getTime() && slots.length < limit) {
+      const slotEnd = new Date(cursor.getTime() + duration * 60_000);
 
       if (cursor > now) {
+        const hoursOk = assertWithinWorkingHours(business, cursor, slotEnd);
         const overlaps = blocked.some((b) => intervalsOverlap(cursor, slotEnd, b.start, b.end));
 
-        if (!overlaps) {
+        if (hoursOk.ok && !overlaps) {
           slots.push({
             start: new Date(cursor),
             end: slotEnd,
@@ -403,12 +409,18 @@ export async function isSlotAvailable({
   excludeDraftId = null,
   employeeId = null,
 }) {
-  await releaseExpiredLocks(business);
+  const duration = Number(durationMinutes);
+  if (!Number.isFinite(duration) || duration <= 0) return false;
 
   const start = decodeSlotId(slotId, business.timezone);
   if (!start) return false;
 
-  const end = new Date(start.getTime() + durationMinutes * 60_000);
+  const end = new Date(start.getTime() + duration * 60_000);
+  const hoursCheck = assertWithinWorkingHours(business, start, end);
+  if (!hoursCheck.ok) return false;
+
+  await releaseExpiredLocks(business);
+
   const busy = await getBusyIntervalsFromCache({
     businessId: business.id,
     timeMin: start,
