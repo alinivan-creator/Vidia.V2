@@ -9,6 +9,8 @@ export const BOOKING_PREFIXES = {
   RESUME_NO: 'resume_other_slots',
   RESCHEDULE: 'reschedule_booking',
   ANY_EMPLOYEE: 'emp_any',
+  CLARIFY_DATE: 'clarify_date',
+  CLARIFY_TIME: 'clarify_time',
 };
 
 export const MOD_PREFIX = {

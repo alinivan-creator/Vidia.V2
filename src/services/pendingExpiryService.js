@@ -251,6 +251,10 @@ async function unstickStaleBookingPicker({
     step === CONVERSATION_STEPS.CHOOSING_SERVICE
     || step === CONVERSATION_STEPS.CHOOSING_EMPLOYEE
     || step === CONVERSATION_STEPS.SELECTING_SLOT
+    || step === CONVERSATION_STEPS.WAITING_FOR_SERVICE
+    || step === CONVERSATION_STEPS.WAITING_FOR_DATE
+    || step === CONVERSATION_STEPS.WAITING_FOR_TIME
+    || step === CONVERSATION_STEPS.WAITING_FOR_CLARIFICATION
     || (isBookingFlowStep(step) && draft?.state === 'browsing');
 
   if (!pickerStep && draft?.state !== 'browsing') {

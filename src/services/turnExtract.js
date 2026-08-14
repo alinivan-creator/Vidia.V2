@@ -21,6 +21,12 @@ import { markOpenAiUnavailable } from './openaiGate.js';
 import { resolveNumberedChoice } from './whatsappService.js';
 import { parseRomanianDateTimeParts } from '../utils/roDateTime.js';
 import { BOOKING_PREFIXES, MOD_PREFIX } from './flowIds.js';
+import {
+  BOOKING_WAIT,
+  CLARIFY_IDS,
+  getBookingWait,
+  interpretNumericFreeText,
+} from './bookingWaitState.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -42,6 +48,7 @@ const PREFIX = BOOKING_PREFIXES;
  * @property {string | null} name
  * @property {'high' | 'medium' | 'low'} confidence
  * @property {'menu' | 'keyword' | 'parser' | 'nlu' | 'state'} source
+ * @property {Record<string, unknown> | null} [ambiguity]
  */
 
 function normalize(text) {
@@ -69,6 +76,7 @@ function emptyExtract(overrides = {}) {
     name: null,
     confidence: 'low',
     source: 'parser',
+    ambiguity: null,
     ...overrides,
   };
 }
@@ -205,6 +213,27 @@ function extractFromChoiceId(choiceId, base, business) {
       choice_id: choiceId,
       confidence: 'high',
       source: 'menu',
+    });
+  }
+
+  if (choiceId === PREFIX.CLARIFY_DATE || choiceId === CLARIFY_IDS.DATE) {
+    return emptyExtract({
+      ...base,
+      action: 'resolve_clarification',
+      choice_id: choiceId,
+      confidence: 'high',
+      source: 'menu',
+      ambiguity: { field: 'date' },
+    });
+  }
+  if (choiceId === PREFIX.CLARIFY_TIME || choiceId === CLARIFY_IDS.TIME) {
+    return emptyExtract({
+      ...base,
+      action: 'resolve_clarification',
+      choice_id: choiceId,
+      confidence: 'high',
+      source: 'menu',
+      ambiguity: { field: 'time' },
     });
   }
 
@@ -349,13 +378,104 @@ export async function extractTurnIntent({
   const services = getBookingConfig(business).services;
   const employees = await listEmployees(business.id, { activeOnly: true });
   const tz = business.timezone;
+  const wait = getBookingWait(convState);
   const isPendingHold =
     activeDraft?.state === 'pending_confirmation'
+    || wait === BOOKING_WAIT.CONFIRMATION
     || step === CONVERSATION_STEPS.CONFIRMING
-    || step === CONVERSATION_STEPS.ASKING_NAME;
+    || step === CONVERSATION_STEPS.ASKING_NAME
+    || step === CONVERSATION_STEPS.WAITING_FOR_CONFIRMATION;
+
+  if (wait === BOOKING_WAIT.CLARIFICATION) {
+    const pending = convState.context_data?.clarification || {};
+    const numeric = interpretNumericFreeText({
+      text: textBody,
+      wait: BOOKING_WAIT.CLARIFICATION,
+      timezone: tz,
+      pendingDateKey: typeof convState.context_data?.pending_date_text === 'string'
+        ? convState.context_data.pending_date_text
+        : null,
+    });
+    if (lastMenu?.options?.length) {
+      const choiceId = resolveNumberedChoice(textBody, lastMenu.options);
+      if (choiceId) return extractFromChoiceId(choiceId, {}, business);
+    }
+    if (numeric.kind === 'clarification_date' || numeric.kind === 'clarification_time') {
+      return emptyExtract({
+        action: 'resolve_clarification',
+        confidence: 'high',
+        source: 'state',
+        ambiguity: {
+          field: numeric.kind === 'clarification_date' ? 'date' : 'time',
+          value: pending.value,
+        },
+      });
+    }
+    if (isExplicitCancelReply(textBody)) {
+      return emptyExtract({ action: 'cancel_pending', confidence: 'high', source: 'state' });
+    }
+    return emptyExtract({
+      action: 'clarify_needed',
+      confidence: 'high',
+      source: 'state',
+      ambiguity: {
+        value: pending.value,
+        rejected: pending.rejected ?? null,
+        date_key: pending.date_candidate,
+        time_hhmm: pending.time_candidate,
+        date_label: String(pending.raw_value || pending.value || ''),
+        time_label: String(pending.raw_value || pending.value || ''),
+        resume_wait: pending.resume_wait,
+      },
+    });
+  }
+
+  const loneNumber = /^\d{1,2}$/.test(String(textBody ?? '').trim());
+  const numeric = interpretNumericFreeText({
+    text: textBody,
+    wait,
+    timezone: tz,
+    pendingDateKey: typeof convState.context_data?.pending_date_text === 'string'
+      ? convState.context_data.pending_date_text
+      : null,
+  });
+
+  const menuInRange = Boolean(
+    lastMenu?.options?.length
+    && loneNumber
+    && Number(String(textBody).trim()) >= 1
+    && Number(String(textBody).trim()) <= lastMenu.options.length,
+  );
+
+  if (numeric.kind === 'ambiguous') {
+    return emptyExtract({
+      action: 'clarify_needed',
+      confidence: 'high',
+      source: 'state',
+      ambiguity: {
+        value: numeric.value,
+        rejected: numeric.rejected ?? null,
+        date_key: numeric.dateKey,
+        time_hhmm: numeric.timeHHmm,
+        date_label: numeric.dateLabel,
+        time_label: numeric.timeLabel,
+        resume_wait: wait,
+      },
+    });
+  }
+
+  if (!menuInRange && (numeric.kind === 'date' || numeric.kind === 'time')) {
+    const inModify = step === CONVERSATION_STEPS.RESCHEDULING || step === CONVERSATION_STEPS.MODIFYING;
+    return emptyExtract({
+      action: inModify ? 'reschedule' : 'book',
+      date_text: numeric.kind === 'date' ? numeric.dateKey : null,
+      time_text: numeric.kind === 'time' ? numeric.timeHHmm : null,
+      confidence: 'high',
+      source: 'state',
+    });
+  }
 
   if (lastMenu?.options?.length) {
-    const loneNumber = /^\d{1,2}$/.test(String(textBody ?? '').trim());
     if (loneNumber || !looksLikeDatetimeOrSlot(textBody)) {
       const choiceId = resolveNumberedChoice(textBody, lastMenu.options);
       if (choiceId) {
@@ -393,7 +513,10 @@ export async function extractTurnIntent({
   if (isPendingHold && isExplicitCancelReply(textBody)) {
     return emptyExtract({ action: 'cancel_pending', confidence: 'high', source: 'state' });
   }
-  if (step === CONVERSATION_STEPS.CONFIRMING && isExplicitConfirmReply(textBody)) {
+  if (
+    (step === CONVERSATION_STEPS.CONFIRMING || step === CONVERSATION_STEPS.WAITING_FOR_CONFIRMATION)
+    && isExplicitConfirmReply(textBody)
+  ) {
     return emptyExtract({ action: 'confirm', confidence: 'high', source: 'state' });
   }
 

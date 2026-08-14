@@ -104,6 +104,26 @@ export function renderHandlerResult(business, result) {
       lines.push('Răspunde cu numărul opțiunii (ex: 1).');
       return lines.join('\n');
     }
+    case 'ASK_DATE':
+      return (
+        (typeof d.client_message === 'string' && d.client_message)
+        || `Pe ce dată vrei${d.service_name ? ` *${d.service_name}*` : ''}? Scrie de exemplu *luni* sau *18 aug*.`
+      );
+    case 'ASK_TIME': {
+      const head = d.service_name
+        ? `La ce oră vrei *${d.service_name}*${d.date_label ? ` pe ${d.date_label}` : ''}?`
+        : 'La ce oră vrei programarea?';
+      const alts = (d.alternatives || []).map((s, i) => `${slotNumberEmoji(i)} ${s.label}`);
+      if (alts.length) {
+        return [`${head} Alege din listă sau scrie ora (ex: *18*):`, '', ...alts].join('\n');
+      }
+      return `${head} Scrie ora (ex: *10:30* sau *18*).`;
+    }
+    case 'ASK_CLARIFY_DATE_OR_TIME':
+      return (
+        (typeof d.client_message === 'string' && d.client_message)
+        || `Scuze, nu am înțeles corect, te referi la data de ${d.date_label || d.value} sau la ora ${d.time_label || d.value}?`
+      );
     case 'MISSING_SLOT': {
       const head = d.service_name
         ? `📅 *Alege ora pentru ${d.service_name}:*`
@@ -256,6 +276,18 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
         buttonUrl: result.calendar_cta.url,
       });
     }
+    return;
+  }
+
+  if (result.menu?.options?.length && result.user_message_template_key === 'ASK_CLARIFY_DATE_OR_TIME') {
+    await sendInteractiveButtons({
+      business,
+      recipientPhone,
+      requestId,
+      bodyText: text,
+      buttons: result.menu.options,
+      menuKind: 'clarify',
+    });
     return;
   }
 

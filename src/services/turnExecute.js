@@ -68,6 +68,14 @@ import {
   isMockEventId,
 } from './googleCalendarService.js';
 import { handlerResult } from './handlerResult.js';
+import {
+  BOOKING_WAIT,
+  CLARIFY_IDS,
+  clarificationPrompt,
+  dateKeyFromDayNumber,
+  getBookingWait,
+  timeFromHourNumber,
+} from './bookingWaitState.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 /** @typedef {import('./turnExtract.js').TurnExtract} TurnExtract */
@@ -297,8 +305,8 @@ async function missingService(business, recipientPhone, draft, requestId) {
   await setConversationStep({
     businessId: business.id,
     rawPhone: recipientPhone,
-    step: CONVERSATION_STEPS.CHOOSING_SERVICE,
-    context: { draft_id: draft?.id, intent: 'book' },
+    step: CONVERSATION_STEPS.WAITING_FOR_SERVICE,
+    context: { draft_id: draft?.id, intent: 'book', booking_wait: BOOKING_WAIT.SERVICE },
     requestId,
   });
   return handlerResult({
@@ -328,7 +336,7 @@ async function missingSlotsResult({
   requestId,
   reasonKey = 'MISSING_SLOT',
   occupiedLabel = null,
-  conversationStep = CONVERSATION_STEPS.SELECTING_SLOT,
+  conversationStep = CONVERSATION_STEPS.WAITING_FOR_TIME,
   extraContext = {},
 }) {
   const listed = await listSlotsForService({
@@ -350,7 +358,13 @@ async function missingSlotsResult({
     businessId: business.id,
     rawPhone: recipientPhone,
     step: conversationStep,
-    context: { draft_id: draft?.id, intent: extraContext.intent || 'book', service, ...extraContext },
+    context: {
+      draft_id: draft?.id,
+      intent: extraContext.intent || 'book',
+      service,
+      booking_wait: dateKey ? BOOKING_WAIT.TIME : BOOKING_WAIT.DATE,
+      ...extraContext,
+    },
     requestId,
   });
   if (!listed.slots.length) {
@@ -407,6 +421,7 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
         slot_end: slotEnd.toISOString(),
         intent: 'book',
         awaiting_name: true,
+        booking_wait: BOOKING_WAIT.CONFIRMATION,
       },
       requestId,
     });
@@ -426,13 +441,14 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
   await setConversationStep({
     businessId: business.id,
     rawPhone: recipientPhone,
-    step: CONVERSATION_STEPS.CONFIRMING,
+    step: CONVERSATION_STEPS.WAITING_FOR_CONFIRMATION,
     context: {
       draft_id: draft.id,
       service,
       slot_start: slotStart.toISOString(),
       slot_end: slotEnd.toISOString(),
       intent: 'book',
+      booking_wait: BOOKING_WAIT.CONFIRMATION,
     },
     requestId,
   });
@@ -637,7 +653,30 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
     });
   }
 
-  void convState;
+  if (!extract.date_text) {
+    await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: CONVERSATION_STEPS.WAITING_FOR_DATE,
+      context: {
+        draft_id: working.id,
+        intent: 'book',
+        service,
+        booking_wait: BOOKING_WAIT.DATE,
+      },
+      requestId,
+    });
+    return handlerResult({
+      status: 'MISSING_INFO',
+      next_required_step: 'CHOOSE_DATE',
+      user_message_template_key: 'ASK_DATE',
+      data: {
+        service_name: service.name,
+        client_message: 'Pe ce dată vrei programarea? (ex: *luni*, *18 aug*)',
+      },
+    });
+  }
+
   return missingSlotsResult({
     business,
     recipientPhone,
@@ -646,7 +685,8 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
     employeeId: draftEmployeeId(working),
     dateKey: extract.date_text,
     requestId,
-    reasonKey: 'MISSING_SLOT',
+    reasonKey: 'ASK_TIME',
+    conversationStep: CONVERSATION_STEPS.WAITING_FOR_TIME,
   });
 }
 
@@ -1361,6 +1401,112 @@ async function executeChat(business) {
   });
 }
 
+async function executeClarifyNeeded({ business, recipientPhone, extract, convState, requestId }) {
+  const amb = extract.ambiguity || {};
+  const value = Number(amb.value);
+  const resumeWait = amb.resume_wait || getBookingWait(convState);
+  await setConversationStep({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    step: CONVERSATION_STEPS.WAITING_FOR_CLARIFICATION,
+    context: {
+      booking_wait: BOOKING_WAIT.CLARIFICATION,
+      clarification: {
+        value,
+        rejected: amb.rejected ?? null,
+        date_candidate: amb.date_key || dateKeyFromDayNumber(value, business.timezone, convState?.context_data?.pending_date_text),
+        time_candidate: amb.time_hhmm || timeFromHourNumber(value, business.timezone),
+        resume_wait: resumeWait,
+        raw_value: amb.date_label || String(value),
+      },
+      last_menu: {
+        kind: 'clarify',
+        options: [
+          { id: CLARIFY_IDS.DATE, title: `Data de ${value}` },
+          { id: CLARIFY_IDS.TIME, title: `Ora ${value}` },
+        ],
+      },
+    },
+    mergeContext: true,
+    requestId,
+  });
+  return handlerResult({
+    status: 'MISSING_INFO',
+    action_performed: null,
+    next_required_step: 'CLARIFY_DATE_OR_TIME',
+    user_message_template_key: 'ASK_CLARIFY_DATE_OR_TIME',
+    data: {
+      value,
+      date_label: String(amb.date_label || value),
+      time_label: String(amb.time_label || value),
+      client_message: clarificationPrompt(value),
+    },
+    menu: {
+      kind: 'clarify',
+      options: [
+        { id: CLARIFY_IDS.DATE, title: `Data de ${value}` },
+        { id: CLARIFY_IDS.TIME, title: `Ora ${value}` },
+      ],
+    },
+  });
+}
+
+async function executeResolveClarification(params) {
+  const { business, recipientPhone, extract, convState, requestId, clientId, activeDraft } = params;
+  const clar = convState?.context_data?.clarification || {};
+  const field = extract.ambiguity?.field === 'time' ? 'time' : 'date';
+  const value = Number(extract.ambiguity?.value ?? clar.value);
+  const timezone = business.timezone;
+  const pendingDate = typeof convState?.context_data?.pending_date_text === 'string'
+    ? convState.context_data.pending_date_text
+    : null;
+
+  /** @type {import('./turnExtract.js').TurnExtract} */
+  const nextExtract = {
+    ...extract,
+    action: 'book',
+    date_text: field === 'date'
+      ? (clar.date_candidate || dateKeyFromDayNumber(value, timezone, pendingDate))
+      : null,
+    time_text: field === 'time'
+      ? (clar.time_candidate || timeFromHourNumber(value, timezone))
+      : null,
+    ambiguity: null,
+  };
+
+  await setConversationStep({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    step: field === 'date' ? CONVERSATION_STEPS.WAITING_FOR_TIME : CONVERSATION_STEPS.WAITING_FOR_DATE,
+    context: {
+      clarification: null,
+      booking_wait: field === 'date' ? BOOKING_WAIT.TIME : BOOKING_WAIT.DATE,
+      last_menu: null,
+    },
+    mergeContext: true,
+    requestId,
+  });
+
+  const convForHydrate = {
+    ...convState,
+    context_data: {
+      ...(convState?.context_data || {}),
+      clarification: null,
+    },
+  };
+  const hydrated = hydrateExtract(nextExtract, convForHydrate, timezone);
+  await persistPendingExtract({ business, recipientPhone, extract: hydrated, requestId });
+  return executeBook({
+    business,
+    recipientPhone,
+    extract: hydrated,
+    clientId,
+    requestId,
+    activeDraft,
+    convState: convForHydrate,
+  });
+}
+
 /**
  * @param {Object} params
  * @returns {Promise<HandlerResult>}
@@ -1383,6 +1529,21 @@ async function dispatchExecute({
 
   const action = extract.action;
   const intent = convState.context_data?.intent;
+
+  if (action === 'clarify_needed') {
+    return executeClarifyNeeded({ business, recipientPhone, extract, convState, requestId });
+  }
+  if (action === 'resolve_clarification') {
+    return executeResolveClarification({
+      business,
+      recipientPhone,
+      extract,
+      convState,
+      requestId,
+      clientId,
+      activeDraft: draft,
+    });
+  }
 
   if (action === 'confirm') return executeConfirm({ business, recipientPhone, activeDraft: draft, requestId });
   if (action === 'cancel_pending') return executeCancelPending({ business, recipientPhone, requestId });
@@ -1563,6 +1724,12 @@ async function dispatchExecute({
  * @returns {Promise<HandlerResult>}
  */
 export async function executeTurn(params) {
+  if (params.extract?.action === 'clarify_needed') {
+    return executeClarifyNeeded(params);
+  }
+  if (params.extract?.action === 'resolve_clarification') {
+    return executeResolveClarification(params);
+  }
   const extract = hydrateExtract(params.extract, params.convState, params.business?.timezone);
   await persistPendingExtract({
     business: params.business,
