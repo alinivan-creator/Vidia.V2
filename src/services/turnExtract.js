@@ -255,9 +255,21 @@ function extractFromChoiceId(choiceId, base, business) {
   return emptyExtract({ ...base, action: 'unknown', choice_id: choiceId, source: 'menu' });
 }
 
+function looksLikePersonName(text) {
+  const n = normalize(text);
+  if (!n || n.length > 60 || /\d/.test(n) || /[?]/.test(String(text ?? ''))) return false;
+  if (looksLikeExistingAppointmentQuery(n) || looksLikeNewBookingRequest(n) || looksLikeDatetimeOrSlot(n)) {
+    return false;
+  }
+  const words = n.split(' ').filter(Boolean);
+  return words.length >= 1 && words.length <= 4;
+}
+
 function faqActionFromText(text) {
   const n = normalize(text);
-  if (/\b(program|orar|orele|deschid|inchid|cand sunteti)\b/.test(n)) return 'hours';
+  if (/\b(program|orar|orele|deschid|inchid|cand sunteti)\b/.test(n) && !/\bprogramar/.test(n)) {
+    return 'hours';
+  }
   return 'services';
 }
 
@@ -333,6 +345,12 @@ function mapExtractionToTurnExtract(parsed, { textBody, isPendingHold, inModify,
   let action = 'unknown';
   if (parsed.intent === 'confirm') action = 'confirm';
   else if (parsed.intent === 'cancel') action = isPendingHold ? 'cancel_pending' : 'cancel';
+  else if (parsed.intent === 'list_appointments') action = 'list_appointments';
+  else if (parsed.intent === 'hours') action = 'hours';
+  else if (parsed.intent === 'services') action = 'services';
+  else if (parsed.intent === 'contact') action = 'contact';
+  else if (parsed.intent === 'menu') action = 'menu';
+  else if (parsed.intent === 'reschedule') action = 'reschedule';
   else if (
     parsed.intent === 'book'
     || parsed.intent === 'change_time'
@@ -340,8 +358,6 @@ function mapExtractionToTurnExtract(parsed, { textBody, isPendingHold, inModify,
     || parsed.intent === 'select_service'
   ) {
     action = bookingAction;
-  } else if (parsed.intent === 'list_appointments') {
-    action = 'list_appointments';
   } else if (parsed.extracted_date || parsed.extracted_time || parsed.extracted_service) {
     action = bookingAction;
   }
@@ -501,7 +517,7 @@ export async function extractTurnIntent({
         source: 'state',
       });
     }
-    if (!looksLikeDatetimeOrSlot(textBody) && triageUserIntent(textBody, { businessType: business.business_type }).intent === 'unknown') {
+    if (!looksLikeDatetimeOrSlot(textBody) && looksLikePersonName(textBody)) {
       return emptyExtract({
         action: 'set_name',
         name: String(textBody || '').trim(),
@@ -606,12 +622,60 @@ export async function extractTurnIntent({
   }
 
   const triage = triageUserIntent(textBody, { businessType: business.business_type });
+  if (triage.intent === 'sms_opt_in' || triage.intent === 'sms_opt_out') {
+    return emptyExtract({ action: triage.intent, confidence: 'high', source: 'keyword' });
+  }
+
+  const inModify = step === CONVERSATION_STEPS.RESCHEDULING || step === CONVERSATION_STEPS.MODIFYING;
+  const nlu = await extractBookingEntities({
+    business,
+    textBody,
+    convState,
+    activeDraft,
+    requestId,
+  });
+  if (nlu) {
+    const mapped = mapExtractionToTurnExtract(nlu, {
+      textBody,
+      isPendingHold,
+      inModify,
+      wait,
+      timezone: tz,
+    });
+    if (mapped.action === 'clarify_needed') return mapped;
+    if (mapped.action === 'list_appointments' || looksLikeExistingAppointmentQuery(textBody)) {
+      return emptyExtract({
+        action: 'list_appointments',
+        confidence: 'high',
+        source: 'nlu',
+        extraction: nlu,
+      });
+    }
+    const direct = new Set(['hours', 'services', 'contact', 'menu', 'confirm', 'cancel', 'cancel_pending', 'reschedule']);
+    if (direct.has(mapped.action)) return mapped;
+    if (mapped.action === 'unknown') {
+      return emptyExtract({ action: 'chat', confidence: 'low', source: 'nlu', extraction: nlu });
+    }
+    return applyCatalogMatches(
+      {
+        ...mapped,
+        extraction: nlu,
+      },
+      textBody,
+      services,
+      employees,
+      tz,
+      {
+        freezeDate: nlu.intent === 'change_time',
+        freezeTime: nlu.intent === 'change_date',
+        dayHours,
+      },
+    );
+  }
+
   /** @type {TurnExtract} */
   let extract = emptyExtract({ source: 'keyword', confidence: triage.confidence });
-
-  if (triage.intent === 'sms_opt_in') extract.action = 'sms_opt_in';
-  else if (triage.intent === 'sms_opt_out') extract.action = 'sms_opt_out';
-  else if (triage.intent === 'callback' || looksLikeOutOfScopeRequest(textBody)) extract.action = 'callback';
+  if (triage.intent === 'callback' || looksLikeOutOfScopeRequest(textBody)) extract.action = 'callback';
   else if (triage.intent === 'cancel') extract.action = isPendingHold ? 'cancel_pending' : 'cancel';
   else if (triage.intent === 'reschedule') extract.action = 'reschedule';
   else if (triage.intent === 'list_appointments') extract.action = 'list_appointments';
@@ -621,8 +685,6 @@ export async function extractTurnIntent({
   else if (triage.intent === 'menu') extract.action = 'menu';
 
   extract = applyCatalogMatches(extract, textBody, services, employees, tz, { dayHours });
-
-  const inModify = step === CONVERSATION_STEPS.RESCHEDULING || step === CONVERSATION_STEPS.MODIFYING;
   if (extract.action === 'unknown' || extract.action === 'chat') {
     if (
       looksLikeNewBookingRequest(textBody)
@@ -636,81 +698,6 @@ export async function extractTurnIntent({
       extract.source = 'parser';
     }
   }
-
-  const skipLayer1 = new Set([
-    'sms_opt_in',
-    'sms_opt_out',
-    'callback',
-    'cancel',
-    'cancel_pending',
-    'contact',
-    'hours',
-    'menu',
-    'services',
-    'list_appointments',
-  ]);
-  if (!skipLayer1.has(extract.action)) {
-    const nlu = await extractBookingEntities({
-      business,
-      textBody,
-      convState,
-      activeDraft,
-      requestId,
-    });
-    if (nlu) {
-      const mapped = mapExtractionToTurnExtract(nlu, {
-        textBody,
-        isPendingHold,
-        inModify,
-        wait,
-        timezone: tz,
-      });
-      if (mapped.action === 'clarify_needed') return mapped;
-      if (looksLikeExistingAppointmentQuery(textBody) || mapped.action === 'list_appointments') {
-        return emptyExtract({
-          action: 'list_appointments',
-          confidence: 'high',
-          source: 'nlu',
-          extraction: nlu,
-        });
-      }
-      if (mapped.action === 'book' && !mapped.date_text && !mapped.time_text && !mapped.service_name
-        && !looksLikeNewBookingRequest(textBody) && !looksLikeDatetimeOrSlot(textBody)) {
-        extract.extraction = nlu;
-        extract.action = 'chat';
-      } else if (mapped.action === 'confirm' || mapped.action === 'cancel' || mapped.action === 'cancel_pending') {
-        return mapped;
-      } else if (mapped.action === 'unknown') {
-        extract.extraction = nlu;
-      } else {
-        extract = applyCatalogMatches(
-          {
-            ...extract,
-            ...mapped,
-            date_text: nlu.intent === 'change_time'
-              ? null
-              : (mapped.date_text || extract.date_text),
-            time_text: nlu.intent === 'change_date'
-              ? null
-              : (mapped.time_text || extract.time_text),
-            service_name: mapped.service_name || extract.service_name,
-            service_id: mapped.service_name ? null : extract.service_id,
-            extraction: nlu,
-          },
-          textBody,
-          services,
-          employees,
-          tz,
-          {
-            freezeDate: nlu.intent === 'change_time',
-            freezeTime: nlu.intent === 'change_date',
-            dayHours,
-          },
-        );
-      }
-    }
-  }
-
   if (extract.action === 'unknown') extract.action = 'chat';
   return extract;
 }

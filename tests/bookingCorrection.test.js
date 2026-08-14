@@ -184,4 +184,10 @@ describe('existing appointments vs new booking', () => {
     const triage = triageUserIntent('vreau o programare luni la 17');
     assert.equal(triage.intent, 'book');
   });
+
+  it('does not treat opening-hours questions as a new booking', () => {
+    assert.equal(triageUserIntent('cand sunteti deschisi').intent, 'faq');
+    assert.equal(triageUserIntent('ce program aveti').intent, 'faq');
+    assert.equal(looksLikeNewBookingRequest('ce program aveti'), false);
+  });
 });
