@@ -7,6 +7,7 @@ export const EXTRACTION_INTENTS = /** @type {const} */ ([
   'select_service',
   'confirm',
   'cancel',
+  'list_appointments',
   'unknown',
 ]);
 

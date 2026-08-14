@@ -1428,25 +1428,38 @@ async function executeSetName({ business, recipientPhone, extract, activeDraft, 
   });
 }
 
+async function executeListAppointments({ business, recipientPhone, activeDraft }) {
+  const upcoming = await listUpcomingConfirmedBookings(business.id, recipientPhone);
+  const pending = activeDraft?.state === 'pending_confirmation' ? activeDraft : null;
+  const rows = upcoming.map((a) => {
+    const service = /** @type {{ name?: string }} */ (a.selected_service ?? {});
+    const when = a.selected_slot_start
+      ? formatSlotLabel(new Date(a.selected_slot_start), business.timezone)
+      : '—';
+    return { service_name: service.name || 'Programare', slot_label: when };
+  });
+  if (pending?.selected_slot_start) {
+    const service = /** @type {{ name?: string }} */ (pending.selected_service ?? {});
+    rows.unshift({
+      service_name: `${service.name || 'Programare'} (în așteptarea confirmării)`,
+      slot_label: formatSlotLabel(new Date(pending.selected_slot_start), business.timezone),
+    });
+  }
+  return handlerResult({
+    status: 'SUCCESS',
+    action_performed: 'LISTED_APPOINTMENTS',
+    user_message_template_key: 'MY_APPOINTMENTS',
+    data: { appointments: rows },
+  });
+}
+
 async function executeChat(business) {
-  const hours = getConfiguredBusinessHours(business);
-  const services = getBookingConfig(business).services;
   return handlerResult({
     status: 'CHAT',
     action_performed: null,
     next_required_step: null,
     user_message_template_key: 'CHAT_FALLBACK',
-    data: {
-      business_name: business.name,
-      hours_text: hours ? formatBusinessHoursText(hours) : null,
-      hours_configured: Boolean(hours),
-      services: services.slice(0, 8).map((s) => ({
-        name: s.name,
-        duration_minutes: s.duration_minutes,
-        price_ron: s.price_ron ?? null,
-      })),
-      contact: getBusinessContactInfo(business),
-    },
+    data: { business_name: business.name },
   });
 }
 
@@ -1746,6 +1759,9 @@ async function dispatchExecute({
     });
   }
 
+  if (action === 'list_appointments') {
+    return executeListAppointments({ business, recipientPhone, activeDraft: draft });
+  }
   if (action === 'book') {
     return executeBook({ business, recipientPhone, extract, clientId, requestId, activeDraft: draft, convState });
   }

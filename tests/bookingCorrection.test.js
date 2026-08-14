@@ -10,6 +10,11 @@ import {
 } from '../src/lib/booking/stateMachine.js';
 import { formatMachineAction, formatRomanianDate } from '../src/lib/ai/responseFormatter.js';
 import { coerceHourToOpenHours, parseRomanianDateTimeParts } from '../src/utils/roDateTime.js';
+import {
+  looksLikeExistingAppointmentQuery,
+  looksLikeNewBookingRequest,
+  triageUserIntent,
+} from '../src/services/intentTriageService.js';
 
 const TZ = 'Europe/Bucharest';
 const HOURS_09_18 = { open: '09:00', close: '18:00' };
@@ -144,5 +149,39 @@ describe('in-flight correction: luni la 17 → nu 17, 18', () => {
     assert.match(text, /18:00/);
     assert.equal(formatRomanianDate(MONDAY, TZ), 'Luni, 17 august');
     assert.match(text, /Luni, 17 august/);
+  });
+
+  it('asks date vs time when "nu 17, 18" has no time/date wait state', () => {
+    const reduced = reduceBookingTurn({
+      state: SESSION_STATES.INIT,
+      draft: emptyDraft(),
+      extraction: {
+        intent: 'unknown',
+        extracted_service: null,
+        extracted_date: null,
+        extracted_time: null,
+        is_ambiguous: true,
+        ambiguity_reason: '18 could be date or time',
+        confidence: 0.3,
+      },
+      text: 'nu 17, 18',
+      timezone: TZ,
+    });
+    assert.equal(reduced.action, MACHINE_ACTIONS.ACTION_ASK_CLARIFICATION);
+    assert.equal(reduced.clarify_value, 18);
+  });
+});
+
+describe('existing appointments vs new booking', () => {
+  it('treats "am uitat ce programari am" as list, not a new booking', () => {
+    const triage = triageUserIntent('am uitat ce programari am');
+    assert.equal(triage.intent, 'list_appointments');
+    assert.equal(looksLikeExistingAppointmentQuery('am uitat ce programari am'), true);
+    assert.equal(looksLikeNewBookingRequest('am uitat ce programari am'), false);
+  });
+
+  it('treats "vreau o programare luni la 17" as a new booking', () => {
+    const triage = triageUserIntent('vreau o programare luni la 17');
+    assert.equal(triage.intent, 'book');
   });
 });

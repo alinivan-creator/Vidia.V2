@@ -194,10 +194,20 @@ export function renderHandlerResult(business, result) {
         `Am înregistrat cererea. Un coleg de la *${d.business_name || business.name}* ` +
         `te va contacta în curând.`
       );
+    case 'MY_APPOINTMENTS': {
+      const rows = d.appointments || [];
+      if (!rows.length) {
+        return 'Nu ai nicio programare confirmată. Dacă vrei una nouă, scrie de exemplu *luni la 17*.';
+      }
+      const lines = rows.map((a) => `• *${a.service_name || 'Programare'}* — ${a.slot_label || ''}`);
+      return (
+        `Programările tale:\n\n${lines.join('\n')}\n\n` +
+        `Ca să anulezi una, scrie *anulează*. Ca să o muți, scrie *reprogramare*.`
+      );
+    }
     case 'CHAT_FALLBACK':
       return (
-        `Te pot ajuta cu programări, reprogramări, anulări și informații la *${d.business_name || business.name}*.\n` +
-        `Scrie de exemplu: *tuns mâine la 10*, *program*, *servicii* sau *contact*.`
+        `Spune-mi ce ai nevoie, pe scurt: vrei să vezi programările existente, să faci una nouă, sau altceva?`
       );
     default:
       return String(d.client_message || 'Spune-mi cum te pot ajuta.');
@@ -210,8 +220,7 @@ export function renderHandlerResult(business, result) {
  */
 async function polishWithAi(business, result, rendered) {
   const action = result.machine_action;
-  const allow = result.status === 'CHAT'
-    || action === MACHINE_ACTIONS.ACTION_SHOW_CONFIRMATION
+  const allow = action === MACHINE_ACTIONS.ACTION_SHOW_CONFIRMATION
     || action === MACHINE_ACTIONS.ACTION_ASK_CLARIFICATION;
   if (!allow || !business?.id) return null;
 
@@ -233,9 +242,10 @@ async function polishWithAi(business, result, rendered) {
 
   const chat = await completeTenantChat({
     businessId: business.id,
+    parserMode: true,
     extraSystem,
     userContent: JSON.stringify(payload).slice(0, 2500),
-    temperature: 0.3,
+    temperature: 0.2,
     maxTokens: 280,
   });
   return chat.ok && chat.text ? chat.text : null;

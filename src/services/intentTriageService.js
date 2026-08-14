@@ -1,5 +1,5 @@
 /**
- * @typedef {'cancel' | 'reschedule' | 'book' | 'faq' | 'contact' | 'menu' | 'callback' | 'sms_opt_in' | 'sms_opt_out' | 'unknown'} TriageIntent
+ * @typedef {'cancel' | 'reschedule' | 'book' | 'list_appointments' | 'faq' | 'contact' | 'menu' | 'callback' | 'sms_opt_in' | 'sms_opt_out' | 'unknown'} TriageIntent
  *
  * @typedef {Object} TriageResult
  * @property {TriageIntent} intent
@@ -169,8 +169,50 @@ export function wantsSameExpiredBooking(text, triage) {
 }
 
 /**
+ * Client wants to SEE existing bookings, not create a new one.
+ * @param {string} text
+ */
+export function looksLikeExistingAppointmentQuery(text) {
+  const n = normalize(text);
+  if (!n) return false;
+  if (/\b(am uitat|uita)\b/.test(n) && /\b(programar|rezervar)/.test(n)) return true;
+  if (/\b(ce|care|cate)\s+(programar|rezervar)/.test(n)) return true;
+  if (/\b(programarile|rezervarile|programarea)\s+me[ae]\b/.test(n)) return true;
+  if (/\b(arata-mi|arata mi|vezi|spune-mi|spune mi)\s+(programar|rezervar)/.test(n)) return true;
+  if (/\bcand\s+(sunt|am)\s+programat\b/.test(n)) return true;
+  if (/\bam\s+vreo\s+programare\b/.test(n)) return true;
+  if (/\bce\s+programari\s+am\b/.test(n)) return true;
+  return false;
+}
+
+/**
+ * Client wants to CREATE a booking. Bare "programare" inside "ce programări am" is not this.
+ * @param {string} text
+ */
+export function looksLikeNewBookingRequest(text) {
+  const n = normalize(text);
+  if (!n) return false;
+  if (looksLikeExistingAppointmentQuery(n)) return false;
+  if (
+    n === 'programare'
+    || n === 'rezervare'
+    || n === 'book'
+    || n === 'o programare'
+    || n === 'programare noua'
+  ) {
+    return true;
+  }
+  if (/\b(sa ma programez|programeaza-ma|programeaza ma|o programare noua)\b/.test(n)) return true;
+  if (/\b(vreau|as vrea|doresc|hai)\b/.test(n) && /\b(programar|rezervar)/.test(n)) {
+    return true;
+  }
+  if (/\b(programez|programeaza)\b/.test(n) && !/\b(ce|care|am uitat)\b/.test(n)) return true;
+  return false;
+}
+
+/**
  * Instant keyword triage — no LLM. Keeps WhatsApp routing snappy.
- * Order: modify → callback → book → contact → faq → menu → unknown.
+ * Order: modify → list existing → callback → book → contact → faq → menu → unknown.
  *
  * @param {string} text
  * @param {{ businessType?: string }} [opts]
@@ -235,9 +277,11 @@ export function triageUserIntent(text, opts = {}) {
     return { intent: 'callback', confidence: 'high', reason: 'human_request' };
   }
 
-  // Consulting: “programare” / meeting interest → human callback, not calendar booking
-  const bookHints = ['programare', 'rezervare', 'book', 'programez', 'programeaza', 'as vrea o ora'];
-  if (bookHints.some((k) => n.includes(k))) {
+  if (looksLikeExistingAppointmentQuery(n)) {
+    return { intent: 'list_appointments', confidence: 'high', reason: 'list_existing_bookings' };
+  }
+
+  if (looksLikeNewBookingRequest(n)) {
     if (opts.businessType === 'consulting') {
       return { intent: 'callback', confidence: 'high', reason: 'consulting_booking_interest' };
     }
@@ -280,7 +324,10 @@ export function triageUserIntent(text, opts = {}) {
     'durata',
     'cat dureaza',
   ];
-  if (faqHints.some((k) => n.includes(k))) {
+  if (faqHints.some((k) => {
+    if (k === 'program') return /\bprogram\b/.test(n) && !/\bprogramar/.test(n);
+    return n.includes(k);
+  })) {
     return { intent: 'faq', confidence: 'high', reason: 'faq_keyword' };
   }
 

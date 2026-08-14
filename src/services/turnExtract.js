@@ -15,6 +15,8 @@ import {
   isAffirmativeReply,
   looksLikeOutOfScopeRequest,
   wantsSameExpiredBooking,
+  looksLikeExistingAppointmentQuery,
+  looksLikeNewBookingRequest,
 } from './intentTriageService.js';
 import { resolveAcceptedOffer } from './pendingOfferService.js';
 import { resolveNumberedChoice } from './whatsappService.js';
@@ -338,6 +340,8 @@ function mapExtractionToTurnExtract(parsed, { textBody, isPendingHold, inModify,
     || parsed.intent === 'select_service'
   ) {
     action = bookingAction;
+  } else if (parsed.intent === 'list_appointments') {
+    action = 'list_appointments';
   } else if (parsed.extracted_date || parsed.extracted_time || parsed.extracted_service) {
     action = bookingAction;
   }
@@ -439,6 +443,10 @@ export async function extractTurnIntent({
     || step === CONVERSATION_STEPS.CONFIRMING
     || step === CONVERSATION_STEPS.ASKING_NAME
     || step === CONVERSATION_STEPS.WAITING_FOR_CONFIRMATION;
+
+  if (looksLikeExistingAppointmentQuery(textBody)) {
+    return emptyExtract({ action: 'list_appointments', confidence: 'high', source: 'keyword' });
+  }
 
   if (wait === BOOKING_WAIT.CLARIFICATION) {
     const pending = convState.context_data?.clarification || {};
@@ -606,6 +614,7 @@ export async function extractTurnIntent({
   else if (triage.intent === 'callback' || looksLikeOutOfScopeRequest(textBody)) extract.action = 'callback';
   else if (triage.intent === 'cancel') extract.action = isPendingHold ? 'cancel_pending' : 'cancel';
   else if (triage.intent === 'reschedule') extract.action = 'reschedule';
+  else if (triage.intent === 'list_appointments') extract.action = 'list_appointments';
   else if (triage.intent === 'book') extract.action = 'book';
   else if (triage.intent === 'contact') extract.action = 'contact';
   else if (triage.intent === 'faq') extract.action = faqActionFromText(textBody);
@@ -616,10 +625,10 @@ export async function extractTurnIntent({
   const inModify = step === CONVERSATION_STEPS.RESCHEDULING || step === CONVERSATION_STEPS.MODIFYING;
   if (extract.action === 'unknown' || extract.action === 'chat') {
     if (
-      extract.datetime
+      looksLikeNewBookingRequest(textBody)
+      || extract.datetime
       || extract.date_text
-      || extract.service_id
-      || extract.employee_id
+      || extract.time_text
       || looksLikeDatetimeOrSlot(textBody)
     ) {
       extract.action = inModify ? 'reschedule' : 'book';
@@ -638,6 +647,7 @@ export async function extractTurnIntent({
     'hours',
     'menu',
     'services',
+    'list_appointments',
   ]);
   if (!skipLayer1.has(extract.action)) {
     const nlu = await extractBookingEntities({
@@ -656,10 +666,21 @@ export async function extractTurnIntent({
         timezone: tz,
       });
       if (mapped.action === 'clarify_needed') return mapped;
-      if (mapped.action === 'confirm' || mapped.action === 'cancel' || mapped.action === 'cancel_pending') {
-        return mapped;
+      if (looksLikeExistingAppointmentQuery(textBody) || mapped.action === 'list_appointments') {
+        return emptyExtract({
+          action: 'list_appointments',
+          confidence: 'high',
+          source: 'nlu',
+          extraction: nlu,
+        });
       }
-      if (mapped.action === 'unknown') {
+      if (mapped.action === 'book' && !mapped.date_text && !mapped.time_text && !mapped.service_name
+        && !looksLikeNewBookingRequest(textBody) && !looksLikeDatetimeOrSlot(textBody)) {
+        extract.extraction = nlu;
+        extract.action = 'chat';
+      } else if (mapped.action === 'confirm' || mapped.action === 'cancel' || mapped.action === 'cancel_pending') {
+        return mapped;
+      } else if (mapped.action === 'unknown') {
         extract.extraction = nlu;
       } else {
         extract = applyCatalogMatches(

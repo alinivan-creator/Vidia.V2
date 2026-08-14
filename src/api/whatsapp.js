@@ -270,7 +270,7 @@ async function processTwilioWebhook(body, requestId) {
     if (isNew) {
       console.log('[webhook] New client — AI transparency welcome');
       const earlyTriage = triageUserIntent(textBody, { businessType: business.business_type });
-      const actionable = ['book', 'faq', 'contact', 'cancel', 'reschedule', 'callback'].includes(
+      const actionable = ['book', 'faq', 'contact', 'cancel', 'reschedule', 'callback', 'list_appointments'].includes(
         earlyTriage.intent,
       );
       await sendAiTransparencyWelcome({
