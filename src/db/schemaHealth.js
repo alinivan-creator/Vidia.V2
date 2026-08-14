@@ -6,6 +6,7 @@ import {
   isMissingTableError,
   USER_DEGRADED_REPLY,
 } from './schemaErrors.js';
+import { recordFailure } from '../services/circuitBreaker.js';
 
 export { isMissingTableError, USER_DEGRADED_REPLY };
 
@@ -204,6 +205,8 @@ export async function reportQueryFailure({
     console.warn(`[schema-health] Coloană opțională lipsă la ${op} (${table}) — se folosește fallback.`);
     return null;
   }
+
+  recordFailure('supabase');
 
   const classified = classifyDbError(error, { table });
   if (classified) {

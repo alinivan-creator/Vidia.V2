@@ -167,6 +167,58 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** @type {Map<string, { business: Business, cachedAt: number }>} */
+const businessByToCache = new Map();
+const BUSINESS_CACHE_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Twilio fallback cache: routing + send credentials only.
+ * Never stores ai_system_prompt or conversation_logic.
+ * @param {Business} business
+ * @returns {Business}
+ */
+function toTransportCacheBusiness(business) {
+  const settings =
+    business.booking_settings && typeof business.booking_settings === 'object'
+      ? { ...business.booking_settings }
+      : {};
+  delete settings.conversation_logic;
+  return {
+    ...business,
+    ai_system_prompt: '',
+    booking_settings: settings,
+  };
+}
+
+/**
+ * @param {string} toKey
+ * @param {Business} business
+ */
+export function cacheBusinessForWhatsAppTo(toKey, business) {
+  const key = normalizeBusinessPhoneKey(toKey);
+  if (!key || !business) return;
+  businessByToCache.set(key, {
+    business: toTransportCacheBusiness(business),
+    cachedAt: Date.now(),
+  });
+}
+
+/**
+ * @param {string} toKey
+ * @returns {Business | null}
+ */
+export function getCachedBusinessForWhatsAppTo(toKey) {
+  const key = normalizeBusinessPhoneKey(toKey);
+  if (!key) return null;
+  const hit = businessByToCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.cachedAt > BUSINESS_CACHE_TTL_MS) {
+    businessByToCache.delete(key);
+    return null;
+  }
+  return hit.business;
+}
+
 /**
  * @param {string} toNumber e.g. "whatsapp:+407..." or "+407..."
  * @param {{ includeInactive?: boolean }} [options]
@@ -189,7 +241,14 @@ export async function getBusinessByWhatsAppToNumber(toNumber, options = {}) {
   }
 
   const rows = await loadBusinessRowsForPhoneLookup(includeInactive, toNumber);
-  if (!rows) return null;
+  if (!rows) {
+    const cached = getCachedBusinessForWhatsAppTo(toNumber);
+    if (cached) {
+      console.warn('[db] Business lookup failed — using cached tenant', { targetKey });
+      return cached;
+    }
+    return null;
+  }
 
   const match = rows.find(
     (row) => normalizeBusinessPhoneKey(row.whatsapp_phone_number_id) === targetKey,
@@ -204,14 +263,12 @@ export async function getBusinessByWhatsAppToNumber(toNumber, options = {}) {
         cleaned: normalizeBusinessPhoneKey(row.whatsapp_phone_number_id),
       })),
     );
-    return null;
+    return getCachedBusinessForWhatsAppTo(toNumber);
   }
 
-  if (!match.ai_system_prompt && match.id) {
-    return getBusinessById(String(match.id));
-  }
-
-  return withServices(hydrateBusiness(/** @type {Record<string, unknown>} */ (match)));
+  const hydrated = await withServices(hydrateBusiness(/** @type {Record<string, unknown>} */ (match)));
+  if (hydrated) cacheBusinessForWhatsAppTo(toNumber, hydrated);
+  return hydrated;
 }
 
 /**

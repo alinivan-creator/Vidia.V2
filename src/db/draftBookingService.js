@@ -371,12 +371,9 @@ export async function setSelectedService({
 
 /**
  * Soft-locks a slot and moves draft to pending_confirmation.
- * @param {Object} params
- * @param {string} params.draftId
- * @param {Date} params.slotStart
- * @param {Date} params.slotEnd
- * @param {Record<string, unknown>} params.context
- * @param {string | null} [params.requestId]
+ * Atomic via claim_booking_slot RPC (first writer wins).
+ *
+ * @returns {Promise<DraftBooking | null>}
  */
 export async function setSelectedSlot({
   draftId,
@@ -385,6 +382,57 @@ export async function setSelectedSlot({
   slotEnd,
   context,
   ttlMinutes = 5,
+  employeeId = null,
+  requestId = null,
+}) {
+  const claimed = await claimSlotForDraft({
+    draftId,
+    businessId,
+    slotStart,
+    slotEnd,
+    context,
+    ttlMinutes,
+    employeeId,
+    mode: 'hold',
+    requestId,
+  });
+  return claimed.ok ? claimed.draft : null;
+}
+
+/**
+ * @typedef {{ ok: true, draft: DraftBooking, reason: null } | { ok: false, draft: null, reason: 'slot_taken' | 'error' | 'not_found' | 'invalid_range' }} SlotClaimResult
+ */
+
+/** @type {boolean | null} */
+let claimRpcAvailable = null;
+
+function isSlotTakenDbError(error) {
+  if (!error || typeof error !== 'object') return false;
+  const code = /** @type {{ code?: string }} */ (error).code ?? '';
+  const message = /** @type {{ message?: string }} */ (error).message ?? '';
+  return (
+    code === '23P01'
+    || code === '23505'
+    || /exclusion_violation|no_overlapping_slots|duplicate key/i.test(message)
+  );
+}
+
+/**
+ * First-writer-wins slot claim. Concurrent WhatsApp holds on the same interval:
+ * one succeeds, the other gets reason=slot_taken.
+ *
+ * @param {Object} params
+ * @returns {Promise<SlotClaimResult>}
+ */
+export async function claimSlotForDraft({
+  draftId,
+  businessId = null,
+  slotStart,
+  slotEnd,
+  context = {},
+  ttlMinutes = 5,
+  employeeId = null,
+  mode = 'hold',
   requestId = null,
 }) {
   const minutes = Number.isFinite(Number(ttlMinutes))
@@ -392,22 +440,70 @@ export async function setSelectedSlot({
     : 5;
   const ttl = pendingTtlIso(Date.now(), minutes * 60 * 1000);
   const mergedContext = { ...context, pending_expires_at: ttl };
+  const startIso = slotStart instanceof Date ? slotStart.toISOString() : String(slotStart);
+  const endIso = slotEnd instanceof Date ? slotEnd.toISOString() : String(slotEnd);
+
+  if (claimRpcAvailable !== false && businessId) {
+    const { data, error } = await supabase.rpc('claim_booking_slot', {
+      p_draft_id: draftId,
+      p_business_id: businessId,
+      p_slot_start: startIso,
+      p_slot_end: endIso,
+      p_ttl_minutes: minutes,
+      p_context: mergedContext,
+      p_employee_id: employeeId,
+      p_mode: mode === 'reschedule' ? 'reschedule' : 'hold',
+    });
+
+    if (error && /PGRST202|could not find the function|claim_booking_slot|pending_expires_at|slot_lock_key/i.test(error.message ?? '')) {
+      claimRpcAvailable = false;
+    } else if (error) {
+      await logError({
+        message: 'claim_booking_slot RPC failed',
+        source: 'database',
+        requestId,
+        draftBookingId: draftId,
+        error,
+      });
+      if (isSlotTakenDbError(error)) {
+        return { ok: false, draft: null, reason: 'slot_taken' };
+      }
+      return { ok: false, draft: null, reason: 'error' };
+    } else {
+      claimRpcAvailable = true;
+      const payload = /** @type {{ ok?: boolean, reason?: string | null, draft?: DraftBooking | null }} */ (data || {});
+      if (payload.ok && payload.draft) {
+        return { ok: true, draft: payload.draft, reason: null };
+      }
+      const reason = payload.reason === 'slot_taken' || payload.reason === 'not_found' || payload.reason === 'invalid_range'
+        ? payload.reason
+        : 'error';
+      return { ok: false, draft: null, reason };
+    }
+  }
 
   /** @type {Record<string, unknown>} */
-  const payload = {
-    state: 'pending_confirmation',
-    selected_slot_start: slotStart.toISOString(),
-    selected_slot_end: slotEnd.toISOString(),
-    locked_until: ttl,
-    conversation_context: mergedContext,
-    expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-  };
-  if (pendingExpiresColumnAvailable !== false) {
+  const payload = mode === 'reschedule'
+    ? {
+        selected_slot_start: startIso,
+        selected_slot_end: endIso,
+        conversation_context: mergedContext,
+      }
+    : {
+        state: 'pending_confirmation',
+        selected_slot_start: startIso,
+        selected_slot_end: endIso,
+        locked_until: ttl,
+        conversation_context: mergedContext,
+        expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      };
+  if (mode !== 'reschedule' && pendingExpiresColumnAvailable !== false) {
     payload.pending_expires_at = ttl;
   }
 
   let query = supabase.from('draft_bookings').update(payload).eq('id', draftId);
   if (businessId) query = query.eq('business_id', businessId);
+  if (mode === 'reschedule') query = query.eq('state', 'confirmed');
 
   let { data, error } = await query.select(await draftSelectColumns()).single();
 
@@ -416,6 +512,7 @@ export async function setSelectedSlot({
     const { pending_expires_at: _p, ...without } = payload;
     let retry = supabase.from('draft_bookings').update(without).eq('id', draftId);
     if (businessId) retry = retry.eq('business_id', businessId);
+    if (mode === 'reschedule') retry = retry.eq('state', 'confirmed');
     ({ data, error } = await retry.select(DRAFT_COLUMNS_NO_PENDING_EXPIRES).single());
   }
 
@@ -427,10 +524,13 @@ export async function setSelectedSlot({
       draftBookingId: draftId,
       error,
     });
-    return null;
+    if (isSlotTakenDbError(error)) {
+      return { ok: false, draft: null, reason: 'slot_taken' };
+    }
+    return { ok: false, draft: null, reason: 'error' };
   }
 
-  return /** @type {DraftBooking} */ (data);
+  return { ok: true, draft: /** @type {DraftBooking} */ (data), reason: null };
 }
 
 /**

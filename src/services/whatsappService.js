@@ -2,6 +2,7 @@ import twilio from 'twilio';
 import { logError } from '../db/loggerService.js';
 import { persistLastMenu, appendRecentTurn } from '../db/conversationStateService.js';
 import { toMetaPhone, toTwilioWhatsApp, toE164 } from '../utils/phone.js';
+import { recordFailure, recordSuccess, isCircuitOpen, TECHNICAL_FALLBACK_MESSAGE } from './circuitBreaker.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -260,15 +261,32 @@ async function sendTwilioMessage({ business, recipientPhone, body, requestId = n
   }
 
   try {
+    if (isCircuitOpen('twilio')) {
+      await logError({
+        message: 'Twilio circuit open — skip send',
+        source: 'webhook',
+        severity: 'warning',
+        businessId: business.id,
+        requestId,
+      });
+      return { ok: false, data: { circuit: 'twilio' }, status: 0 };
+    }
+
     const client = createTwilioClient(business);
 
-    const message = await client.messages.create({
-      from,
-      to,
-      body,
-    });
+    const message = await Promise.race([
+      client.messages.create({
+        from,
+        to,
+        body,
+      }),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(Object.assign(new Error('Twilio send timeout'), { name: 'TimeoutError' })), 10000);
+      }),
+    ]);
 
     console.log('[twilio] Message sent:', { sid: message.sid, status: message.status, to });
+    recordSuccess('twilio');
 
     await rememberAssistantTurn(business, recipientPhone, body, requestId);
 
@@ -279,6 +297,7 @@ async function sendTwilioMessage({ business, recipientPhone, body, requestId = n
     };
   } catch (error) {
     console.error('Eroare detalii:', error);
+    recordFailure('twilio');
 
     const twilioError = /** @type {{ status?: number; code?: number; message?: string }} */ (
       error
@@ -557,6 +576,100 @@ export async function sendMessageWithUrlButton({
       body: withAnchor,
       requestId,
     });
+  }
+}
+
+/**
+ * Sends the .ics as a WhatsApp media document (file attachment), not as inline text.
+ * @returns {Promise<SendResult>}
+ */
+export async function sendIcsDocument({
+  business,
+  recipientPhone,
+  mediaUrl,
+  caption = 'Adaugă programarea în calendar (fișier .ics).',
+  requestId = null,
+}) {
+  const url = String(mediaUrl || '').trim();
+  if (!url) return { ok: false, data: null, status: 0 };
+
+  const mockMode = process.env.WHATSAPP_MOCK_MODE === 'true';
+  if (mockMode) {
+    console.log('[vidia-v2][whatsapp-mock][ics]', { url: url.slice(0, 160) });
+    return { ok: true, data: { mocked: true, ics: true }, status: 200 };
+  }
+
+  if (isCircuitOpen('twilio')) {
+    return { ok: false, data: { circuit: 'twilio' }, status: 0 };
+  }
+
+  let fromNumber;
+  try {
+    ({ fromNumber } = resolveTwilioCredentials(business));
+  } catch (error) {
+    console.error('Eroare detalii:', error);
+    return { ok: false, data: null, status: 0 };
+  }
+
+  const to = toTwilioWhatsApp(recipientPhone);
+  const from = toTwilioWhatsApp(fromNumber);
+  const client = createTwilioClient(business);
+
+  try {
+    const message = await Promise.race([
+      client.messages.create({
+        from,
+        to,
+        body: caption,
+        mediaUrl: [url],
+      }),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(Object.assign(new Error('Twilio ICS send timeout'), { name: 'TimeoutError' })), 10000);
+      }),
+    ]);
+    recordSuccess('twilio');
+    await rememberAssistantTurn(business, recipientPhone, caption, requestId);
+    return {
+      ok: true,
+      data: { sid: message.sid, status: message.status },
+      status: 201,
+    };
+  } catch (error) {
+    console.error('Eroare detalii:', error);
+    recordFailure('twilio');
+    await logError({
+      message: 'Twilio ICS media send failed',
+      source: 'webhook',
+      severity: 'warning',
+      businessId: business.id,
+      requestId,
+      error,
+      details: { mediaUrl: url.slice(0, 180) },
+    });
+    return { ok: false, data: error, status: 0 };
+  }
+}
+
+/**
+ * Last-resort client message when OpenAI / Twilio / Supabase fail.
+ * Never throws.
+ */
+export async function sendTechnicalFallbackMessage({
+  business,
+  recipientPhone,
+  requestId = null,
+}) {
+  if (!business || !recipientPhone) return { ok: false, data: null, status: 0 };
+  try {
+    return await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: TECHNICAL_FALLBACK_MESSAGE,
+    });
+  } catch (error) {
+    console.error('Eroare detalii:', error);
+    return { ok: false, data: error, status: 0 };
   }
 }
 

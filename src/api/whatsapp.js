@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import {
   getBusinessByWhatsAppToNumber,
   isBusinessOperational,
+  getCachedBusinessForWhatsAppTo,
 } from '../db/businessService.js';
 import { appendRecentTurn } from '../db/conversationStateService.js';
 import { logError } from '../db/loggerService.js';
@@ -17,6 +18,7 @@ import {
   rememberInboundMessageSid,
   sendTypingIndicator,
   sendTextMessage,
+  sendTechnicalFallbackMessage,
 } from '../services/whatsappService.js';
 import { toE164, toMetaPhone } from '../utils/phone.js';
 import { debugLog } from '../utils/debugLog.js';
@@ -91,6 +93,21 @@ whatsappRouter.post('/', async (req, res) => {
         error,
         details: { body: sanitizeTwilioBody(req.body) },
       });
+      try {
+        const fromClean = toE164(String(req.body?.From ?? ''));
+        const toClean = toE164(String(req.body?.To ?? ''));
+        const { getCachedBusinessForWhatsAppTo } = await import('../db/businessService.js');
+        const cached = getCachedBusinessForWhatsAppTo(toClean);
+        if (cached && fromClean) {
+          await sendTechnicalFallbackMessage({
+            business: cached,
+            recipientPhone: toMetaPhone(fromClean),
+            requestId,
+          });
+        }
+      } catch (fallbackError) {
+        console.error('Eroare detalii:', fallbackError);
+      }
     }
   })();
 
@@ -153,61 +170,63 @@ async function processTwilioWebhook(body, requestId) {
     return;
   }
 
-  const matched = await getBusinessByWhatsAppToNumber(toClean, { includeInactive: true });
-  const ctx = matched ? await loadBusinessContext(matched.id) : null;
-  const business = ctx?.business ?? matched ?? null;
-
-  console.log('[webhook] Business match:', {
-    toClean,
-    found: Boolean(business),
-    businessId: business?.id ?? null,
-    businessName: business?.name ?? null,
-    status: business?.status ?? null,
-  });
-
-  if (!business) {
-    console.error('Eroare detalii:', {
-      reason: 'No business for Twilio To',
-      toRaw,
-      toClean,
-    });
-    await logError({
-      message: `No business for Twilio To: ${toClean}`,
-      source: 'webhook',
-      severity: 'warning',
-      requestId,
-      details: { to: toRaw, toClean, from: fromRaw },
-    });
-    return;
-  }
-
+  /** @type {import('../db/businessService.js').Business | null} */
+  let business = null;
   const recipientPhone = toMetaPhone(fromClean);
   const phoneE164 = fromClean;
-  const inboundMessageSid =
-    typeof body?.MessageSid === 'string' ? body.MessageSid.trim() : null;
-
-  if (!isBusinessOperational(business)) {
-    console.warn('[webhook] Business suspended/paused — blocking bot', {
-      businessId: business.id,
-      status: business.status,
-    });
-    try {
-      await sendTextMessage({
-        business,
-        recipientPhone,
-        requestId,
-        text:
-          'Serviciul de programări este temporar inactiv. ' +
-          'Te rugăm să revii mai târziu sau să contactezi direct afacerea.',
-      });
-    } catch (error) {
-      console.error('Eroare detalii:', error);
-    }
-    return;
-  }
 
   try {
-    // Typing… as soon as we start processing (needs Twilio MessageSid)
+    const matched = await getBusinessByWhatsAppToNumber(toClean, { includeInactive: true });
+    const ctx = matched ? await loadBusinessContext(matched.id) : null;
+    business = ctx?.business ?? matched ?? getCachedBusinessForWhatsAppTo(toClean);
+
+    console.log('[webhook] Business match:', {
+      toClean,
+      found: Boolean(business),
+      businessId: business?.id ?? null,
+      businessName: business?.name ?? null,
+      status: business?.status ?? null,
+    });
+
+    if (!business) {
+      console.error('Eroare detalii:', {
+        reason: 'No business for Twilio To',
+        toRaw,
+        toClean,
+      });
+      await logError({
+        message: `No business for Twilio To: ${toClean}`,
+        source: 'webhook',
+        severity: 'warning',
+        requestId,
+        details: { to: toRaw, toClean, from: fromRaw },
+      });
+      return;
+    }
+
+    const inboundMessageSid =
+      typeof body?.MessageSid === 'string' ? body.MessageSid.trim() : null;
+
+    if (!isBusinessOperational(business)) {
+      console.warn('[webhook] Business suspended/paused — blocking bot', {
+        businessId: business.id,
+        status: business.status,
+      });
+      try {
+        await sendTextMessage({
+          business,
+          recipientPhone,
+          requestId,
+          text:
+            'Serviciul de programări este temporar inactiv. ' +
+            'Te rugăm să revii mai târziu sau să contactezi direct afacerea.',
+        });
+      } catch (error) {
+        console.error('Eroare detalii:', error);
+      }
+      return;
+    }
+
     if (inboundMessageSid) {
       rememberInboundMessageSid(business.id, recipientPhone, inboundMessageSid);
     }
@@ -220,7 +239,6 @@ async function processTwilioWebhook(body, requestId) {
 
     const { clientId, isNew } = await ensureClient({ business, recipientPhone, requestId });
 
-    // Lazy TTL: expire stale pending / stuck confirm steps before routing.
     const swept = await sweepStalePendingForPhone({
       business,
       rawPhone: recipientPhone,
@@ -249,7 +267,6 @@ async function processTwilioWebhook(body, requestId) {
 
     const normalized = textBody.toLowerCase().trim();
 
-    // Mandatory AI transparency on first contact — welcome_message + AI disclosure
     if (isNew) {
       console.log('[webhook] New client — AI transparency welcome');
       const earlyTriage = triageUserIntent(textBody, { businessType: business.business_type });
@@ -262,7 +279,6 @@ async function processTwilioWebhook(body, requestId) {
         requestId,
         withMenu: !actionable,
       });
-      // Pure greetings / empty intent → welcome + menu is enough for first touch
       if (!actionable && earlyTriage.intent !== 'menu') {
         const isGreeting = /^(salut|buna|bună|hello|hi|hey|servus|seara buna|buna ziua)[\s!.]*$/i.test(
           normalized,
@@ -292,14 +308,13 @@ async function processTwilioWebhook(body, requestId) {
       pendingDismissed,
       pendingExpired: expiry.expired,
     });
-
   } catch (error) {
     console.error('Eroare detalii:', error);
     await logError({
       message: 'Failed to handle Twilio WhatsApp message',
       source: 'webhook',
       severity: 'error',
-      businessId: business.id,
+      businessId: business?.id ?? null,
       requestId,
       phoneNumber: phoneE164,
       error,
@@ -312,15 +327,14 @@ async function processTwilioWebhook(body, requestId) {
         alert: true,
       },
     });
-    try {
-      await sendTextMessage({
-        business,
+    const tenant = business || getCachedBusinessForWhatsAppTo(toClean);
+    if (tenant) {
+      await sendTechnicalFallbackMessage({
+        business: tenant,
         recipientPhone,
         requestId,
-        text: 'Momentan nu pot finaliza această acțiune. Te rog încearcă din nou în câteva minute.',
       });
-    } catch (sendError) {
-      console.error('Eroare detalii:', sendError);
     }
   }
 }
+

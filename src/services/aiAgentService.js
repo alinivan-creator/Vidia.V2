@@ -1,13 +1,14 @@
 /**
  * Function-calling agent: OpenAI chooses tools, the Guard (aiTools) executes them.
  * The model never writes to the calendar or invents availability.
+ *
+ * Every OpenAI round reloads tenant system_prompt + logic_config by business_id.
  */
 
-import { logError } from '../db/loggerService.js';
 import { getActiveDraftBooking } from '../db/draftBookingService.js';
-import { CALLBACK_SENTINEL, buildSystemPrompt, parseAiCallbackSignal } from './aiService.js';
-import { isOpenAiTemporarilyDown, markOpenAiUnavailable } from './aiService.js';
-import { loadBusinessContext } from './businessContext.js';
+import { CALLBACK_SENTINEL, parseAiCallbackSignal } from './aiService.js';
+import { isOpenAiTemporarilyDown } from './openaiGate.js';
+import { completeTenantChat } from './aiContextLoader.js';
 import { executeAgentTool, getAgentTools } from './aiTools.js';
 import { rememberOfferFromAssistant } from './pendingOfferService.js';
 
@@ -15,77 +16,6 @@ import { rememberOfferFromAssistant } from './pendingOfferService.js';
 
 const MAX_TOOL_ROUNDS = 4;
 const OPENAI_AGENT_TIMEOUT_MS = 12000;
-
-function clampTemperature(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return 0.3;
-  return Math.min(2, Math.max(0, n));
-}
-
-/**
- * @returns {Promise<{ ok: boolean, message?: Record<string, unknown>, error?: boolean }>}
- */
-async function completeAgentChat({
-  apiKey,
-  live,
-  messages,
-  tools,
-  toolChoice = 'auto',
-  requestId = null,
-}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), OPENAI_AGENT_TIMEOUT_MS);
-  try {
-    /** @type {Record<string, unknown>} */
-    const body = {
-      model: live.ai_model || 'gpt-4o-mini',
-      temperature: Math.min(0.4, clampTemperature(live.ai_temperature)),
-      max_tokens: 400,
-      messages,
-      tools,
-      tool_choice: toolChoice,
-    };
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      if (response.status === 429 || response.status >= 500) markOpenAiUnavailable();
-      await logError({
-        message: `Eroare: OpenAI function calling a eșuat (HTTP ${response.status})`,
-        source: 'ai',
-        severity: 'error',
-        businessId: live.id,
-        requestId,
-        httpStatus: response.status,
-        details: { response: data, alert: true, alertKind: 'openai' },
-      });
-      return { ok: false, error: true };
-    }
-    return { ok: true, message: data?.choices?.[0]?.message || null };
-  } catch (error) {
-    console.error('Eroare detalii:', error);
-    markOpenAiUnavailable();
-    await logError({
-      message: 'Eroare: OpenAI function calling — rețea/timeout',
-      source: 'ai',
-      severity: 'error',
-      businessId: live.id,
-      requestId,
-      error,
-      details: { alert: true, alertKind: 'openai' },
-    });
-    return { ok: false, error: true };
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 function toolsProtocolBlock() {
   return `
@@ -124,14 +54,9 @@ export async function runFunctionCallingTurn({
   draft = null,
   convState = null,
 }) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey || isOpenAiTemporarilyDown()) {
+  if (!business?.id || isOpenAiTemporarilyDown()) {
     return { text: null, uiSent: false, mocked: true, needsCallback: false };
   }
-
-  const loaded = await loadBusinessContext(business.id);
-  const live = loaded?.business || business;
-  const tools = getAgentTools(live);
 
   const prior = Array.isArray(history)
     ? history
@@ -144,11 +69,7 @@ export async function runFunctionCallingTurn({
     : [];
 
   /** @type {Record<string, unknown>[]} */
-  const messages = [
-    {
-      role: 'system',
-      content: buildSystemPrompt(live, { turnContext, routerMode: false }) + toolsProtocolBlock(),
-    },
+  const transcript = [
     ...prior,
     { role: 'user', content: userMessage },
   ];
@@ -156,27 +77,29 @@ export async function runFunctionCallingTurn({
   let uiSent = false;
   /** @type {string | null} */
   let lastText = null;
+  /** @type {Business | null} */
+  let live = null;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const speech = await completeAgentChat({
-      apiKey,
-      live,
-      messages,
-      tools,
+    const speech = await completeTenantChat({
+      businessId: business.id,
+      extraSystem: toolsProtocolBlock(),
+      turnContext,
+      messages: transcript,
+      buildTools: (ctx) => getAgentTools(ctx.snapshot),
       toolChoice: 'auto',
+      timeoutMs: OPENAI_AGENT_TIMEOUT_MS,
       requestId,
     });
-    if (!speech.ok) {
-      return { text: lastText, uiSent, mocked: false, needsCallback: false };
-    }
-    const choice = speech.message;
-    if (!choice) {
+    if (!speech.ok || !speech.message) {
       return { text: lastText, uiSent, mocked: false, needsCallback: false };
     }
 
+    live = speech.context.snapshot;
+    const choice = speech.message;
     const toolCalls = Array.isArray(choice.tool_calls) ? choice.tool_calls : [];
     if (toolCalls.length) {
-      messages.push(choice);
+      transcript.push(choice);
       for (const call of toolCalls) {
         const fnName = String(call?.function?.name || '');
         let parsed = {};
@@ -185,7 +108,7 @@ export async function runFunctionCallingTurn({
         } catch {
           parsed = {};
         }
-        console.log('[ai-agent] tool', { fnName, parsed, requestId });
+        console.log('[ai-agent] tool', { fnName, parsed, requestId, businessId: live.id });
         const result = await executeAgentTool(fnName, parsed, {
           business: live,
           recipientPhone,
@@ -197,7 +120,7 @@ export async function runFunctionCallingTurn({
         });
         if (result?.ui_sent) uiSent = true;
         draft = (await getActiveDraftBooking(live.id, recipientPhone)) || draft;
-        messages.push({
+        transcript.push({
           role: 'tool',
           tool_call_id: call.id,
           content: JSON.stringify(result).slice(0, 3500),
@@ -212,16 +135,21 @@ export async function runFunctionCallingTurn({
   }
 
   if (!uiSent && !lastText) {
-    const speech = await completeAgentChat({
-      apiKey,
-      live,
-      messages,
-      tools,
+    const speech = await completeTenantChat({
+      businessId: business.id,
+      extraSystem: toolsProtocolBlock(),
+      turnContext,
+      messages: transcript,
+      buildTools: (ctx) => getAgentTools(ctx.snapshot),
       toolChoice: 'none',
+      timeoutMs: OPENAI_AGENT_TIMEOUT_MS,
       requestId,
     });
-    if (speech?.ok && speech.message) {
-      lastText = String(speech.message.content ?? '').trim() || lastText;
+    if (speech.ok) {
+      live = speech.context?.snapshot || live;
+      if (speech.message) {
+        lastText = String(speech.message.content ?? '').trim() || lastText;
+      }
     }
   }
 
@@ -244,12 +172,14 @@ export async function runFunctionCallingTurn({
     };
   }
 
-  await rememberOfferFromAssistant({
-    business: live,
-    recipientPhone,
-    text: parsed.cleanText || lastText,
-    requestId,
-  });
+  if (live) {
+    await rememberOfferFromAssistant({
+      business: live,
+      recipientPhone,
+      text: parsed.cleanText || lastText,
+      requestId,
+    });
+  }
 
   return {
     text: parsed.cleanText || lastText,

@@ -6,20 +6,9 @@ export const DEFAULT_PENDING_TTL_MINUTES = 5;
  * Default conversation policy shown in Admin. Admins can replace it anytime;
  * the live DB value is read on every WhatsApp turn.
  */
-export const DEFAULT_CONVERSATION_LOGIC = `Când clientul cere o zi sau o oră (ex. „luni la 12”, „vineri 10”), tratează mesajul ca programare nouă pe acel interval — nu îi cere să scrie cuvântul „programare” și nu îl trimiți înapoi la meniu.
+export const DEFAULT_CONVERSATION_LOGIC = `Backend-ul decide tot: disponibilitate, program Admin, rezervări, reprogramări. AI-ul și șabloanele doar formatează JSON-ul returnat de backend. Nu confirma programări, nu inventa ore libere și nu evalua disponibilitatea din cap.
 
-Dacă vrei să programezi pe cineva, apelează tool-urile backend (check_availability, begin_booking, confirm_booking). Nu decide singur dacă o oră e liberă.
-
-Dacă ai corectat o greșeală (angajat inexistent, serviciu greșit) și clientul acceptă alternativa (da / ok / bine), nu mai repeta avertismentul. Treci la ora și confirmare.
-
-Dacă are un hold pending (așteaptă confirmarea) și scrie text liber (alt angajat, preț, s-a răzgândit), citește mesajul integral. Nu ignora textul și nu reseta conversația. Răspunde ca un receptionist: schimbă angajatul, răspunde la întrebare sau anulează hold-ul — după intenție.
-
-Dacă are o oră reținută (hold expirat) și spune da / aceeași / reia, vrea să reia confirmarea pe acel slot.
-Dacă cere altă zi/oră, e programare nouă — ignoră hold-ul vechi.
-
-Nu inventa ore libere. Disponibilitatea se verifică în calendar.
-Întrebări (preț, program, contact, servicii) → răspunde din datele afacerii.
-Anulare/reprogramare a unei programări deja confirmate → anulează / reprogramare.`;
+Când clientul dă serviciu + dată/oră, backend-ul execută direct (fără meniuri intermediare). Dacă lipsește ceva sau slotul e ocupat, backend-ul cere doar ce lipsește sau oferă alternative reale din calendar.`;
 
 /**
  * @param {Business | null | undefined} business
@@ -33,6 +22,7 @@ export function getPendingTtlMinutes(business) {
 
 /**
  * @param {Business | null | undefined} business
+ * Live AI must call this only after loadAiTenantContext (fresh row by business_id).
  */
 export function getConversationLogic(business) {
   const raw = business?.booking_settings?.conversation_logic;

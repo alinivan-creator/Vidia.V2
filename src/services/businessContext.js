@@ -1,5 +1,6 @@
 /**
- * Tenant snapshot loaded from Supabase before any booking / AI / calendar decision.
+ * Operational tenant snapshot for booking / calendar / WhatsApp routing.
+ * AI prompts and conversation logic are NOT read here — use loadAiTenantContext.
  */
 
 import { getBusinessById } from '../db/businessService.js';
@@ -21,7 +22,6 @@ import {
  * @property {{ id: string, name: string, duration_minutes: number, price_ron?: number | null }[]} services
  * @property {import('../db/employeeService.js').Employee[]} employees
  * @property {string} timezone
- * @property {string} aiInstructions
  */
 
 /**
@@ -39,18 +39,26 @@ export async function loadBusinessContext(businessOrId) {
   const config = getBookingConfig(business);
   const services = (config.services || []).filter((s) => Number(s.duration_minutes) > 0);
   const employees = await listEmployees(business.id, { activeOnly: true });
-  const aiInstructions = typeof business.ai_system_prompt === 'string'
-    ? business.ai_system_prompt.trim()
-    : '';
+
+  const settings =
+    business.booking_settings && typeof business.booking_settings === 'object'
+      ? { ...business.booking_settings }
+      : {};
+  delete settings.conversation_logic;
 
   return {
-    business: { ...business, services, employees },
+    business: {
+      ...business,
+      services,
+      employees,
+      booking_settings: settings,
+      ai_system_prompt: '',
+    },
     hours,
     hoursConfigured: Boolean(hours),
     hasOpenDay: hasConfiguredOpenDay(business),
     services,
     employees,
     timezone: business.timezone,
-    aiInstructions,
   };
 }
