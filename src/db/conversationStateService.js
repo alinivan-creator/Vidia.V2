@@ -121,9 +121,19 @@ export async function setConversationStep({
   if (!clientPhone || !(await isTableAvailable('conversation_states'))) return null;
 
   const existing = await getOrCreateConversationState(businessId, clientPhone);
-  const nextContext = mergeContext
-    ? { ...(existing.context_data ?? {}), ...context }
-    : context;
+  const existingCtx = existing.context_data ?? {};
+  /** @type {Record<string, unknown>} */
+  let nextContext;
+  if (mergeContext) {
+    nextContext = { ...existingCtx, ...context };
+  } else {
+    nextContext = { ...context };
+    for (const key of ['recent_turns', 'last_menu', 'last_booking_intent']) {
+      if (!Object.prototype.hasOwnProperty.call(context, key) && existingCtx[key] !== undefined) {
+        nextContext[key] = existingCtx[key];
+      }
+    }
+  }
 
   const { data, error } = await supabase
     .from('conversation_states')
@@ -185,6 +195,7 @@ export async function resetConversationState({
     context: {
       ...(lastIntent ? { last_booking_intent: lastIntent } : {}),
       ...(Array.isArray(recentTurns) && recentTurns.length ? { recent_turns: recentTurns } : {}),
+      last_menu: null,
     },
     mergeContext: false,
     requestId,
@@ -218,6 +229,49 @@ export async function appendRecentTurn({
     mergeContext: true,
     requestId,
   });
+}
+
+/**
+ * Last numbered menu shown on WhatsApp — persisted so "1"/"2" survive Vercel isolates.
+ * @param {Object} params
+ * @param {string} params.businessId
+ * @param {string} params.rawPhone
+ * @param {string} [params.kind]
+ * @param {{ id: string, title?: string }[]} params.options
+ * @param {string | null} [params.requestId]
+ */
+export async function persistLastMenu({
+  businessId,
+  rawPhone,
+  kind = 'generic',
+  options = [],
+  requestId = null,
+}) {
+  const slim = (Array.isArray(options) ? options : []).slice(0, 12).map((o) => ({
+    id: String(o.id),
+    title: String(o.title || '').slice(0, 48),
+  }));
+  const existing = await getOrCreateConversationState(businessId, rawPhone);
+  return setConversationStep({
+    businessId,
+    rawPhone,
+    step: existing.current_step,
+    context: { last_menu: { kind, options: slim } },
+    mergeContext: true,
+    requestId,
+  });
+}
+
+/**
+ * @param {{ context_data?: Record<string, unknown> | null } | null | undefined} convState
+ * @returns {{ kind: string, options: { id: string, title?: string }[] } | null}
+ */
+export function readLastMenu(convState) {
+  const raw = convState?.context_data?.last_menu;
+  if (!raw || typeof raw !== 'object') return null;
+  const menu = /** @type {{ kind?: string, options?: { id: string, title?: string }[] }} */ (raw);
+  if (!Array.isArray(menu.options) || !menu.options.length) return null;
+  return { kind: String(menu.kind || 'generic'), options: menu.options };
 }
 
 /**

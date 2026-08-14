@@ -1,7 +1,7 @@
 import { upsertClient } from '../db/clientService.js';
 import { createCallbackRequest } from '../db/callbackRequestService.js';
 import { logError } from '../db/loggerService.js';
-import { sendServicePicker, startBookingFlow, sendSlotPicker, handleFreeTextSlotRequest } from './bookingFlowService.js';
+import { startBookingFlow, handleFreeTextSlotRequest } from './bookingFlowService.js';
 import { getActiveDraftBooking } from '../db/draftBookingService.js';
 import { generateAiReply, buildInfoButtonPrompt } from './aiService.js';
 import { formatContactMessage } from './contactService.js';
@@ -83,6 +83,7 @@ export async function sendAiTransparencyWelcome({
     bodyText: 'Cu ce te putem ajuta? Alege o opțiune:',
     buttons: buttons.map(({ id, title }) => ({ id, title })),
     footerText: business.name,
+    menuKind: 'entry',
   });
 }
 
@@ -277,22 +278,16 @@ export async function handleBrowsingTextMessage({
     return;
   }
 
-  // Service already chosen → try free-text time, else show slot list
   if (draft.selected_service) {
-    const handled = await handleFreeTextSlotRequest({
+    await handleFreeTextSlotRequest({
       business,
       recipientPhone,
       draft,
       textBody,
       requestId,
     });
-    if (!handled) {
-      await sendSlotPicker({ business, recipientPhone, draft, requestId });
-    }
     return;
   }
-
-  await sendServicePicker({ business, recipientPhone, draft, requestId });
 }
 
 /**

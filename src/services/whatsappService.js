@@ -1,5 +1,6 @@
 import twilio from 'twilio';
 import { logError } from '../db/loggerService.js';
+import { persistLastMenu } from '../db/conversationStateService.js';
 import { toMetaPhone, toTwilioWhatsApp, toE164 } from '../utils/phone.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
@@ -150,12 +151,22 @@ export function getRememberedInboundMessageSid(businessId, recipientPhone) {
 }
 
 /**
+ * Remembers the last numbered menu (memory cache + Supabase).
+ * Must be awaited — Vercel isolates do not share the in-memory Map.
+ *
  * @param {string} businessId
  * @param {string} recipientPhone
  * @param {{ id: string; title: string }[]} options
+ * @param {string} [kind]
  */
-export function rememberMenuOptions(businessId, recipientPhone, options) {
+export async function rememberMenuOptions(businessId, recipientPhone, options, kind = 'generic') {
   lastMenuOptions.set(menuKey(businessId, recipientPhone), options);
+  await persistLastMenu({
+    businessId,
+    rawPhone: recipientPhone,
+    kind,
+    options,
+  });
 }
 
 /**
@@ -246,10 +257,16 @@ async function sendTwilioMessage({ business, recipientPhone, body, requestId = n
       error
     );
 
+    const twilioMsg = typeof twilioError.message === 'string' ? twilioError.message : '';
+    const dailyLimit = twilioError.code === 63038 || /daily messages limit/i.test(twilioMsg);
     await logError({
-      message: 'Twilio WhatsApp send failed',
+      message: dailyLimit
+        ? 'Twilio WhatsApp: s-a atins limita de 50 mesaje/zi (Sandbox). Răspunsurile revin după reset sau după un număr WhatsApp Business.'
+        : (twilioMsg
+          ? `Twilio WhatsApp send failed: ${twilioMsg.slice(0, 180)}`
+          : 'Twilio WhatsApp send failed'),
       source: 'webhook',
-      severity: 'error',
+      severity: dailyLimit ? 'warning' : 'error',
       businessId: business.id,
       requestId,
       phoneNumber: toE164(recipientPhone),
@@ -260,6 +277,7 @@ async function sendTwilioMessage({ business, recipientPhone, body, requestId = n
         code: twilioError.code,
         from,
         to,
+        dailyLimit,
       },
     });
 
@@ -532,13 +550,14 @@ export async function sendInteractiveButtons({
   headerText = null,
   footerText = null,
   requestId = null,
+  menuKind = 'generic',
 }) {
   const options = buttons.slice(0, 10).map((btn) => ({
     id: btn.id,
     title: btn.title,
   }));
 
-  rememberMenuOptions(business.id, recipientPhone, options);
+  await rememberMenuOptions(business.id, recipientPhone, options, menuKind);
 
   const header = headerText ? `${headerText}\n\n` : '';
   const body = formatNumberedMenu(`${header}${bodyText}`, options, footerText);
@@ -584,7 +603,7 @@ export async function sendInteractiveList({
     )
     .slice(0, 10);
 
-  rememberMenuOptions(business.id, recipientPhone, options);
+  await rememberMenuOptions(business.id, recipientPhone, options, 'list');
 
   const header = headerText ? `${headerText}\n\n` : '';
   const body = formatNumberedMenu(`${header}${bodyText}`, options, footerText);

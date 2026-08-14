@@ -468,6 +468,13 @@ export function buildConversationTurnContext({
   recentTurns = [],
 }) {
   const lines = [`- pas conversație: ${step || 'IDLE'}`];
+  if (step === 'CHOOSING_SERVICE') {
+    lines.push('- alege serviciul; un număr valid e procesat de backend; NU retrimite lista de servicii');
+  } else if (step === 'CHOOSING_EMPLOYEE') {
+    lines.push('- alege angajatul; NU retrimite lista de staff');
+  } else if (step === 'SELECTING_SLOT') {
+    lines.push('- alege ora; NU retrimite lista de sloturi decât dacă cere explicit alte ore');
+  }
   if (pendingHold) {
     lines.push('- HOLD ACTIV (pending_confirmation): NU elibera slotul pentru o întrebare sau o schimbare de preferință');
     if (pendingHold.serviceName) lines.push(`- serviciu reținut: ${pendingHold.serviceName}`);

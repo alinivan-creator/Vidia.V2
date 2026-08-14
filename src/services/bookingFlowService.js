@@ -13,6 +13,7 @@ import {
   setConversationStep,
   resetConversationState,
   getOrCreateConversationState,
+  readLastMenu,
 } from '../db/conversationStateService.js';
 import { logError } from '../db/loggerService.js';
 import {
@@ -50,9 +51,148 @@ import {
   simulateHumanDelay,
   rememberMenuOptions,
   clearRememberedMenuOptions,
+  resolveNumberedChoice,
 } from './whatsappService.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
+
+function normalizeChoiceText(text) {
+  return String(text ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Numbered service options reconstructed from Admin catalog (does not need Vercel memory).
+ * @param {Business} business
+ */
+export function buildServiceMenuOptions(business) {
+  const { services } = getBookingConfig(business);
+  return services.slice(0, 10).map((s) => ({
+    id: `${PREFIX.SERVICE}${s.id}`,
+    title: s.name,
+  }));
+}
+
+/**
+ * @param {string} text
+ * @param {{ id: string, name: string }[]} services
+ */
+function matchServiceMention(text, services) {
+  const n = normalizeChoiceText(text);
+  if (!n || n.length < 3) return null;
+  /** @type {{ id: string, name: string } | null} */
+  let best = null;
+  let bestLen = 0;
+  for (const s of services) {
+    const name = normalizeChoiceText(s.name);
+    if (name.length >= 3 && n.includes(name) && name.length > bestLen) {
+      best = s;
+      bestLen = name.length;
+    }
+  }
+  return best;
+}
+
+/**
+ * If the user is in a booking picker step, map "1"/service name to the real option id.
+ * Reconstructs the catalog from DB/config so a Vercel cold start cannot re-send the same list.
+ *
+ * @returns {Promise<boolean>}
+ */
+export async function tryApplyBookingStepReply({
+  business,
+  recipientPhone,
+  textBody,
+  convState,
+  draft = null,
+  clientId = null,
+  requestId = null,
+}) {
+  const step = convState?.current_step;
+  const lastMenu = readLastMenu(convState);
+  const browsingNoService = draft?.state === 'browsing' && !draft.selected_service;
+
+  const choosingService = step === CONVERSATION_STEPS.CHOOSING_SERVICE;
+
+  if (choosingService || (browsingNoService && lastMenu?.kind === 'service')) {
+    const options = lastMenu?.kind === 'service' && lastMenu.options.length
+      ? lastMenu.options
+      : buildServiceMenuOptions(business);
+    let replyId = resolveNumberedChoice(textBody, options);
+    if (!replyId) {
+      const named = matchServiceMention(textBody, getBookingConfig(business).services);
+      if (named) replyId = `${PREFIX.SERVICE}${named.id}`;
+    }
+    if (!replyId) return false;
+    return handleBookingInteractiveReply({
+      business,
+      recipientPhone,
+      replyId,
+      clientId,
+      requestId,
+    });
+  }
+
+  if (step === CONVERSATION_STEPS.CHOOSING_EMPLOYEE) {
+    const employees = await listEmployees(business.id, { activeOnly: true });
+    const options = lastMenu?.kind === 'employee' && lastMenu.options.length
+      ? lastMenu.options
+      : [
+          ...employees.map((e) => ({ id: `${PREFIX.EMPLOYEE}${e.id}`, title: e.name })),
+          { id: PREFIX.ANY_EMPLOYEE, title: 'Primul disponibil' },
+        ];
+    let replyId = resolveNumberedChoice(textBody, options);
+    if (!replyId) {
+      const mentioned = matchEmployeeMention(textBody, employees);
+      if (mentioned) replyId = `${PREFIX.EMPLOYEE}${mentioned.id}`;
+    }
+    if (!replyId) return false;
+    return handleBookingInteractiveReply({
+      business,
+      recipientPhone,
+      replyId,
+      clientId,
+      requestId,
+    });
+  }
+
+  const choosingSlot = step === CONVERSATION_STEPS.SELECTING_SLOT;
+
+  if (choosingSlot && draft) {
+    let replyId = lastMenu?.kind === 'slot'
+      ? resolveNumberedChoice(textBody, lastMenu.options)
+      : null;
+    if (!replyId && draft.selected_service) {
+      const service = /** @type {{ duration_minutes: number }} */ (draft.selected_service);
+      const slots = await getAvailableSlots({
+        business,
+        durationMinutes: service.duration_minutes,
+        limit: 10,
+        excludeDraftId: draft.id,
+        employeeId: draftEmployeeId(draft),
+      });
+      const options = slots.map((s) => ({
+        id: s.id,
+        title: formatSlotLabel(s.start, business.timezone),
+      }));
+      replyId = resolveNumberedChoice(textBody, options);
+    }
+    if (!replyId) return false;
+    return handleBookingInteractiveReply({
+      business,
+      recipientPhone,
+      replyId,
+      clientId,
+      requestId,
+    });
+  }
+
+  return false;
+}
 
 const PREFIX = {
   SERVICE: 'svc_',
@@ -104,7 +244,7 @@ export async function sendServicePicker({ business, recipientPhone, draft, reque
     id: `${PREFIX.SERVICE}${s.id}`,
     title: s.name,
   }));
-  rememberMenuOptions(business.id, recipientPhone, options);
+  await rememberMenuOptions(business.id, recipientPhone, options, 'service');
 
   const lines = ['📋 *Alege serviciul dorit:*', ''];
   listed.forEach((s, i) => {
@@ -186,7 +326,7 @@ export async function sendSlotPicker({ business, recipientPhone, draft, requestI
     title: formatSlotLabel(s.start, business.timezone),
   }));
 
-  rememberMenuOptions(business.id, recipientPhone, options);
+  await rememberMenuOptions(business.id, recipientPhone, options, 'slot');
 
   const lines = [
     `📅 *Alege ora pentru ${service.name}:*`,
@@ -408,7 +548,7 @@ export async function sendEmployeePicker({
   }));
   options.push({ id: PREFIX.ANY_EMPLOYEE, title: 'Primul disponibil' });
 
-  rememberMenuOptions(business.id, recipientPhone, options);
+  await rememberMenuOptions(business.id, recipientPhone, options, 'employee');
 
   const lines = ['Cu cine preferi programarea?', ''];
   options.forEach((opt, i) => {
@@ -467,6 +607,7 @@ export async function sendConfirmationPrompt({ business, recipientPhone, draft, 
       { id: PREFIX.CONFIRM, title: '✅ Confirm' },
       { id: PREFIX.CANCEL, title: '❌ Anulează' },
     ],
+    menuKind: 'confirm',
   });
 }
 
@@ -1422,6 +1563,7 @@ export async function offerResumeOrAlternatives({
         { id: PREFIX.RESUME_YES, title: '✅ Da, reia' },
         { id: PREFIX.RESUME_NO, title: '📅 Alte ore' },
       ],
+      menuKind: 'resume',
     });
     return true;
   }
@@ -1633,18 +1775,7 @@ export async function handleFreeTextSlotRequest({
 
   const parsed = parseRomanianDateTime(textBody, business.timezone);
   if (!parsed) {
-    await simulateHumanDelay({ business, recipientPhone, requestId });
-    await sendTextMessage({
-      business,
-      recipientPhone,
-      requestId,
-      text:
-        `Am notat: _"${textBody.slice(0, 120)}"_\n\n` +
-        'Alege o oră din listă (răspunde cu numărul), sau scrie ex: *mâine la 10:30*.',
-    });
-    // Still show available slots so user can pick
-    await sendSlotPicker({ business, recipientPhone, draft, requestId });
-    return true;
+    return false;
   }
 
   const slotId = encodeSlotId(parsed, business.timezone);

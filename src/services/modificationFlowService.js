@@ -290,7 +290,7 @@ export async function beginModificationFlow({
     };
   });
 
-  rememberMenuOptions(business.id, recipientPhone, options);
+  await rememberMenuOptions(business.id, recipientPhone, options, 'modify');
 
   const lines = [
     intent === 'cancel'
@@ -371,6 +371,7 @@ async function offerActionForAppointment({
         { id: MOD_PREFIX.CONFIRM_CANCEL, title: '✅ Anulează' },
         { id: MOD_PREFIX.ABORT, title: '❌ Renunță' },
       ],
+      menuKind: 'confirm',
     });
     return true;
   }
@@ -438,7 +439,7 @@ async function sendRescheduleSlotPicker({ business, recipientPhone, appointment,
     id: s.id,
     title: formatSlotLabel(s.start, business.timezone),
   }));
-  rememberMenuOptions(business.id, recipientPhone, options);
+  await rememberMenuOptions(business.id, recipientPhone, options, 'slot');
 
   const serviceName =
     /** @type {{ name?: string }} */ (appointment.selected_service ?? {}).name || 'serviciu';

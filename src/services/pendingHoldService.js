@@ -1,4 +1,4 @@
-import { CONVERSATION_STEPS } from '../db/conversationStateService.js';
+import { CONVERSATION_STEPS, readLastMenu } from '../db/conversationStateService.js';
 import { listEmployees, matchEmployeeMention } from '../db/employeeService.js';
 import { formatSlotLabel } from '../utils/datetime.js';
 import {
@@ -25,7 +25,6 @@ import {
   triageUserIntent,
 } from './intentTriageService.js';
 import {
-  getRememberedMenuOptions,
   resolveNumberedChoice,
   sendTextMessage,
   simulateHumanDelay,
@@ -80,9 +79,9 @@ export async function handlePendingHoldTurn({
 
   // Numbered menus (staff / slots) while the hold is live — not the confirm 1/2
   if (step !== CONVERSATION_STEPS.CONFIRMING) {
-    const remembered = getRememberedMenuOptions(business.id, recipientPhone);
-    if (remembered?.length) {
-      const choiceId = resolveNumberedChoice(textBody, remembered);
+    const remembered = readLastMenu(convState);
+    if (remembered?.options?.length) {
+      const choiceId = resolveNumberedChoice(textBody, remembered.options);
       if (choiceId) {
         const handled = await handleBookingInteractiveReply({
           business,

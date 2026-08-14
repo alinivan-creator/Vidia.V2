@@ -768,6 +768,16 @@ function setJournalTabActive(tab) {
   });
 }
 
+function journalErrorDetail(log) {
+  const d = log.details || {};
+  const bits = [];
+  if (log.http_status) bits.push(`HTTP ${log.http_status}`);
+  if (d.code) bits.push(`cod ${d.code}`);
+  const extra = typeof d.error?.message === 'string' ? d.error.message : '';
+  if (!bits.length && !extra) return '';
+  return `<p class="text-[10px] text-slate-500 mt-0.5">${esc(bits.join(' · '))}${extra ? `<br>${esc(extra.slice(0, 220))}` : ''}</p>`;
+}
+
 function ttlLine(d) {
   const exp = d.pending_expires_at || d.locked_until;
   if (d.state !== 'pending_confirmation' || !exp) return '';
@@ -804,6 +814,7 @@ function renderJournalTab(tab) {
         </div>
         <p class="text-xs font-medium">${esc(log.message)}</p>
         ${log.phone_number ? `<p class="text-[10px] text-slate-500 mt-0.5">${esc(log.phone_number)}</p>` : ''}
+        ${journalErrorDetail(log)}
         ${!log.resolved ? `<button type="button" data-resolve-log="${log.id}" class="text-[10px] text-vidia-red mt-1 hover:underline">Marchează rezolvat</button>` : ''}
       </div>
     `).join('');
