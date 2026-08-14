@@ -39,6 +39,23 @@ export function isMissingTableError(error) {
 }
 
 /**
+ * PostgREST PGRST303 — JWT iat is ahead of the DB clock (Vercel/Supabase skew).
+ * @param {unknown} error
+ */
+export function isJwtClockSkewError(error) {
+  if (!error || typeof error !== 'object') return false;
+  const code = /** @type {{ code?: string }} */ (error).code ?? '';
+  const message = /** @type {{ message?: string }} */ (error).message ?? '';
+  const raw = /** @type {{ raw?: { code?: string, message?: string } }} */ (error).raw;
+  return (
+    code === 'PGRST303'
+    || raw?.code === 'PGRST303'
+    || /JWT issued at future/i.test(message)
+    || /JWT issued at future/i.test(String(raw?.message ?? ''))
+  );
+}
+
+/**
  * @param {unknown} error
  * @param {string} [fallbackTable]
  * @returns {string | null}

@@ -31,10 +31,23 @@ const alertDedupe = new Map();
  */
 function serializeError(error) {
   if (error instanceof Error) {
+    const extra = /** @type {{ code?: string, details?: unknown, hint?: string }} */ (error);
     return {
       name: error.name,
       message: error.message,
       stack: error.stack,
+      ...(extra.code ? { code: extra.code } : {}),
+      ...(extra.hint ? { hint: extra.hint } : {}),
+    };
+  }
+  if (error && typeof error === 'object') {
+    const o = /** @type {{ name?: string, message?: string, code?: string, details?: unknown, hint?: string }} */ (error);
+    return {
+      name: o.name || 'PostgrestError',
+      message: o.message,
+      code: o.code,
+      details: o.details,
+      hint: o.hint,
     };
   }
   return { raw: error };

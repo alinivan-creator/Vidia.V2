@@ -4,12 +4,14 @@ import {
   markDraftExpired,
   getLatestExpiredDraft,
   getActiveDraftBooking,
+  cancelActiveDraftsForPhone,
 } from '../db/draftBookingService.js';
 import { getPendingTtlMinutes } from '../config/conversationConfig.js';
 import {
   CONVERSATION_STEPS,
   setConversationStep,
   getOrCreateConversationState,
+  isBookingFlowStep,
 } from '../db/conversationStateService.js';
 import { getEmployeeById, resolveEmployeeCalendarId } from '../db/employeeService.js';
 import { deleteCalendarEvent, resolveCalendarEventId } from './googleCalendarService.js';
@@ -215,7 +217,88 @@ export async function sweepStalePendingForPhone({
     }
   }
 
+  const pickerUnstuck = await unstickStaleBookingPicker({
+    business,
+    rawPhone,
+    conv,
+    draft,
+    requestId,
+  });
+  if (pickerUnstuck.unstuck) {
+    conv = pickerUnstuck.conv;
+    draft = pickerUnstuck.draft;
+  }
+
   return { draft, conv, expired, lastIntent };
+}
+
+/** Idle picker (service/employee/slot) older than this is treated as a new conversation. */
+const STALE_PICKER_MS = 30 * 60 * 1000;
+
+/**
+ * CHOOSING_SERVICE left overnight (or after a Vercel isolate drop) must not
+ * swallow the next "salut" / question without a reply.
+ */
+async function unstickStaleBookingPicker({
+  business,
+  rawPhone,
+  conv,
+  draft,
+  requestId = null,
+}) {
+  const step = conv?.current_step;
+  const pickerStep =
+    step === CONVERSATION_STEPS.CHOOSING_SERVICE
+    || step === CONVERSATION_STEPS.CHOOSING_EMPLOYEE
+    || step === CONVERSATION_STEPS.SELECTING_SLOT
+    || (isBookingFlowStep(step) && draft?.state === 'browsing');
+
+  if (!pickerStep && draft?.state !== 'browsing') {
+    return { unstuck: false, conv, draft };
+  }
+  if (draft?.state === 'pending_confirmation') {
+    return { unstuck: false, conv, draft };
+  }
+
+  const convAge = conv?.updated_at ? Date.now() - new Date(conv.updated_at).getTime() : Number.POSITIVE_INFINITY;
+  const draftAge = draft?.updated_at ? Date.now() - new Date(draft.updated_at).getTime() : 0;
+  const stale = convAge >= STALE_PICKER_MS || draftAge >= STALE_PICKER_MS;
+  if (!stale) {
+    return { unstuck: false, conv, draft };
+  }
+
+  console.log('[webhook] Unstick stale booking picker', {
+    step,
+    convAgeMs: convAge,
+    draftState: draft?.state ?? null,
+  });
+
+  if (draft && ['browsing', 'pending_confirmation'].includes(draft.state)) {
+    await cancelActiveDraftsForPhone({
+      businessId: business.id,
+      rawPhone,
+      context: { step: 'unstuck_stale_picker' },
+      requestId,
+    });
+  }
+
+  const preserved = { ...(conv.context_data ?? {}) };
+  delete preserved.draft_id;
+  delete preserved.awaiting_name;
+  const updated = await setConversationStep({
+    businessId: business.id,
+    rawPhone,
+    step: CONVERSATION_STEPS.IDLE,
+    context: {
+      last_booking_intent: preserved.last_booking_intent ?? null,
+      recent_turns: preserved.recent_turns ?? [],
+      last_menu: null,
+    },
+    mergeContext: false,
+    requestId,
+  });
+
+  return { unstuck: true, conv: updated ?? conv, draft: null };
 }
 
 /**

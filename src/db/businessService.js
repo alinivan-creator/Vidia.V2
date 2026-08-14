@@ -1,6 +1,7 @@
 import { supabase } from '../config/supabase.js';
 import { normalizeBusinessPhoneKey } from '../utils/phone.js';
 import { reportQueryFailure } from './schemaHealth.js';
+import { isJwtClockSkewError } from './schemaErrors.js';
 import { listServicesForBusiness } from './serviceCatalog.js';
 
 /** @typedef {'booking' | 'consulting'} BusinessType */
@@ -162,6 +163,10 @@ export async function getBusinessByWhatsAppPhoneNumberId(phoneNumberId, options 
   return withServices(hydrateBusiness(/** @type {Record<string, unknown> | null} */ (data)));
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * @param {string} toNumber e.g. "whatsapp:+407..." or "+407..."
  * @param {{ includeInactive?: boolean }} [options]
@@ -183,38 +188,71 @@ export async function getBusinessByWhatsAppToNumber(toNumber, options = {}) {
     return null;
   }
 
-  let query = supabase
-    .from('businesses')
-    .select(BUSINESS_COLUMNS)
-    .not('whatsapp_phone_number_id', 'is', null);
+  const rows = await loadBusinessRowsForPhoneLookup(includeInactive, toNumber);
+  if (!rows) return null;
 
-  if (!includeInactive) {
-    query = query.eq('status', 'active');
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    console.error('Eroare detalii:', error);
-    return handleQueryError(error, `getBusinessByWhatsAppToNumber failed for ${toNumber}`);
-  }
-
-  const match = (data ?? []).find(
+  const match = rows.find(
     (row) => normalizeBusinessPhoneKey(row.whatsapp_phone_number_id) === targetKey,
   );
 
   if (!match) {
     console.log('[db] No business matched. Candidates:',
-      (data ?? []).map((row) => ({
+      rows.map((row) => ({
         name: row.name,
         status: row.status,
         stored: row.whatsapp_phone_number_id,
         cleaned: normalizeBusinessPhoneKey(row.whatsapp_phone_number_id),
       })),
     );
+    return null;
   }
 
-  return withServices(hydrateBusiness(/** @type {Record<string, unknown> | null} */ (match ?? null)));
+  if (!match.ai_system_prompt && match.id) {
+    return getBusinessById(String(match.id));
+  }
+
+  return withServices(hydrateBusiness(/** @type {Record<string, unknown>} */ (match)));
+}
+
+/**
+ * @param {boolean} includeInactive
+ * @param {string} toNumber
+ * @returns {Promise<Record<string, unknown>[] | null>}
+ */
+async function loadBusinessRowsForPhoneLookup(includeInactive, toNumber) {
+  const run = () => {
+    let query = supabase
+      .from('businesses')
+      .select(BUSINESS_COLUMNS)
+      .not('whatsapp_phone_number_id', 'is', null);
+    if (!includeInactive) query = query.eq('status', 'active');
+    return query;
+  };
+
+  let { data, error } = await run();
+
+  if (error && isJwtClockSkewError(error)) {
+    console.warn('[db] PGRST303 JWT clock skew — retrying business lookup');
+    await sleep(900);
+    ({ data, error } = await run());
+  }
+
+  if (error && isJwtClockSkewError(error)) {
+    const lean = supabase
+      .from('businesses')
+      .select('id, name, status, whatsapp_phone_number_id')
+      .not('whatsapp_phone_number_id', 'is', null);
+    const second = includeInactive ? lean : lean.eq('status', 'active');
+    await sleep(600);
+    ({ data, error } = await second);
+  }
+
+  if (error) {
+    console.error('Eroare detalii:', error);
+    return handleQueryError(error, `getBusinessByWhatsAppToNumber failed for ${toNumber}`);
+  }
+
+  return /** @type {Record<string, unknown>[]} */ (data ?? []);
 }
 
 /**
