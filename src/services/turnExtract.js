@@ -3,7 +3,7 @@
  * Never checks availability, hours, or writes bookings.
  */
 
-import { getBookingConfig, formatDateKey, localToUtc, getWeekdayInTimezone } from '../utils/datetime.js';
+import { getBookingConfig } from '../utils/datetime.js';
 import { listEmployees, matchEmployeeMention } from '../db/employeeService.js';
 import { CONVERSATION_STEPS, readLastMenu } from '../db/conversationStateService.js';
 import {
@@ -19,22 +19,12 @@ import { resolveAcceptedOffer } from './pendingOfferService.js';
 import { completeTenantChat } from './aiContextLoader.js';
 import { markOpenAiUnavailable } from './openaiGate.js';
 import { resolveNumberedChoice } from './whatsappService.js';
-import { parseRomanianDateTime } from '../utils/roDateTime.js';
+import { parseRomanianDateTimeParts } from '../utils/roDateTime.js';
 import { BOOKING_PREFIXES, MOD_PREFIX } from './flowIds.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
 const PREFIX = BOOKING_PREFIXES;
-
-const WEEKDAY_MAP = {
-  duminica: 0,
-  luni: 1,
-  marti: 2,
-  miercuri: 3,
-  joi: 4,
-  vineri: 5,
-  sambata: 6,
-};
 
 /**
  * @typedef {Object} TurnExtract
@@ -110,38 +100,7 @@ function matchServiceMention(text, services) {
  * @returns {string | null}
  */
 export function extractDateKey(text, timezone) {
-  const n = normalize(text);
-  const iso = n.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
-  if (iso) return iso[1];
-
-  const now = new Date();
-  const dayName = Object.keys(WEEKDAY_MAP).find((d) => new RegExp(`\\b${d}\\b`).test(n));
-  if (dayName) {
-    const want = WEEKDAY_MAP[/** @type {keyof typeof WEEKDAY_MAP} */ (dayName)];
-    const current = getWeekdayInTimezone(now, timezone);
-    let add = (want - current + 7) % 7;
-    if (add === 0 && !/\bazi\b/.test(n)) add = 7;
-    const target = new Date(now.getTime() + add * 24 * 60 * 60 * 1000);
-    return formatDateKey(target, timezone);
-  }
-  if (/\bmaine\b/.test(n)) {
-    return formatDateKey(new Date(now.getTime() + 24 * 60 * 60 * 1000), timezone);
-  }
-  if (/\bpoimaine\b/.test(n)) {
-    return formatDateKey(new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000), timezone);
-  }
-  if (/\bazi\b/.test(n)) return formatDateKey(now, timezone);
-  return null;
-}
-
-function extractTimeText(text) {
-  const n = normalize(text);
-  const match = n.match(/\b(\d{1,2})[:\.](\d{2})\b/) || n.match(/\b(\d{1,2})\s*(?:am|pm)?\b/);
-  if (!match) return null;
-  const hour = Number(match[1]);
-  const minute = match[2] !== undefined ? Number(match[2]) : 0;
-  if (hour > 23 || minute > 59) return null;
-  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  return parseRomanianDateTimeParts(text, timezone).dateKey;
 }
 
 /**
@@ -283,6 +242,7 @@ async function extractWithLlm({ business, textBody, requestId = null }) {
       return (
         'SARCINĂ EXTRACT (NLU): extragi DOAR intenția și entitățile din mesajul clientului WhatsApp. ' +
         'Nu decide disponibilitate, ore libere, confirmări sau prețuri. ' +
+        'Ore în 24h: „5 după-amiaza” / „la 5 seara” = 17:00, NU 05:00. „17 Aug” este DATA, nu ora. ' +
         'Răspunde strict JSON: ' +
         '{"action":"book|reschedule|cancel|confirm|cancel_pending|hours|services|contact|callback|menu|chat",' +
         '"service_name":null,"employee_name":null,"date_text":null,"time_text":null}. ' +
@@ -341,20 +301,31 @@ function applyCatalogMatches(extract, textBody, services, employees, timezone) {
     next.employee_name = mentionedEmp.name;
   }
 
-  const parsed = parseRomanianDateTime(textBody, timezone)
-    || (next.date_text || next.time_text
-      ? parseRomanianDateTime(
-          [next.date_text, next.time_text].filter(Boolean).join(' '),
-          timezone,
-        )
-      : null);
-  if (parsed) next.datetime = parsed;
-  if (!next.date_text) next.date_text = extractDateKey(textBody, timezone);
-  if (!next.time_text) next.time_text = extractTimeText(textBody);
-  if (!next.datetime && next.date_text && next.time_text) {
-    next.datetime = localToUtc(next.date_text, next.time_text, timezone);
+  applyParsedDateTime(next, textBody, timezone);
+  if (next.date_text && !/^\d{4}-\d{2}-\d{2}$/.test(next.date_text)) {
+    const asDate = parseRomanianDateTimeParts(next.date_text, timezone);
+    if (asDate.dateKey) next.date_text = asDate.dateKey;
+  }
+  if (next.time_text && !/^\d{2}:\d{2}$/.test(next.time_text)) {
+    const asTime = parseRomanianDateTimeParts(`la ${next.time_text}`, timezone);
+    if (asTime.timeHHmm) next.time_text = asTime.timeHHmm;
+  }
+  if (next.date_text && next.time_text) {
+    const combined = parseRomanianDateTimeParts(`${next.date_text} ${next.time_text}`, timezone);
+    if (combined.datetime) next.datetime = combined.datetime;
   }
   return next;
+}
+
+/**
+ * @param {TurnExtract} next
+ * @param {string} text
+ * @param {string} timezone
+ */
+function applyParsedDateTime(next, text, timezone) {
+  const parts = parseRomanianDateTimeParts(text, timezone);
+  if (parts.dateKey) next.date_text = parts.dateKey;
+  if (parts.timeHHmm) next.time_text = parts.timeHHmm;
 }
 
 /**
@@ -384,9 +355,12 @@ export async function extractTurnIntent({
     || step === CONVERSATION_STEPS.ASKING_NAME;
 
   if (lastMenu?.options?.length) {
-    const choiceId = resolveNumberedChoice(textBody, lastMenu.options);
-    if (choiceId) {
-      return extractFromChoiceId(choiceId, {}, business);
+    const loneNumber = /^\d{1,2}$/.test(String(textBody ?? '').trim());
+    if (loneNumber || !looksLikeDatetimeOrSlot(textBody)) {
+      const choiceId = resolveNumberedChoice(textBody, lastMenu.options);
+      if (choiceId) {
+        return extractFromChoiceId(choiceId, {}, business);
+      }
     }
   }
 

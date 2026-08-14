@@ -86,6 +86,8 @@ export function looksLikeDatetimeOrSlot(text) {
     'maine', 'azi', 'poimaine', 'today', 'tomorrow',
   ];
   if (days.some((d) => n.includes(d))) return true;
+  if (/\b\d{1,2}\s*(ian|feb|mar|apr|mai|iun|iul|aug|sep|oct|nov|dec)/.test(n)) return true;
+  if (/\b(dupa[\s-]*amiaza|dimineata|seara|amiaza)\b/.test(n) && /\d/.test(n)) return true;
   if (/\b\d{1,2}([:.]h?\d{2})?\b/.test(n) && /\b(la|ora|pe|am|pm)\b/.test(n)) return true;
   return false;
 }

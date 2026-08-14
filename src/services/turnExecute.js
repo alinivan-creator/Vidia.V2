@@ -42,6 +42,7 @@ import {
   formatBusinessHoursText,
   getConfiguredBusinessHours,
   formatDateKey,
+  localToUtc,
 } from '../utils/datetime.js';
 import {
   assertWithinWorkingHours,
@@ -85,36 +86,55 @@ function catalogDuration(business, service) {
   return resolveServiceDurationMinutes(business, service);
 }
 
-function hydrateExtract(extract, convState) {
+function hydrateExtract(extract, convState, timezone) {
   const ctx = convState?.context_data || {};
   const next = { ...extract };
-  if (!next.datetime && typeof ctx.pending_datetime === 'string') {
-    const d = new Date(ctx.pending_datetime);
-    if (!Number.isNaN(d.getTime())) next.datetime = d;
+  const turnHasDate = Boolean(extract.date_text);
+  const turnHasTime = Boolean(extract.time_text);
+
+  if (!turnHasDate && typeof ctx.pending_date_text === 'string' && ctx.pending_date_text) {
+    next.date_text = ctx.pending_date_text;
   }
-  if (!next.date_text && typeof ctx.pending_date_text === 'string') next.date_text = ctx.pending_date_text;
-  if (!next.time_text && typeof ctx.pending_time_text === 'string') next.time_text = ctx.pending_time_text;
+  if (!turnHasTime && typeof ctx.pending_time_text === 'string' && ctx.pending_time_text) {
+    next.time_text = ctx.pending_time_text;
+  }
   if (!next.service_id && typeof ctx.pending_service_id === 'string') next.service_id = ctx.pending_service_id;
   if (!next.employee_id && typeof ctx.pending_employee_id === 'string') next.employee_id = ctx.pending_employee_id;
   if (!next.slot_id && typeof ctx.pending_slot_id === 'string') next.slot_id = ctx.pending_slot_id;
   if (!next.appointment_id && typeof ctx.appointment_id === 'string') next.appointment_id = ctx.appointment_id;
+
+  if (next.date_text && next.time_text && timezone) {
+    next.datetime = localToUtc(next.date_text, next.time_text, timezone);
+  } else if (!turnHasDate && !turnHasTime && typeof ctx.pending_datetime === 'string') {
+    const d = new Date(ctx.pending_datetime);
+    if (!Number.isNaN(d.getTime())) next.datetime = d;
+  } else if (!next.date_text || !next.time_text) {
+    next.datetime = null;
+  }
   return next;
 }
 
 async function persistPendingExtract({ business, recipientPhone, extract, requestId }) {
+  /** @type {Record<string, unknown>} */
+  const context = {};
+  if (extract.date_text) context.pending_date_text = extract.date_text;
+  if (extract.time_text) context.pending_time_text = extract.time_text;
+  if (extract.service_id) context.pending_service_id = extract.service_id;
+  if (extract.employee_id) context.pending_employee_id = extract.employee_id;
+  if (extract.slot_id) context.pending_slot_id = extract.slot_id;
+  if (extract.date_text && extract.time_text && extract.datetime instanceof Date) {
+    context.pending_datetime = extract.datetime.toISOString();
+  } else if (extract.date_text && !extract.time_text) {
+    context.pending_datetime = null;
+  }
+  if (!Object.keys(context).length) return;
+
   const latest = await getOrCreateConversationState(business.id, recipientPhone);
   await setConversationStep({
     businessId: business.id,
     rawPhone: recipientPhone,
     step: latest.current_step,
-    context: {
-      pending_datetime: extract.datetime instanceof Date ? extract.datetime.toISOString() : null,
-      pending_date_text: extract.date_text,
-      pending_time_text: extract.time_text,
-      pending_service_id: extract.service_id,
-      pending_employee_id: extract.employee_id,
-      pending_slot_id: extract.slot_id,
-    },
+    context,
     mergeContext: true,
     requestId,
   });
@@ -600,8 +620,10 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
     }) || working;
   }
 
-  const slotStart = extract.datetime
-    || (extract.slot_id ? decodeSlotId(extract.slot_id, business.timezone) : null);
+  const slotStart = (extract.date_text && extract.time_text)
+    ? localToUtc(extract.date_text, extract.time_text, business.timezone)
+    : extract.datetime
+      || (extract.slot_id ? decodeSlotId(extract.slot_id, business.timezone) : null);
 
   if (slotStart) {
     return holdRequestedSlot({
@@ -1077,8 +1099,10 @@ async function executeReschedule({
     });
   }
 
-  const slotStart = extract.datetime
-    || (extract.slot_id ? decodeSlotId(extract.slot_id, business.timezone) : null);
+  const slotStart = (extract.date_text && extract.time_text)
+    ? localToUtc(extract.date_text, extract.time_text, business.timezone)
+    : extract.datetime
+      || (extract.slot_id ? decodeSlotId(extract.slot_id, business.timezone) : null);
   if (slotStart) {
     return applyReschedule({
       business,
@@ -1539,15 +1563,12 @@ async function dispatchExecute({
  * @returns {Promise<HandlerResult>}
  */
 export async function executeTurn(params) {
-  const extract = hydrateExtract(params.extract, params.convState);
-  const result = await dispatchExecute({ ...params, extract });
-  if (result.status === 'MISSING_INFO') {
-    await persistPendingExtract({
-      business: params.business,
-      recipientPhone: params.recipientPhone,
-      extract,
-      requestId: params.requestId,
-    });
-  }
-  return result;
+  const extract = hydrateExtract(params.extract, params.convState, params.business?.timezone);
+  await persistPendingExtract({
+    business: params.business,
+    recipientPhone: params.recipientPhone,
+    extract,
+    requestId: params.requestId,
+  });
+  return dispatchExecute({ ...params, extract });
 }

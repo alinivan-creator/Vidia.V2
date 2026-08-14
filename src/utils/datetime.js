@@ -176,6 +176,20 @@ export function slotNumberEmoji(indexZeroBased) {
 }
 
 /**
+ * @param {string} dateKey YYYY-MM-DD
+ * @param {number} days
+ * @returns {string} YYYY-MM-DD
+ */
+export function addCalendarDays(dateKey, days) {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const utc = new Date(Date.UTC(year, month - 1, day + Number(days || 0)));
+  const yyyy = utc.getUTCFullYear();
+  const mm = String(utc.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(utc.getUTCDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/**
  * Builds a UTC Date from local date + HH:mm in a given IANA timezone.
  * @param {string} dateKey YYYY-MM-DD
  * @param {string} timeHHmm HH:mm
