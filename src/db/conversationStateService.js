@@ -4,7 +4,7 @@ import { toE164 } from '../utils/phone.js';
 import { isTableAvailable, reportQueryFailure } from './schemaHealth.js';
 
 /**
- * @typedef {'IDLE' | 'CHOOSING_SERVICE' | 'CHOOSING_EMPLOYEE' | 'SELECTING_SLOT' | 'ASKING_NAME' | 'CONFIRMING' | 'OFFERING_RESUME' | 'MODIFYING' | 'RESCHEDULING' | 'CONFIRMING_CANCEL' | 'MODIFIED' | 'waiting_for_service' | 'waiting_for_date' | 'waiting_for_time' | 'waiting_for_confirmation' | 'waiting_for_clarification'} ConversationStep
+ * @typedef {'IDLE' | 'CHOOSING_SERVICE' | 'CHOOSING_EMPLOYEE' | 'SELECTING_SLOT' | 'ASKING_NAME' | 'CONFIRMING' | 'OFFERING_RESUME' | 'MODIFYING' | 'RESCHEDULING' | 'CONFIRMING_CANCEL' | 'MODIFIED' | 'waiting_for_service' | 'waiting_for_date' | 'waiting_for_time' | 'waiting_for_date_time' | 'waiting_for_confirmation' | 'waiting_for_clarification' | 'CONFIRMED'} ConversationStep
  */
 
 /**
@@ -32,8 +32,11 @@ export const CONVERSATION_STEPS = /** @type {const} */ ({
   WAITING_FOR_SERVICE: 'waiting_for_service',
   WAITING_FOR_DATE: 'waiting_for_date',
   WAITING_FOR_TIME: 'waiting_for_time',
+  WAITING_FOR_DATE_TIME: 'waiting_for_date_time',
   WAITING_FOR_CONFIRMATION: 'waiting_for_confirmation',
   WAITING_FOR_CLARIFICATION: 'waiting_for_clarification',
+  CONFIRMED: 'CONFIRMED',
+  INIT: 'IDLE',
 });
 
 const COLUMNS = 'id, business_id, client_phone, current_step, context_data, updated_at';
@@ -133,7 +136,7 @@ export async function setConversationStep({
     nextContext = { ...existingCtx, ...context };
   } else {
     nextContext = { ...context };
-    for (const key of ['recent_turns', 'last_menu', 'last_booking_intent', 'pending_offer', 'clarified']) {
+    for (const key of ['recent_turns', 'last_menu', 'last_booking_intent', 'pending_offer', 'clarified', 'draft_booking']) {
       if (!Object.prototype.hasOwnProperty.call(context, key) && existingCtx[key] !== undefined) {
         nextContext[key] = existingCtx[key];
       }
@@ -292,6 +295,7 @@ export function isBookingFlowStep(step) {
     step === CONVERSATION_STEPS.WAITING_FOR_SERVICE ||
     step === CONVERSATION_STEPS.WAITING_FOR_DATE ||
     step === CONVERSATION_STEPS.WAITING_FOR_TIME ||
+    step === CONVERSATION_STEPS.WAITING_FOR_DATE_TIME ||
     step === CONVERSATION_STEPS.WAITING_FOR_CONFIRMATION ||
     step === CONVERSATION_STEPS.WAITING_FOR_CLARIFICATION
   );

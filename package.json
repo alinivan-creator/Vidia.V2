@@ -9,6 +9,7 @@
     "start": "node src/index.js",
     "dev": "node --watch-path=./src src/index.js",
     "test:db": "node src/db/testConnection.js",
+    "test": "node --test tests/bookingCorrection.test.js",
     "schema:refresh": "node scripts/refresh-schema-cache.js",
     "tunnel": "npx --yes cloudflared tunnel --url http://127.0.0.1:3000"
   },
@@ -23,6 +24,7 @@
     "express": "^4.21.2",
     "express-rate-limit": "^8.6.1",
     "googleapis": "^174.0.0",
-    "twilio": "^5.4.0"
+    "twilio": "^5.4.0",
+    "zod": "^4.4.3"
   }
 }

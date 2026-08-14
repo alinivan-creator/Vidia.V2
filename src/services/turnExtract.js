@@ -3,7 +3,8 @@
  * Never checks availability, hours, or writes bookings.
  */
 
-import { getBookingConfig } from '../utils/datetime.js';
+import { getBookingConfig, localToUtc } from '../utils/datetime.js';
+import { getHoursForDate } from '../utils/workingHours.js';
 import { listEmployees, matchEmployeeMention } from '../db/employeeService.js';
 import { CONVERSATION_STEPS, readLastMenu } from '../db/conversationStateService.js';
 import {
@@ -16,8 +17,6 @@ import {
   wantsSameExpiredBooking,
 } from './intentTriageService.js';
 import { resolveAcceptedOffer } from './pendingOfferService.js';
-import { completeTenantChat } from './aiContextLoader.js';
-import { markOpenAiUnavailable } from './openaiGate.js';
 import { resolveNumberedChoice } from './whatsappService.js';
 import { parseRomanianDateTimeParts } from '../utils/roDateTime.js';
 import { BOOKING_PREFIXES, MOD_PREFIX } from './flowIds.js';
@@ -27,6 +26,7 @@ import {
   getBookingWait,
   interpretNumericFreeText,
 } from './bookingWaitState.js';
+import { extractBookingEntities } from '../lib/ai/extractor.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -49,6 +49,7 @@ const PREFIX = BOOKING_PREFIXES;
  * @property {'high' | 'medium' | 'low'} confidence
  * @property {'menu' | 'keyword' | 'parser' | 'nlu' | 'state'} source
  * @property {Record<string, unknown> | null} [ambiguity]
+ * @property {import('../schemas/extractionResult.js').ExtractionResult | null} [extraction]
  */
 
 function normalize(text) {
@@ -77,6 +78,7 @@ function emptyExtract(overrides = {}) {
     confidence: 'low',
     source: 'parser',
     ambiguity: null,
+    extraction: null,
     ...overrides,
   };
 }
@@ -257,59 +259,101 @@ function faqActionFromText(text) {
   return 'services';
 }
 
-/**
- * Optional LLM JSON extract — intent/entities only. No availability fields.
- * @returns {Promise<TurnExtract | null>}
- */
-async function extractWithLlm({ business, textBody, requestId = null }) {
-  if (!business?.id) return null;
-
-  const result = await completeTenantChat({
-    businessId: business.id,
-    buildExtraSystem: (ctx) => {
-      const catalog = getBookingConfig(ctx.snapshot).services.map((s) => s.name).slice(0, 20);
-      return (
-        'SARCINĂ EXTRACT (NLU): extragi DOAR intenția și entitățile din mesajul clientului WhatsApp. ' +
-        'Nu decide disponibilitate, ore libere, confirmări sau prețuri. ' +
-        'Ore în 24h: „5 după-amiaza” / „la 5 seara” = 17:00, NU 05:00. „17 Aug” este DATA, nu ora. ' +
-        'Răspunde strict JSON: ' +
-        '{"action":"book|reschedule|cancel|confirm|cancel_pending|hours|services|contact|callback|menu|chat",' +
-        '"service_name":null,"employee_name":null,"date_text":null,"time_text":null}. ' +
-        `Servicii catalog: ${catalog.join(', ') || '(gol)'}.`
-      );
-    },
-    userContent: String(textBody ?? '').slice(0, 500),
-    jsonMode: true,
-    temperature: 0,
-    maxTokens: 220,
-    requestId,
-  });
-  if (!result.ok || !result.text) return null;
-
-  try {
-    const parsed = JSON.parse(result.text.replace(/```json\s*|```/g, '').trim());
-    const action = typeof parsed.action === 'string' ? parsed.action : 'chat';
-    const allowed = new Set([
-      'book', 'reschedule', 'cancel', 'confirm', 'cancel_pending',
-      'hours', 'services', 'contact', 'callback', 'menu', 'chat',
-    ]);
-    return emptyExtract({
-      action: allowed.has(action) ? action : 'chat',
-      service_name: typeof parsed.service_name === 'string' ? parsed.service_name : null,
-      employee_name: typeof parsed.employee_name === 'string' ? parsed.employee_name : null,
-      date_text: typeof parsed.date_text === 'string' ? parsed.date_text : null,
-      time_text: typeof parsed.time_text === 'string' ? parsed.time_text : null,
-      confidence: 'medium',
-      source: 'nlu',
-    });
-  } catch (error) {
-    console.warn('[turnExtract] NLU extract failed', error);
-    markOpenAiUnavailable();
-    return null;
-  }
+function confidenceBand(value) {
+  if (value >= 0.8) return 'high';
+  if (value >= 0.45) return 'medium';
+  return 'low';
 }
 
-function applyCatalogMatches(extract, textBody, services, employees, timezone) {
+function firstDigitPair(text) {
+  const m = String(text ?? '').match(/\b(\d{1,2})\b/);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * Map Layer 1 ExtractionResult onto TurnExtract. Does not talk to the client.
+ *
+ * @param {import('../schemas/extractionResult.js').ExtractionResult} parsed
+ * @param {Object} opts
+ * @param {string} opts.textBody
+ * @param {boolean} opts.isPendingHold
+ * @param {boolean} opts.inModify
+ * @param {string | null} opts.wait
+ * @param {string} opts.timezone
+ * @returns {TurnExtract}
+ */
+function mapExtractionToTurnExtract(parsed, { textBody, isPendingHold, inModify, wait, timezone }) {
+  const numeric = interpretNumericFreeText({
+    text: textBody,
+    wait,
+    timezone,
+  });
+
+  if (parsed.is_ambiguous) {
+    if ((wait === BOOKING_WAIT.TIME || wait === BOOKING_WAIT.CONFIRMATION) && numeric.kind === 'time') {
+      return emptyExtract({
+        action: inModify ? 'reschedule' : 'book',
+        time_text: numeric.timeHHmm,
+        confidence: 'high',
+        source: 'nlu',
+        extraction: { ...parsed, intent: 'change_time', is_ambiguous: false, extracted_time: numeric.timeHHmm },
+      });
+    }
+    if (wait === BOOKING_WAIT.DATE && numeric.kind === 'date') {
+      return emptyExtract({
+        action: inModify ? 'reschedule' : 'book',
+        date_text: numeric.dateKey,
+        confidence: 'high',
+        source: 'nlu',
+        extraction: { ...parsed, intent: 'change_date', is_ambiguous: false, extracted_date: numeric.dateKey },
+      });
+    }
+    const value = numeric.value ?? firstDigitPair(textBody);
+    return emptyExtract({
+      action: 'clarify_needed',
+      confidence: parsed.confidence >= 0.7 ? 'high' : 'medium',
+      source: 'nlu',
+      extraction: parsed,
+      ambiguity: {
+        value,
+        rejected: numeric.rejected ?? null,
+        date_key: parsed.extracted_date || numeric.dateKey || null,
+        time_hhmm: parsed.extracted_time || numeric.timeHHmm || null,
+        date_label: numeric.dateLabel || (value != null ? String(value) : parsed.ambiguity_reason),
+        time_label: numeric.timeLabel || (value != null ? String(value) : parsed.ambiguity_reason),
+        resume_wait: wait,
+        reason: parsed.ambiguity_reason,
+      },
+    });
+  }
+
+  const bookingAction = inModify ? 'reschedule' : 'book';
+  let action = 'unknown';
+  if (parsed.intent === 'confirm') action = 'confirm';
+  else if (parsed.intent === 'cancel') action = isPendingHold ? 'cancel_pending' : 'cancel';
+  else if (
+    parsed.intent === 'book'
+    || parsed.intent === 'change_time'
+    || parsed.intent === 'change_date'
+    || parsed.intent === 'select_service'
+  ) {
+    action = bookingAction;
+  } else if (parsed.extracted_date || parsed.extracted_time || parsed.extracted_service) {
+    action = bookingAction;
+  }
+
+  return emptyExtract({
+    action,
+    service_name: parsed.extracted_service,
+    date_text: parsed.intent === 'change_time' ? null : parsed.extracted_date,
+    time_text: parsed.intent === 'change_date' ? null : parsed.extracted_time,
+    confidence: confidenceBand(parsed.confidence),
+    source: 'nlu',
+    extraction: parsed,
+  });
+}
+
+function applyCatalogMatches(extract, textBody, services, employees, timezone, opts = {}) {
   const next = { ...extract };
   const namedService = matchServiceMention(textBody, services);
   if (namedService && !next.service_id) {
@@ -330,18 +374,20 @@ function applyCatalogMatches(extract, textBody, services, employees, timezone) {
     next.employee_name = mentionedEmp.name;
   }
 
-  applyParsedDateTime(next, textBody, timezone);
+  applyParsedDateTime(next, textBody, timezone, opts);
   if (next.date_text && !/^\d{4}-\d{2}-\d{2}$/.test(next.date_text)) {
-    const asDate = parseRomanianDateTimeParts(next.date_text, timezone);
+    const asDate = parseRomanianDateTimeParts(next.date_text, timezone, new Date(), { dayHours: opts.dayHours });
     if (asDate.dateKey) next.date_text = asDate.dateKey;
   }
   if (next.time_text && !/^\d{2}:\d{2}$/.test(next.time_text)) {
-    const asTime = parseRomanianDateTimeParts(`la ${next.time_text}`, timezone);
+    const asTime = parseRomanianDateTimeParts(`la ${next.time_text}`, timezone, new Date(), { dayHours: opts.dayHours });
     if (asTime.timeHHmm) next.time_text = asTime.timeHHmm;
   }
   if (next.date_text && next.time_text) {
-    const combined = parseRomanianDateTimeParts(`${next.date_text} ${next.time_text}`, timezone);
+    const combined = parseRomanianDateTimeParts(`${next.date_text} ${next.time_text}`, timezone, new Date(), { dayHours: opts.dayHours });
     if (combined.datetime) next.datetime = combined.datetime;
+  } else if (!next.date_text || !next.time_text) {
+    next.datetime = null;
   }
   return next;
 }
@@ -350,11 +396,14 @@ function applyCatalogMatches(extract, textBody, services, employees, timezone) {
  * @param {TurnExtract} next
  * @param {string} text
  * @param {string} timezone
+ * @param {{ freezeDate?: boolean, freezeTime?: boolean }} [opts]
  */
-function applyParsedDateTime(next, text, timezone) {
-  const parts = parseRomanianDateTimeParts(text, timezone);
-  if (parts.dateKey) next.date_text = parts.dateKey;
-  if (parts.timeHHmm) next.time_text = parts.timeHHmm;
+function applyParsedDateTime(next, text, timezone, opts = {}) {
+  const parts = parseRomanianDateTimeParts(text, timezone, new Date(), { dayHours: opts.dayHours ?? null });
+  const dateLocked = Boolean(opts.freezeDate || (next.date_text && /^\d{4}-\d{2}-\d{2}$/.test(next.date_text)));
+  const timeLocked = Boolean(opts.freezeTime || (next.time_text && /^\d{2}:\d{2}$/.test(next.time_text)));
+  if (parts.dateKey && !dateLocked) next.date_text = parts.dateKey;
+  if (parts.timeHHmm && !timeLocked) next.time_text = parts.timeHHmm;
 }
 
 /**
@@ -379,6 +428,11 @@ export async function extractTurnIntent({
   const employees = await listEmployees(business.id, { activeOnly: true });
   const tz = business.timezone;
   const wait = getBookingWait(convState);
+  const pendingDateKey = typeof convState.context_data?.pending_date_text === 'string'
+    ? convState.context_data.pending_date_text
+    : null;
+  const hoursWhen = pendingDateKey && tz ? localToUtc(pendingDateKey, '12:00', tz) : new Date();
+  const dayHours = getHoursForDate(business, hoursWhen).dayHours;
   const isPendingHold =
     activeDraft?.state === 'pending_confirmation'
     || wait === BOOKING_WAIT.CONFIRMATION
@@ -430,14 +484,31 @@ export async function extractTurnIntent({
     });
   }
 
+  if (step === CONVERSATION_STEPS.ASKING_NAME) {
+    const n = normalize(textBody);
+    if (isExplicitCancelReply(textBody) || n === 'meniu' || n === 'menu' || n.includes('renunt')) {
+      return emptyExtract({
+        action: n === 'meniu' || n === 'menu' ? 'menu' : 'cancel_pending',
+        confidence: 'high',
+        source: 'state',
+      });
+    }
+    if (!looksLikeDatetimeOrSlot(textBody) && triageUserIntent(textBody, { businessType: business.business_type }).intent === 'unknown') {
+      return emptyExtract({
+        action: 'set_name',
+        name: String(textBody || '').trim(),
+        confidence: 'high',
+        source: 'state',
+      });
+    }
+  }
+
   const loneNumber = /^\d{1,2}$/.test(String(textBody ?? '').trim());
   const numeric = interpretNumericFreeText({
     text: textBody,
     wait,
     timezone: tz,
-    pendingDateKey: typeof convState.context_data?.pending_date_text === 'string'
-      ? convState.context_data.pending_date_text
-      : null,
+    pendingDateKey,
   });
 
   const menuInRange = Boolean(
@@ -475,31 +546,12 @@ export async function extractTurnIntent({
     });
   }
 
-  if (lastMenu?.options?.length) {
+  if (lastMenu?.options?.length && lastMenu.kind !== 'slot' && lastMenu.kind !== 'service') {
     if (loneNumber || !looksLikeDatetimeOrSlot(textBody)) {
       const choiceId = resolveNumberedChoice(textBody, lastMenu.options);
       if (choiceId) {
         return extractFromChoiceId(choiceId, {}, business);
       }
-    }
-  }
-
-  if (step === CONVERSATION_STEPS.ASKING_NAME) {
-    const n = normalize(textBody);
-    if (isExplicitCancelReply(textBody) || n === 'meniu' || n === 'menu' || n.includes('renunt')) {
-      return emptyExtract({
-        action: n === 'meniu' || n === 'menu' ? 'menu' : 'cancel_pending',
-        confidence: 'high',
-        source: 'state',
-      });
-    }
-    if (!looksLikeDatetimeOrSlot(textBody) && triageUserIntent(textBody, { businessType: business.business_type }).intent === 'unknown') {
-      return emptyExtract({
-        action: 'set_name',
-        name: String(textBody || '').trim(),
-        confidence: 'high',
-        source: 'state',
-      });
     }
   }
 
@@ -559,10 +611,10 @@ export async function extractTurnIntent({
   else if (triage.intent === 'faq') extract.action = faqActionFromText(textBody);
   else if (triage.intent === 'menu') extract.action = 'menu';
 
-  extract = applyCatalogMatches(extract, textBody, services, employees, tz);
+  extract = applyCatalogMatches(extract, textBody, services, employees, tz, { dayHours });
 
+  const inModify = step === CONVERSATION_STEPS.RESCHEDULING || step === CONVERSATION_STEPS.MODIFYING;
   if (extract.action === 'unknown' || extract.action === 'chat') {
-    const inModify = step === CONVERSATION_STEPS.RESCHEDULING || step === CONVERSATION_STEPS.MODIFYING;
     if (
       extract.datetime
       || extract.date_text
@@ -576,16 +628,65 @@ export async function extractTurnIntent({
     }
   }
 
-  if (extract.action === 'unknown') {
-    const nlu = await extractWithLlm({ business, textBody, requestId });
+  const skipLayer1 = new Set([
+    'sms_opt_in',
+    'sms_opt_out',
+    'callback',
+    'cancel',
+    'cancel_pending',
+    'contact',
+    'hours',
+    'menu',
+    'services',
+  ]);
+  if (!skipLayer1.has(extract.action)) {
+    const nlu = await extractBookingEntities({
+      business,
+      textBody,
+      convState,
+      activeDraft,
+      requestId,
+    });
     if (nlu) {
-      extract = applyCatalogMatches(
-        { ...nlu, datetime: extract.datetime, date_text: extract.date_text || nlu.date_text, time_text: extract.time_text || nlu.time_text },
+      const mapped = mapExtractionToTurnExtract(nlu, {
         textBody,
-        services,
-        employees,
-        tz,
-      );
+        isPendingHold,
+        inModify,
+        wait,
+        timezone: tz,
+      });
+      if (mapped.action === 'clarify_needed') return mapped;
+      if (mapped.action === 'confirm' || mapped.action === 'cancel' || mapped.action === 'cancel_pending') {
+        return mapped;
+      }
+      if (mapped.action === 'unknown') {
+        extract.extraction = nlu;
+      } else {
+        extract = applyCatalogMatches(
+          {
+            ...extract,
+            ...mapped,
+            date_text: nlu.intent === 'change_time'
+              ? null
+              : (mapped.date_text || extract.date_text),
+            time_text: nlu.intent === 'change_date'
+              ? null
+              : (mapped.time_text || extract.time_text),
+            service_name: mapped.service_name || extract.service_name,
+            service_id: mapped.service_name ? null : extract.service_id,
+            extraction: nlu,
+          },
+          textBody,
+          services,
+          employees,
+          tz,
+          {
+            freezeDate: nlu.intent === 'change_time',
+            freezeTime: nlu.intent === 'change_date',
+            dayHours,
+          },
+        );
+      }
     }
   }
 

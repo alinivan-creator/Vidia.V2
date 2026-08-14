@@ -15,7 +15,8 @@ import {
   clearRememberedMenuOptions,
   simulateHumanDelay,
 } from './whatsappService.js';
-import { slotNumberEmoji } from '../utils/datetime.js';
+import { formatMachineAction, formatterSystemHint } from '../lib/ai/responseFormatter.js';
+import { MACHINE_ACTIONS } from '../lib/booking/stateMachine.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 /** @typedef {import('./handlerResult.js').HandlerResult} HandlerResult */
@@ -29,12 +30,6 @@ function formatServiceLine(s) {
   return `${price}${duration ? `  |  ${duration}` : ''}`;
 }
 
-function numberedOptions(options) {
-  return (options || [])
-    .map((opt, i) => `${slotNumberEmoji(i)} ${opt.title}`)
-    .join('\n');
-}
-
 /**
  * Deterministic templates from backend JSON. No invented facts.
  * @param {Business} business
@@ -43,9 +38,26 @@ function numberedOptions(options) {
 export function renderHandlerResult(business, result) {
   const d = result.data || {};
   const key = result.user_message_template_key;
-  const menuBlock = result.menu?.options?.length
-    ? `\n\n${numberedOptions(result.menu.options)}\n\nRăspunde cu numărul opțiunii (ex: 1).`
-    : '';
+  const machineText = result.machine_action
+    ? formatMachineAction({
+      action: result.machine_action,
+      draft: {
+        service_name: d.service_name || d.draft_service_name || null,
+        date: d.date_key || d.date || null,
+        time: d.time_hhmm || d.time || null,
+      },
+      clientName: d.client_name || null,
+      employeeName: d.employee_name || null,
+      timezone: business.timezone || 'Europe/Bucharest',
+      clarifyValue: d.value ?? null,
+      alternatives: d.alternatives || [],
+      occupiedLabel: d.occupied_label || null,
+      services: d.services || [],
+    })
+    : null;
+  if (machineText) return machineText;
+
+  const menuBlock = '';
 
   switch (key) {
     case 'ASK_NAME':
@@ -91,18 +103,16 @@ export function renderHandlerResult(business, result) {
     case 'FLOW_ABORTED':
       return 'Ok, am renunțat. Cu ce te mai pot ajuta?';
     case 'MISSING_EMPLOYEE': {
-      const intro = d.client_message || 'Alege specialistul:';
-      return `${intro}${menuBlock}`;
+      const names = (d.services || []).map((e) => e.name).filter(Boolean);
+      const intro = d.client_message || 'Nu am găsit specialistul. Poți scrie alt nume din echipă:';
+      return names.length ? `${intro} ${names.join(', ')}.` : intro;
     }
     case 'MISSING_SERVICE': {
-      const lines = ['📋 *Alege serviciul dorit:*', ''];
-      (d.services || []).forEach((s, i) => {
-        lines.push(`${slotNumberEmoji(i)} *${s.name}*`);
-        lines.push(formatServiceLine(s));
-        lines.push('');
-      });
-      lines.push('Răspunde cu numărul opțiunii (ex: 1).');
-      return lines.join('\n');
+      const names = (d.services || []).map((s) => s.name).filter(Boolean);
+      if (names.length) {
+        return `Ce serviciu dorești? Avem: ${names.join(', ')}. Scrie numele serviciului.`;
+      }
+      return 'Ce serviciu dorești? Scrie numele lui (ex: *tuns*).';
     }
     case 'ASK_DATE':
       return (
@@ -113,31 +123,33 @@ export function renderHandlerResult(business, result) {
       const head = d.service_name
         ? `La ce oră vrei *${d.service_name}*${d.date_label ? ` pe ${d.date_label}` : ''}?`
         : 'La ce oră vrei programarea?';
-      const alts = (d.alternatives || []).map((s, i) => `${slotNumberEmoji(i)} ${s.label}`);
+      const alts = (d.alternatives || []).map((s) => s.time || s.label).filter(Boolean).slice(0, 6);
       if (alts.length) {
-        return [`${head} Alege din listă sau scrie ora (ex: *18*):`, '', ...alts].join('\n');
+        return `${head} Ore apropiate: ${alts.join(', ')}. Scrie ora (ex: *18* sau *18:00*).`;
       }
       return `${head} Scrie ora (ex: *10:30* sau *18*).`;
     }
     case 'ASK_CLARIFY_DATE_OR_TIME':
       return (
         (typeof d.client_message === 'string' && d.client_message)
-        || `Scuze, nu am înțeles corect, te referi la data de ${d.date_label || d.value} sau la ora ${d.time_label || d.value}?`
+        || `Scuze, ca să fiu sigur: te referi la data de ${d.date_label || d.value} sau la ora ${d.time_label || d.value}?`
       );
     case 'MISSING_SLOT': {
       const head = d.service_name
-        ? `📅 *Alege ora pentru ${d.service_name}:*`
-        : '📅 *Alege o oră:*';
-      const alts = (d.alternatives || []).map((s, i) => `${slotNumberEmoji(i)} ${s.label}`);
-      return [head, '', ...alts, '', '👉 _Răspunde cu numărul opțiunii dorite._'].join('\n');
+        ? `La ce oră vrei *${d.service_name}*?`
+        : 'La ce oră vrei programarea?';
+      const alts = (d.alternatives || []).map((s) => s.time || s.label).filter(Boolean).slice(0, 6);
+      return alts.length
+        ? `${head} Ore apropiate: ${alts.join(', ')}. Scrie ora (ex: *17:00*).`
+        : `${head} Scrie ora (ex: *17:00*).`;
     }
     case 'SLOT_UNAVAILABLE': {
       const occupied = d.occupied_label
         ? `Intervalul *${d.occupied_label}* tocmai a fost ocupat.`
         : (d.client_message || 'Intervalul nu e disponibil.');
-      const alts = (d.alternatives || []).map((s, i) => `${slotNumberEmoji(i)} ${s.label}`);
-      if (!alts.length) return occupied;
-      return `${occupied} Alege din listă:\n\n${alts.join('\n')}\n\n👉 _Răspunde cu numărul opțiunii._`;
+      const alts = (d.alternatives || []).map((s) => s.time || s.label).filter(Boolean).slice(0, 6);
+      if (!alts.length) return `${occupied} Scrie altă oră.`;
+      return `${occupied} Ore apropiate libere: ${alts.join(', ')}. Scrie ora pe care o vrei.`;
     }
     case 'MISSING_APPOINTMENT': {
       const intent = d.intent === 'cancel' ? 'anulezi' : 'reprogramezi';
@@ -197,7 +209,11 @@ export function renderHandlerResult(business, result) {
  * @returns {Promise<string | null>}
  */
 async function polishWithAi(business, result, rendered) {
-  if (result.status !== 'CHAT' || !business?.id) return null;
+  const action = result.machine_action;
+  const allow = result.status === 'CHAT'
+    || action === MACHINE_ACTIONS.ACTION_SHOW_CONFIRMATION
+    || action === MACHINE_ACTIONS.ACTION_ASK_CLARIFICATION;
+  if (!allow || !business?.id) return null;
 
   const payload = {
     status: result.status,
@@ -207,10 +223,13 @@ async function polishWithAi(business, result, rendered) {
     template: rendered,
   };
 
-  const extraSystem =
-    'SARCINĂ FORMATTER WhatsApp: reformulează politicos în română textul din JSON-ul backend. ' +
-    'NU inventa ore, prețuri, disponibilitate sau confirmări. ' +
-    'NU spune că o programare e confirmată. Folosește doar câmpurile din JSON.';
+  const extraSystem = action
+    ? formatterSystemHint(action)
+    : (
+      'SARCINĂ FORMATTER WhatsApp: reformulează politicos în română textul din JSON-ul backend. ' +
+      'NU inventa ore, prețuri, disponibilitate sau confirmări. ' +
+      'NU spune că o programare e confirmată. Folosește doar câmpurile din JSON.'
+    );
 
   const chat = await completeTenantChat({
     businessId: business.id,
@@ -230,7 +249,8 @@ async function polishWithAi(business, result, rendered) {
  * @param {string | null} [params.requestId]
  */
 export async function presentTurn({ business, recipientPhone, result, requestId = null }) {
-  if (result.menu?.options?.length) {
+  const rememberKinds = new Set(['confirm', 'clarify', 'entry']);
+  if (result.menu?.options?.length && rememberKinds.has(String(result.menu.kind || ''))) {
     await rememberMenuOptions(business.id, recipientPhone, result.menu.options, result.menu.kind || 'generic');
   } else if (result.status === 'SUCCESS' && !result.next_required_step) {
     clearRememberedMenuOptions(business.id, recipientPhone);

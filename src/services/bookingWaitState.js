@@ -12,6 +12,7 @@ export const BOOKING_WAIT = {
   SERVICE: 'waiting_for_service',
   DATE: 'waiting_for_date',
   TIME: 'waiting_for_time',
+  DATE_TIME: 'waiting_for_date_time',
   CONFIRMATION: 'waiting_for_confirmation',
   CLARIFICATION: 'waiting_for_clarification',
 };
@@ -61,6 +62,14 @@ export function getBookingWait(convState) {
     return BOOKING_WAIT.TIME;
   }
   if (
+    step === CONVERSATION_STEPS.WAITING_FOR_DATE_TIME
+    || step === BOOKING_WAIT.DATE_TIME
+  ) {
+    if (ctx.pending_date_text && !ctx.pending_time_text) return BOOKING_WAIT.TIME;
+    if (ctx.pending_time_text && !ctx.pending_date_text) return BOOKING_WAIT.DATE;
+    return BOOKING_WAIT.DATE_TIME;
+  }
+  if (
     step === CONVERSATION_STEPS.WAITING_FOR_SERVICE
     || step === BOOKING_WAIT.SERVICE
     || step === CONVERSATION_STEPS.CHOOSING_SERVICE
@@ -72,7 +81,6 @@ export function getBookingWait(convState) {
     step === CONVERSATION_STEPS.WAITING_FOR_CONFIRMATION
     || step === BOOKING_WAIT.CONFIRMATION
     || step === CONVERSATION_STEPS.CONFIRMING
-    || step === CONVERSATION_STEPS.ASKING_NAME
   ) {
     return BOOKING_WAIT.CONFIRMATION;
   }
@@ -242,6 +250,17 @@ export function interpretNumericFreeText({
       rejected,
       dateKey: dateKeyFromDayNumber(value, timezone, pendingDateKey),
     };
+  }
+  if (wait === BOOKING_WAIT.CONFIRMATION && canBeHour(value) && (correction || lone != null)) {
+    return { kind: 'time', value, rejected, timeHHmm: timeFromHourNumber(value, timezone) };
+  }
+  if (
+    wait === BOOKING_WAIT.DATE_TIME
+    && canBeHour(value)
+    && (correction || lone != null)
+    && pendingDateKey
+  ) {
+    return { kind: 'time', value, rejected, timeHHmm: timeFromHourNumber(value, timezone) };
   }
 
   const dateOk = canBeDay(value);

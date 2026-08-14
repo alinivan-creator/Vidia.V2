@@ -285,6 +285,8 @@ export function buildTenantSystemPrompt(ctx, opts = {}) {
  * @param {string} params.businessId
  * @param {string} [params.extraSystem]
  * @param {(ctx: AiTenantContext) => string} [params.buildExtraSystem]
+ * @param {boolean} [params.parserMode] — skip conversational prompt; parser-only system
+ * @param {object | null} [params.jsonSchema] — OpenAI json_schema (structured outputs)
  * @param {string} [params.userContent]
  * @param {object[]} [params.history]
  * @param {object[] | null} [params.messages]
@@ -302,6 +304,8 @@ export async function completeTenantChat({
   businessId,
   extraSystem = '',
   buildExtraSystem = null,
+  parserMode = false,
+  jsonSchema = null,
   userContent = '',
   history = [],
   messages = null,
@@ -325,16 +329,26 @@ export async function completeTenantChat({
     return { ok: false, error: 'openai_unavailable', context: ctx, message: null, text: null };
   }
 
-  let system = buildTenantSystemPrompt(ctx, {
-    turnContext,
-    routerMode,
-  });
+  let system = '';
+  if (parserMode) {
+    system = '';
+  } else {
+    system = buildTenantSystemPrompt(ctx, {
+      turnContext,
+      routerMode,
+    });
+  }
   let extra = extraSystem;
   if (typeof buildExtraSystem === 'function') {
     extra = buildExtraSystem(ctx) || extra;
   }
   if (extra && String(extra).trim()) {
-    system += `\n\n${String(extra).trim()}`;
+    system = parserMode
+      ? String(extra).trim()
+      : `${system}\n\n${String(extra).trim()}`;
+  }
+  if (parserMode && !system) {
+    return { ok: false, error: 'parser_prompt_missing', context: ctx, message: null, text: null };
   }
 
   /** @type {Record<string, unknown>[]} */
@@ -382,7 +396,12 @@ export async function completeTenantChat({
       max_tokens: maxTokens ?? (jsonMode ? 400 : useTools ? 400 : 280),
       messages: chatMessages,
     };
-    if (jsonMode) {
+    if (jsonSchema && jsonSchema.schema) {
+      body.response_format = {
+        type: 'json_schema',
+        json_schema: jsonSchema,
+      };
+    } else if (jsonMode) {
       body.response_format = { type: 'json_object' };
     }
     if (useTools) {

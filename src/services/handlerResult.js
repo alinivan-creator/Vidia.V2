@@ -11,6 +11,7 @@
  * @property {string} user_message_template_key
  * @property {{ kind: string, options: { id: string, title: string }[] } | null} [menu]
  * @property {{ url: string, title: string } | null} [calendar_cta]
+ * @property {string | null} [machine_action]
  */
 
 /**
@@ -26,5 +27,6 @@ export function handlerResult(partial) {
     user_message_template_key: partial.user_message_template_key,
     menu: partial.menu ?? null,
     calendar_cta: partial.calendar_cta ?? null,
+    machine_action: partial.machine_action ?? null,
   };
 }

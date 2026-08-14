@@ -42,6 +42,7 @@ import {
   formatBusinessHoursText,
   getConfiguredBusinessHours,
   formatDateKey,
+  formatTime,
   localToUtc,
 } from '../utils/datetime.js';
 import {
@@ -76,6 +77,15 @@ import {
   getBookingWait,
   timeFromHourNumber,
 } from './bookingWaitState.js';
+import {
+  MACHINE_ACTIONS,
+  hydrateCatalogService,
+  mapSessionState,
+  nextActionFromDraft,
+  persistSessionDraft,
+  readDraftBooking,
+  reduceBookingTurn,
+} from '../lib/booking/stateMachine.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 /** @typedef {import('./turnExtract.js').TurnExtract} TurnExtract */
@@ -134,6 +144,19 @@ async function persistPendingExtract({ business, recipientPhone, extract, reques
     context.pending_datetime = extract.datetime.toISOString();
   } else if (extract.date_text && !extract.time_text) {
     context.pending_datetime = null;
+  }
+  if (extract.service_id || extract.service_name || extract.date_text || extract.time_text) {
+    const latestDraft = await getOrCreateConversationState(business.id, recipientPhone);
+    const prevDraft = latestDraft.context_data?.draft_booking && typeof latestDraft.context_data.draft_booking === 'object'
+      ? /** @type {Record<string, unknown>} */ (latestDraft.context_data.draft_booking)
+      : {};
+    context.draft_booking = {
+      ...prevDraft,
+      ...(extract.service_id ? { service_id: extract.service_id } : {}),
+      ...(extract.service_name ? { service_name: extract.service_name } : {}),
+      ...(extract.date_text ? { date: extract.date_text } : {}),
+      ...(extract.time_text ? { time: extract.time_text } : {}),
+    };
   }
   if (!Object.keys(context).length) return;
 
@@ -322,7 +345,7 @@ async function missingService(business, recipientPhone, draft, requestId) {
         price_ron: s.price_ron ?? null,
       })),
     },
-    menu: serviceMenu(business),
+    machine_action: MACHINE_ACTIONS.ACTION_ASK_SERVICE,
   });
 }
 
@@ -381,6 +404,7 @@ async function missingSlotsResult({
           (dateKey ? ` pe ${dateKey}` : '') +
           '.',
       },
+      machine_action: MACHINE_ACTIONS.ACTION_SLOT_UNAVAILABLE,
     });
   }
   return handlerResult({
@@ -390,12 +414,16 @@ async function missingSlotsResult({
     data: {
       service_name: service?.name,
       occupied_label: occupiedLabel,
+      date_label: dateKey,
       alternatives: listed.slots.map((s) => ({
         id: s.id,
         label: formatSlotLabel(s.start, business.timezone),
+        time: formatTime(s.start, business.timezone),
       })),
     },
-    menu: slotMenu(listed.slots, business.timezone),
+    machine_action: reasonKey === 'SLOT_UNAVAILABLE'
+      ? MACHINE_ACTIONS.ACTION_SLOT_UNAVAILABLE
+      : MACHINE_ACTIONS.ACTION_ASK_TIME,
   });
 }
 
@@ -414,7 +442,7 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
       businessId: business.id,
       rawPhone: recipientPhone,
       step: CONVERSATION_STEPS.ASKING_NAME,
-      context: {
+    context: {
         draft_id: draft.id,
         service,
         slot_start: slotStart.toISOString(),
@@ -422,6 +450,15 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
         intent: 'book',
         awaiting_name: true,
         booking_wait: BOOKING_WAIT.CONFIRMATION,
+        draft_booking: {
+          service_id: service.id || null,
+          service_name: service.name,
+          date: formatDateKey(slotStart, business.timezone),
+          time: formatTime(slotStart, business.timezone),
+          duration: catalogDuration(business, service),
+        },
+        pending_date_text: formatDateKey(slotStart, business.timezone),
+        pending_time_text: formatTime(slotStart, business.timezone),
       },
       requestId,
     });
@@ -443,13 +480,22 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
     rawPhone: recipientPhone,
     step: CONVERSATION_STEPS.WAITING_FOR_CONFIRMATION,
     context: {
-      draft_id: draft.id,
-      service,
-      slot_start: slotStart.toISOString(),
-      slot_end: slotEnd.toISOString(),
-      intent: 'book',
-      booking_wait: BOOKING_WAIT.CONFIRMATION,
-    },
+        draft_id: draft.id,
+        service,
+        slot_start: slotStart.toISOString(),
+        slot_end: slotEnd.toISOString(),
+        intent: 'book',
+        booking_wait: BOOKING_WAIT.CONFIRMATION,
+        draft_booking: {
+          service_id: service.id || service.service_id || null,
+          service_name: service.name,
+          date: formatDateKey(slotStart, business.timezone),
+          time: formatTime(slotStart, business.timezone),
+          duration: catalogDuration(business, service),
+        },
+        pending_date_text: formatDateKey(slotStart, business.timezone),
+        pending_time_text: formatTime(slotStart, business.timezone),
+      },
     requestId,
   });
   return handlerResult({
@@ -462,8 +508,11 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
       slot_label: slotLabel,
       employee_name: employee?.name ?? null,
       client_name: client.display_name,
+      date_key: formatDateKey(slotStart, business.timezone),
+      time_hhmm: formatTime(slotStart, business.timezone),
     },
     menu: confirmMenu(),
+    machine_action: MACHINE_ACTIONS.ACTION_SHOW_CONFIRMATION,
   });
 }
 
@@ -600,10 +649,9 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
       next_required_step: 'CHOOSE_EMPLOYEE',
       user_message_template_key: 'MISSING_EMPLOYEE',
       data: {
-        client_message: `Nu am găsit *${extract.employee_name}* în echipă. Alege din listă:`,
+        client_message: `Nu am găsit *${extract.employee_name}* în echipă. Poți scrie un nume din echipă: ${staff.map((e) => e.name).join(', ')}.`,
         services: staff.map((e) => ({ id: e.id, name: e.name })),
       },
-      menu: employeeMenu(staff),
     });
   }
 
@@ -674,6 +722,7 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
         service_name: service.name,
         client_message: 'Pe ce dată vrei programarea? (ex: *luni*, *18 aug*)',
       },
+      machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE,
     });
   }
 
@@ -1448,6 +1497,7 @@ async function executeClarifyNeeded({ business, recipientPhone, extract, convSta
         { id: CLARIFY_IDS.TIME, title: `Ora ${value}` },
       ],
     },
+    machine_action: MACHINE_ACTIONS.ACTION_ASK_CLARIFICATION,
   });
 }
 
@@ -1719,18 +1769,126 @@ async function dispatchExecute({
   return executeChat(business);
 }
 
+function bookingMachineHandles(action) {
+  return action === 'book'
+    || action === 'clarify_needed'
+    || action === 'select_service';
+}
+
+/**
+ * Layer 2 entry: merge draft, persist atomically, decide the next action.
+ * CHECK_SLOT falls through to executeBook (DB claim).
+ *
+ * @returns {Promise<HandlerResult | null>}
+ */
+async function runBookingMachine(params) {
+  const { business, recipientPhone, extract, convState, activeDraft, requestId, textBody } = params;
+  let draft = hydrateCatalogService(readDraftBooking(convState, activeDraft), business);
+  if (extract.service_id) {
+    draft.service_id = extract.service_id;
+    draft.service_name = extract.service_name || draft.service_name;
+  }
+
+  let reduced = reduceBookingTurn({
+    state: mapSessionState(convState?.current_step),
+    draft,
+    extraction: extract.extraction || null,
+    text: textBody || '',
+    timezone: business.timezone || 'Europe/Bucharest',
+    extractDate: extract.date_text,
+    extractTime: extract.time_text,
+    extractServiceId: extract.service_id,
+    extractServiceName: extract.service_name,
+  });
+  reduced = { ...reduced, draft: hydrateCatalogService(reduced.draft, business) };
+  if (reduced.draft.service_id && reduced.action === MACHINE_ACTIONS.ACTION_ASK_SERVICE) {
+    reduced = { ...nextActionFromDraft(reduced.draft), draft: reduced.draft };
+  }
+
+  extract.date_text = reduced.draft.date;
+  extract.time_text = reduced.draft.time;
+  if (reduced.draft.service_id) {
+    extract.service_id = reduced.draft.service_id;
+    extract.service_name = reduced.draft.service_name || extract.service_name;
+  }
+  if (extract.date_text && extract.time_text && business.timezone) {
+    extract.datetime = localToUtc(extract.date_text, extract.time_text, business.timezone);
+  } else if (!extract.date_text || !extract.time_text) {
+    extract.datetime = null;
+  }
+
+  await persistSessionDraft({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    state: reduced.state,
+    draft: reduced.draft,
+    extraContext: reduced.action === MACHINE_ACTIONS.ACTION_ASK_CLARIFICATION
+      ? {
+        clarification: {
+          value: reduced.clarify_value,
+          rejected: reduced.rejected ?? null,
+          date_candidate: reduced.draft.date,
+          time_candidate: reduced.draft.time,
+          resume_wait: getBookingWait(convState),
+          raw_value: reduced.clarify_value != null ? String(reduced.clarify_value) : '',
+        },
+      }
+      : {},
+    requestId,
+  });
+
+  if (reduced.action === MACHINE_ACTIONS.ACTION_ASK_CLARIFICATION) {
+    return executeClarifyNeeded({
+      business,
+      recipientPhone,
+      extract: {
+        ...extract,
+        action: 'clarify_needed',
+        ambiguity: {
+          value: reduced.clarify_value,
+          rejected: reduced.rejected,
+          date_label: reduced.clarify_value != null ? String(reduced.clarify_value) : '',
+          time_label: reduced.clarify_value != null ? String(reduced.clarify_value) : '',
+          reason: reduced.clarify_reason,
+        },
+      },
+      convState,
+      requestId,
+    });
+  }
+
+  if (reduced.action === MACHINE_ACTIONS.ACTION_ASK_DATE_TIME) {
+    return handlerResult({
+      status: 'MISSING_INFO',
+      next_required_step: 'CHOOSE_DATE',
+      user_message_template_key: 'ASK_DATE',
+      data: {
+        client_message: 'Când vrei programarea? Scrie ziua și ora (ex: *luni la 17*).',
+        service_name: reduced.draft.service_name,
+      },
+      machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE_TIME,
+    });
+  }
+
+  return null;
+}
+
 /**
  * @param {Object} params
  * @returns {Promise<HandlerResult>}
  */
 export async function executeTurn(params) {
-  if (params.extract?.action === 'clarify_needed') {
-    return executeClarifyNeeded(params);
-  }
   if (params.extract?.action === 'resolve_clarification') {
     return executeResolveClarification(params);
   }
   const extract = hydrateExtract(params.extract, params.convState, params.business?.timezone);
+
+  if (bookingMachineHandles(extract.action)) {
+    const handled = await runBookingMachine({ ...params, extract });
+    if (handled) return handled;
+    extract.action = 'book';
+  }
+
   await persistPendingExtract({
     business: params.business,
     recipientPhone: params.recipientPhone,

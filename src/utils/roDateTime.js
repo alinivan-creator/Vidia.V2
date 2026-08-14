@@ -84,16 +84,82 @@ function detectMeridian(normalized) {
   return null;
 }
 
+function hhmmToMinutes(hhmm) {
+  const [h, m] = String(hhmm || '').split(':').map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return h * 60 + m;
+}
+
 /**
- * 1–7 without meridian → afternoon (salon hours). 8–11 stay morning. 13–23 stay 24h.
+ * @param {string} hhmm
+ * @param {{ open?: string, close?: string } | null | undefined} dayHours
+ */
+export function isClockWithinDayHours(hhmm, dayHours) {
+  if (!dayHours?.open || !dayHours?.close) return false;
+  const t = hhmmToMinutes(hhmm);
+  const open = hhmmToMinutes(dayHours.open);
+  const close = hhmmToMinutes(dayHours.close);
+  if (t == null || open == null || close == null) return false;
+  return t >= open && t < close;
+}
+
+/**
+ * 12h clock vs Admin hours. "la 5" with 09:00–18:00 → 17:00 because 05:00 is closed.
+ *
+ * @param {number} hour
+ * @param {number} [minute]
+ * @param {{ open?: string, close?: string } | null} [dayHours]
+ * @returns {{ hour: number, minute: number }}
+ */
+export function coerceHourToOpenHours(hour, minute = 0, dayHours = null) {
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
+    return { hour, minute };
+  }
+  if (hour >= 13) return { hour, minute };
+
+  const amHour = hour === 12 ? 12 : hour;
+  const pmHour = hour === 12 ? 12 : hour + 12;
+  const am = `${pad2(amHour)}:${pad2(minute)}`;
+  const pm = `${pad2(pmHour)}:${pad2(minute)}`;
+
+  if (!dayHours?.open || !dayHours?.close) {
+    if (hour >= 1 && hour <= 7) return { hour: hour + 12, minute };
+    return { hour, minute };
+  }
+
+  const amOk = isClockWithinDayHours(am, dayHours);
+  const pmOk = pmHour <= 23 && isClockWithinDayHours(pm, dayHours);
+  if (!amOk && pmOk) return { hour: pmHour, minute };
+  if (amOk && !pmOk) return { hour: amHour, minute };
+  if (!amOk && !pmOk && pmHour <= 23 && pmHour !== amHour) return { hour: pmHour, minute };
+  return { hour: amHour, minute };
+}
+
+/**
+ * @param {string | null | undefined} hhmm
+ * @param {{ open?: string, close?: string } | null} [dayHours]
+ * @returns {string | null}
+ */
+export function coerceHHmmToOpenHours(hhmm, dayHours = null) {
+  if (!hhmm || !/^\d{2}:\d{2}$/.test(hhmm)) return hhmm ?? null;
+  const hour = Number(hhmm.slice(0, 2));
+  const minute = Number(hhmm.slice(3, 5));
+  const coerced = coerceHourToOpenHours(hour, minute, dayHours);
+  return `${pad2(coerced.hour)}:${pad2(coerced.minute)}`;
+}
+
+/**
+ * Explicit am/pm first; otherwise Admin hours; else 1–7 → afternoon.
  * @param {number} hour
  * @param {string | null} meridian
+ * @param {{ open?: string, close?: string } | null} [dayHours]
  */
-function applyMeridian(hour, meridian) {
+function applyMeridian(hour, meridian, dayHours = null) {
   if (meridian === 'pm' && hour > 0 && hour < 12) return hour + 12;
   if (meridian === 'am' && hour === 12) return 0;
-  if (!meridian && hour >= 1 && hour <= 7) return hour + 12;
-  return hour;
+  if (meridian === 'am') return hour;
+  if (meridian === 'pm' && hour === 12) return 12;
+  return coerceHourToOpenHours(hour, 0, dayHours).hour;
 }
 
 /**
@@ -162,16 +228,16 @@ function parseRelativeDate(normalized, timezone, now) {
   return addCalendarDays(today, add);
 }
 
-function parseTimeFromText(normalized, meridian) {
+function parseTimeFromText(normalized, meridian, dayHours = null) {
   const clock = normalized.match(/\b(\d{1,2})[:\.](\d{2})\b/);
   if (clock) {
     let hour = Number(clock[1]);
     const minute = Number(clock[2]);
     if (hour > 23 || minute > 59) return null;
-    if (meridian === 'pm' && hour > 0 && hour < 12) hour += 12;
-    if (meridian === 'am' && hour === 12) hour = 0;
+    hour = applyMeridian(hour, meridian, dayHours);
     if (hour > 23) return null;
-    return `${pad2(hour)}:${pad2(minute)}`;
+    const coerced = coerceHourToOpenHours(hour, minute, meridian ? null : dayHours);
+    return `${pad2(coerced.hour)}:${pad2(coerced.minute)}`;
   }
 
   const withMeridianWord = normalized.match(
@@ -187,7 +253,7 @@ function parseTimeFromText(normalized, meridian) {
   let mer = meridian;
   if (/dupa[\s-]*amiaza|\bseara\b|\bpm\b|p\.m\./.test(token)) mer = 'pm';
   else if (/\bdimineata\b|\bam\b|a\.m\./.test(token)) mer = 'am';
-  hour = applyMeridian(hour, mer);
+  hour = applyMeridian(hour, mer, dayHours);
   if (hour > 23) return null;
   return `${pad2(hour)}:00`;
 }
@@ -199,9 +265,10 @@ function parseTimeFromText(normalized, meridian) {
  * @param {string} text
  * @param {string} timezone
  * @param {Date} [now]
+ * @param {{ dayHours?: { open?: string, close?: string } | null }} [options]
  * @returns {ParsedDateTime}
  */
-export function parseRomanianDateTimeParts(text, timezone, now = new Date()) {
+export function parseRomanianDateTimeParts(text, timezone, now = new Date(), options = {}) {
   const normalized = normalize(text);
   if (!normalized) {
     return { dateKey: null, timeHHmm: null, datetime: null, hasDate: false, hasTime: false };
@@ -210,8 +277,9 @@ export function parseRomanianDateTimeParts(text, timezone, now = new Date()) {
   const meridian = detectMeridian(normalized);
   const calendar = extractCalendarDate(normalized, timezone, now);
   const dateKey = calendar.dateKey || parseRelativeDate(normalized, timezone, now);
-  const timeHHmm = parseTimeFromText(calendar.rest, meridian)
-    || parseTimeFromText(normalized, meridian);
+  const dayHours = options.dayHours ?? null;
+  const timeHHmm = parseTimeFromText(calendar.rest, meridian, dayHours)
+    || parseTimeFromText(normalized, meridian, dayHours);
 
   /** @type {Date | null} */
   let datetime = null;
