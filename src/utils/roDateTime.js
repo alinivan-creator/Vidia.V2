@@ -284,15 +284,17 @@ function parseDayOfMonth(normalized, timezone, now) {
 
 function parseRelativeDate(normalized, timezone, now) {
   const today = formatDateKey(now, timezone);
-  if (/\bpoimaine\b/.test(normalized) || /\bday after tomorrow\b/.test(normalized)) {
+  if (/\bpeste\s+2\s+zile\b/.test(normalized) || /\bpoimaine\b/.test(normalized) || /\bday after tomorrow\b/.test(normalized)) {
     return addCalendarDays(today, 2);
   }
-  if (/\bmaine\b/.test(normalized) || /\btomorrow\b/.test(normalized)) return addCalendarDays(today, 1);
+  if (/\bpeste\s+(?:o|1)\s+zi\b/.test(normalized) || /\bmaine\b/.test(normalized) || /\btomorrow\b/.test(normalized)) {
+    return addCalendarDays(today, 1);
+  }
   if (/\balaltaieri\b/.test(normalized) || /\bday before yesterday\b/.test(normalized)) {
     return addCalendarDays(today, -2);
   }
   if (/\bieri\b/.test(normalized) || /\byesterday\b/.test(normalized)) return addCalendarDays(today, -1);
-  if (/\bazi\b/.test(normalized) || /\btoday\b/.test(normalized)) return today;
+  if (/\b(?:astazi|azi)\b/.test(normalized) || /\btoday\b/.test(normalized)) return today;
 
   const dayName = Object.keys(WEEKDAY_MAP)
     .sort((a, b) => b.length - a.length)
@@ -320,8 +322,8 @@ function parseTimeFromText(normalized, meridian, dayHours = null) {
   }
 
   const spacedClock = normalized.match(/\b(?:la|ora|at)\s+(\d{1,2})\s+(\d{2})\b/)
-    || normalized.match(/^(\d{1,2})\s+(\d{2})$/);
-  if (spacedClock) {
+    || normalized.match(/\b(\d{1,2})\s+(\d{2})\b/);
+  if (spacedClock && Number(spacedClock[2]) <= 59) {
     return formatParsedClock(Number(spacedClock[1]), Number(spacedClock[2]), meridian, dayHours);
   }
 
@@ -359,15 +361,42 @@ function parseTimeFromText(normalized, meridian, dayHours = null) {
   );
   const laOra = normalized.match(/\b(?:la|ora|at)\s+(\d{1,2})\b/);
   const raw = withMeridianWord || laOra;
-  if (!raw) return null;
+  if (raw) {
+    let hour = Number(raw[1]);
+    if (hour > 23) return null;
+    const token = String(raw[0] || '');
+    let mer = meridian;
+    if (/dupa[\s-]*amiaza|\bseara\b|\bpm\b|p\.m\./.test(token)) mer = 'pm';
+    else if (/\bdimineata\b|\bam\b|a\.m\./.test(token)) mer = 'am';
+    return formatParsedClock(hour, 0, mer, dayHours);
+  }
 
-  let hour = Number(raw[1]);
-  if (hour > 23) return null;
-  const token = String(raw[0] || '');
-  let mer = meridian;
-  if (/dupa[\s-]*amiaza|\bseara\b|\bpm\b|p\.m\./.test(token)) mer = 'pm';
-  else if (/\bdimineata\b|\bam\b|a\.m\./.test(token)) mer = 'am';
-  return formatParsedClock(hour, 0, mer, dayHours);
+  if (/\b(pranz|amiaza)\b/.test(normalized)) {
+    return formatParsedClock(12, 0, meridian, dayHours);
+  }
+
+  const bareHour = normalized.match(/^(\d{1,2})$/);
+  if (bareHour) {
+    return formatParsedClock(Number(bareHour[1]), 0, meridian, dayHours);
+  }
+  return null;
+}
+
+function stripResolvedDateTokens(normalized) {
+  let rest = String(normalized || '');
+  rest = rest.replace(
+    /\b(day after tomorrow|day before yesterday|poimaine|alaltaieri|astazi|maine|ieri|azi|today|tomorrow|yesterday)\b/g,
+    ' ',
+  );
+  const days = Object.keys(WEEKDAY_MAP).sort((a, b) => b.length - a.length).join('|');
+  rest = rest.replace(new RegExp(`\\b(?:${days})\\b`, 'g'), ' ');
+  rest = rest.replace(/\b(?:pe|data(?:\s+de)?|ziua(?:\s+de)?|on(?:\s+the)?)\s+\d{1,2}(?:st|nd|rd|th)?\b/g, ' ');
+  const monthNames = Object.keys(MONTH_MAP).sort((a, b) => b.length - a.length).join('|');
+  rest = rest.replace(new RegExp(`\\b\\d{1,2}\\s+(${monthNames})\\.?\\s*(?:\\d{4})?\\b`, 'g'), ' ');
+  rest = rest.replace(/\b\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?\b/g, ' ');
+  rest = rest.replace(/\b20\d{2}-\d{2}-\d{2}\b/g, ' ');
+  rest = rest.replace(/\bpeste\s+(?:o|1|2)\s+zile?\b/g, ' ');
+  return rest.replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -393,7 +422,9 @@ export function parseRomanianDateTimeParts(text, timezone, now = new Date(), opt
     || parseDayOfMonth(calendar.rest, timezone, now)
     || parseDayOfMonth(normalized, timezone, now);
   const dayHours = options.dayHours ?? null;
-  const timeHHmm = parseTimeFromText(calendar.rest, meridian, dayHours)
+  const remainder = stripResolvedDateTokens(calendar.rest);
+  const timeHHmm = parseTimeFromText(remainder, meridian, dayHours)
+    || parseTimeFromText(calendar.rest, meridian, dayHours)
     || parseTimeFromText(normalized, meridian, dayHours);
 
   /** @type {Date | null} */

@@ -156,7 +156,7 @@ function explicitField(normalized) {
     || normalized.match(/\b(\d{1,2})[:.,](\d{2})\b/);
   const dateHit = normalized.match(/\b(?:data(?:\s+de)?|ziua(?:\s+de)?|pe|on(?:\s+the)?)\s+(\d{1,2})\b/);
   const hasTimeWords = /\b(ora|dimineata|dupa[\s-]*amiaza|seara)\b/.test(normalized);
-  const hasDateWords = /\b(data|ziua|luni|marti|miercuri|joi|vineri|sambata|duminica|maine|azi|poimaine|ieri|alaltaieri|today|tomorrow|yesterday|monday|tuesday|wednesday|thursday|friday|saturday|sunday|aug|ian|feb|mar|apr|mai|iun|iul|sep|oct|nov|dec)\b/.test(normalized);
+  const hasDateWords = /\b(data|ziua|luni|marti|miercuri|joi|vineri|sambata|duminica|maine|azi|astazi|poimaine|ieri|alaltaieri|today|tomorrow|yesterday|monday|tuesday|wednesday|thursday|friday|saturday|sunday|aug|ian|feb|mar|apr|mai|iun|iul|sep|oct|nov|dec)\b/.test(normalized);
 
   if (hasTimeWords && !hasDateWords && timeHit) return 'time';
   if (hasDateWords && !hasTimeWords && (dateHit || /\b\d{1,2}\s+(ian|feb|mar|apr|mai|iun|iul|aug|sep|oct|nov|dec)/.test(normalized))) {
@@ -232,7 +232,8 @@ export function interpretNumericFreeText({
     return { kind: 'date', dateKey: spoken.dateKey };
   }
   const hasClockMinutes = /\b\d{1,2}[:.,]\d{2}\b/.test(normalized)
-    || /\b(?:la|ora|at)\s+\d{1,2}\s+\d{2}\b/.test(normalized);
+    || /\b(?:la|ora|at)\s+\d{1,2}\s+\d{2}\b/.test(normalized)
+    || /\b\d{1,2}\s+\d{2}\b/.test(normalized);
   const hasColloquial = /\b(jumatate|jumate|juma|sfer(?:t)?|fara)\b/.test(normalized)
     || /\b\d{1,2}\s+si\s+\d{1,2}\b/.test(normalized);
   if (spoken.timeHHmm && (hasClockMinutes || hasColloquial)) {
@@ -260,6 +261,13 @@ export function interpretNumericFreeText({
   }
 
   if (wait === BOOKING_WAIT.TIME && canBeHour(value)) {
+    return { kind: 'time', value, rejected, timeHHmm: timeFromHourNumber(value, timezone, dayHours) };
+  }
+  if (
+    (wait === BOOKING_WAIT.DATE_TIME || wait === BOOKING_WAIT.CONFIRMATION)
+    && correction
+    && canBeHour(value)
+  ) {
     return { kind: 'time', value, rejected, timeHHmm: timeFromHourNumber(value, timezone, dayHours) };
   }
   if (wait === BOOKING_WAIT.DATE && canBeDay(value)) {

@@ -592,7 +592,7 @@ function applyCatalogMatches(extract, textBody, services, employees, timezone, o
  */
 function textHasExplicitDay(text) {
   const n = normalize(text);
-  return /\b(luni|marti|miercuri|joi|vineri|sambata|duminica|maine|azi|poimaine|ieri|alaltaieri|monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|yesterday)\b/.test(n)
+  return /\b(luni|marti|miercuri|joi|vineri|sambata|duminica|maine|azi|astazi|poimaine|ieri|alaltaieri|monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|yesterday)\b/.test(n)
     || /\b\d{1,2}\s*(ian|feb|mar|apr|mai|iun|iul|aug|sep|oct|nov|dec)/.test(n)
     || /\b(?:pe|on(?:\s+the)?)\s+\d{1,2}/.test(n);
 }
