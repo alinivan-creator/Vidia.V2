@@ -64,6 +64,16 @@ export function looksLikeBusinessFactQuestion(text) {
   ) {
     return true;
   }
+  // Policy / amenity questions Admin may answer via ai_facts — never invent.
+  // Do not steal price/hours FAQ ("ce program aveți?", "care sunt prețurile?").
+  if (
+    /\b(aveti|avem|primiti|acceptati|lucrati|do you|have you|are there)\b/.test(n)
+    && /[?]/.test(String(text ?? ''))
+    && !/\b(programar|rezervar|maine|azi|luni|marti|miercuri|joi|vineri|ora|la \d)\b/.test(n)
+    && !/\b(pret|preturi|price|prices|cost|tarif|program|orar|orele|hours|servici|detalii)\b/.test(n)
+  ) {
+    return true;
+  }
   return false;
 }
 

@@ -8,6 +8,7 @@ import {
   looksLikeExistingAppointmentQuery,
   looksLikeDatetimeOrSlot,
   looksLikeOffTopicChat,
+  looksLikeOutOfScopeRequest,
   triageUserIntent,
   isExplicitConfirmReply,
   isExplicitCancelReply,
@@ -152,6 +153,18 @@ function extractTurn(text, conv, business, now) {
     return emptyExtract({ action: 'off_topic', source: 'keyword' });
   }
 
+  const triageEarly = triageUserIntent(text, { businessType: business.business_type });
+  if (
+    looksLikeOutOfScopeRequest(text)
+    && triageEarly.intent !== 'faq'
+    && triageEarly.intent !== 'book'
+    && triageEarly.intent !== 'contact'
+    && triageEarly.intent !== 'menu'
+    && triageEarly.intent !== 'list_appointments'
+  ) {
+    return emptyExtract({ action: 'callback', source: 'keyword' });
+  }
+
   const onConfirm = step === 'waiting_for_confirmation'
     || step === 'CONFIRMING'
     || wait === BOOKING_WAIT.CONFIRMATION;
@@ -208,6 +221,12 @@ function extractTurn(text, conv, business, now) {
     }
   }
 
+  if (triage.intent === 'callback') {
+    return emptyExtract({ action: 'callback', source: 'keyword' });
+  }
+  if (triage.intent === 'list_appointments') {
+    return emptyExtract({ action: 'list_appointments', source: 'keyword' });
+  }
   if (triage.intent === 'menu' || looksLikeGreeting(text)) {
     return emptyExtract({ action: 'menu', source: 'keyword' });
   }
@@ -413,6 +432,32 @@ export function createChat(business, occupied = [], now = NOW) {
         action: 'CANCELLED',
         text: replyFor(business, null, emptyDraft(), { key: 'CANCEL_PENDING', lang }),
         draft: emptyDraft(),
+        lang,
+      };
+    }
+    if (hydrated.action === 'list_appointments') {
+      const rows = bookings.map((b) => ({
+        service_name: b.service_name,
+        slot_label: `${b.date} ${b.time}`,
+      }));
+      return {
+        extract: hydrated,
+        action: 'LIST_APPOINTMENTS',
+        text: replyFor(business, null, emptyDraft(), {
+          key: 'MY_APPOINTMENTS',
+          lang,
+          data: { appointments: rows },
+        }),
+        draft: readDraftBooking(conv),
+        lang,
+      };
+    }
+    if (hydrated.action === 'callback') {
+      return {
+        extract: hydrated,
+        action: 'CALLBACK',
+        text: replyFor(business, null, emptyDraft(), { key: 'CALLBACK_SENT', lang }),
+        draft: readDraftBooking(conv),
         lang,
       };
     }

@@ -438,5 +438,9 @@ export function looksLikeOutOfScopeRequest(text) {
     'discount special',
     'reducere speciala',
   ];
-  return outOfScope.some((k) => n.includes(k));
+  // Short stems must be whole words — "preturi" must not match "retur".
+  return outOfScope.some((k) => {
+    if (k.length <= 5) return new RegExp(`\\b${k.replace(/\s+/g, '\\s+')}\\b`).test(n);
+    return n.includes(k);
+  });
 }

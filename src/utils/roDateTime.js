@@ -305,7 +305,8 @@ function parseRelativeDate(normalized, timezone, now) {
   const current = getWeekdayInTimezone(now, timezone);
   if (current == null) return null;
   let add = (want - current + 7) % 7;
-  if (add === 0 && !/\bazi\b/.test(normalized)) add = 7;
+  // Same weekday = today first. If the clock time already passed, bump later.
+  if (add === 0 && /\b(azi|astazi|today)\b/.test(normalized)) add = 0;
   return addCalendarDays(today, add);
 }
 
@@ -417,7 +418,7 @@ export function parseRomanianDateTimeParts(text, timezone, now = new Date(), opt
 
   const meridian = detectMeridian(normalized);
   const calendar = extractCalendarDate(normalized, timezone, now);
-  const dateKey = calendar.dateKey
+  let dateKey = calendar.dateKey
     || parseRelativeDate(normalized, timezone, now)
     || parseDayOfMonth(calendar.rest, timezone, now)
     || parseDayOfMonth(normalized, timezone, now);
@@ -431,6 +432,17 @@ export function parseRomanianDateTimeParts(text, timezone, now = new Date(), opt
   let datetime = null;
   if (dateKey && timeHHmm) {
     datetime = localToUtc(dateKey, timeHHmm, timezone);
+    const namedWeekday = Object.keys(WEEKDAY_MAP).some((d) => new RegExp(`\\b${d}\\b`).test(normalized));
+    const relativeFixed = /\b(maine|poimaine|ieri|alaltaieri|azi|astazi|today|tomorrow|yesterday)\b/.test(normalized);
+    // "sâmbătă la 11" on Saturday afternoon → next Saturday, not a past slot.
+    if (
+      namedWeekday
+      && !relativeFixed
+      && datetime.getTime() < now.getTime() - 60_000
+    ) {
+      dateKey = addCalendarDays(dateKey, 7);
+      datetime = localToUtc(dateKey, timeHHmm, timezone);
+    }
   }
 
   return {

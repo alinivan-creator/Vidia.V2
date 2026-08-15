@@ -897,7 +897,17 @@ export async function extractTurnIntent({
 
   /** @type {TurnExtract} */
   let extract = emptyExtract({ source: 'keyword', confidence: triage.confidence });
-  if (triage.intent === 'callback' || looksLikeOutOfScopeRequest(textBody)) extract.action = 'callback';
+  if (triage.intent === 'callback') extract.action = 'callback';
+  else if (
+    looksLikeOutOfScopeRequest(textBody)
+    && triage.intent !== 'faq'
+    && triage.intent !== 'book'
+    && triage.intent !== 'contact'
+    && triage.intent !== 'menu'
+    && triage.intent !== 'list_appointments'
+  ) {
+    extract.action = 'callback';
+  }
   else if (triage.intent === 'cancel') extract.action = isPendingHold ? 'cancel_pending' : 'cancel';
   else if (triage.intent === 'reschedule') extract.action = 'reschedule';
   else if (triage.intent === 'list_appointments') extract.action = 'list_appointments';
