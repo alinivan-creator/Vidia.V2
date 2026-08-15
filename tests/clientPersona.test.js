@@ -76,8 +76,10 @@ describe('client: dental clinic', () => {
 
     const start = me.say('1');
     assert.equal(start.action, MACHINE_ACTIONS.ACTION_ASK_SERVICE);
-    assert.match(start.text, /Consultație · 20 min/);
-    assert.match(start.text, /Detartraj · 40 min/);
+    assert.match(start.text, /Consultație/);
+    assert.match(start.text, /20 min/);
+    assert.match(start.text, /Detartraj/);
+    assert.match(start.text, /40 min/);
     assert.doesNotMatch(start.text, /Tuns Clasic|ex: \*tuns\*/i);
 
     const pick = me.say('1');

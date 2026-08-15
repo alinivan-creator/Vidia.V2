@@ -27,7 +27,8 @@ import {
   matchEmployeeMention,
   resolveEmployeeCalendarId,
 } from '../db/employeeService.js';
-import { getBookingConfig, formatSlotLabel, encodeSlotId, slotNumberEmoji } from '../utils/datetime.js';
+import { getBookingConfig, formatSlotLabel, encodeSlotId } from '../utils/datetime.js';
+import { WA_DIVIDER, waField, waJoin, waServiceMeta, waTitle } from '../utils/waCopy.js';
 import {
   assertWithinWorkingHours,
   durationMissingClientMessage,
@@ -246,32 +247,21 @@ export async function sendServicePicker({ business, recipientPhone, draft, reque
   }));
   await rememberMenuOptions(business.id, recipientPhone, options, 'service');
 
-  const lines = ['📋 *Alege serviciul dorit:*', ''];
+  const blocks = [waTitle('Ce serviciu dorești?'), ''];
   listed.forEach((s, i) => {
-    lines.push(`${slotNumberEmoji(i)} *${s.name}*`);
-    lines.push(formatServiceMetaLine(s));
-    lines.push('');
+    const meta = waServiceMeta(s);
+    blocks.push(`*${i + 1}. ${s.name}*`);
+    if (meta) blocks.push(`   ${meta}`);
+    blocks.push('');
   });
-  lines.push('👉 _Răspunde cu numărul corespunzător (ex: 1)._');
+  blocks.push(WA_DIVIDER, '', 'Scrie *numărul* (ex: *1*).');
 
   await sendTextMessage({
     business,
     recipientPhone,
     requestId,
-    text: lines.join('\n'),
+    text: waJoin(...blocks),
   });
-}
-
-/**
- * @param {{ price_ron?: number | null; duration_minutes: number }} s
- */
-function formatServiceMetaLine(s) {
-  const price =
-    s.price_ron != null && s.price_ron !== ''
-      ? `💰 ${s.price_ron} LEI`
-      : '💰 —';
-  const duration = `⏱️ ${s.duration_minutes} min`;
-  return `${price}  |  ${duration}`;
 }
 
 /**
@@ -350,24 +340,22 @@ export async function sendSlotPicker({ business, recipientPhone, draft, requestI
   await rememberMenuOptions(business.id, recipientPhone, options, 'slot');
 
   const lines = [
-    `📅 *Alege ora pentru ${service.name}:*`,
-    ...(employee ? [`_cu ${employee.name}_`] : []),
-    '_(Primele opțiuni disponibile)_',
+    waTitle(`Alege ora — ${service.name}`),
+    employee ? waField('Specialist', employee.name) : null,
+    '',
+    'Primele opțiuni disponibile',
     '',
   ];
   options.forEach((opt, i) => {
-    lines.push(`🟦 ${i + 1}. ${opt.title}`);
-    lines.push('');
+    lines.push(`*${i + 1}.*  ${opt.title}`);
   });
-  // Drop trailing blank after last slot, then CTA
-  while (lines.length && lines[lines.length - 1] === '') lines.pop();
-  lines.push('', '👉 _Răspunde cu numărul opțiunii dorite._');
+  lines.push('', WA_DIVIDER, '', 'Scrie *numărul* opțiunii.');
 
   await sendTextMessage({
     business,
     recipientPhone,
     requestId,
-    text: lines.join('\n'),
+    text: waJoin(...lines),
   });
 }
 
@@ -596,21 +584,21 @@ export async function sendEmployeePicker({
     });
   }
 
-  const lines = ['Cu cine preferi programarea?', ''];
+  const lines = [waTitle('Cu cine preferi?'), ''];
   options.forEach((opt, i) => {
     const hint =
       suggested && opt.id === `${PREFIX.EMPLOYEE}${suggested.id}`
-        ? ' ← disponibil acum'
+        ? '  · disponibil acum'
         : '';
-    lines.push(`${slotNumberEmoji(i)} ${opt.title}${hint}`);
+    lines.push(`*${i + 1}.*  ${opt.title}${hint}`);
   });
-  lines.push('', 'Răspunde cu numărul opțiunii (ex: 1).');
+  lines.push('', WA_DIVIDER, '', 'Scrie *numărul* opțiunii (ex: *1*).');
 
   await sendTextMessage({
     business,
     recipientPhone,
     requestId,
-    text: lines.join('\n'),
+    text: waJoin(...lines),
   });
 }
 
@@ -632,10 +620,8 @@ export async function sendConfirmationPrompt({ business, recipientPhone, draft, 
     rawPhone: recipientPhone,
     requestId,
   });
-  const nameLine = client?.display_name ? `👤 *${client.display_name}*\n` : '';
   const empId = draftEmployeeId(draft);
   const employee = empId ? await getEmployeeById(empId, business.id) : null;
-  const empLine = employee ? `💇 cu *${employee.name}*\n` : '';
 
   await simulateHumanDelay({ business, recipientPhone, requestId });
 
@@ -643,15 +629,17 @@ export async function sendConfirmationPrompt({ business, recipientPhone, draft, 
     business,
     recipientPhone,
     requestId,
-    bodyText:
-      `Confirmi programarea?\n\n` +
-      nameLine +
-      empLine +
-      `📋 *${service.name}*\n` +
-      `🕐 ${formatSlotLabel(slotStart, business.timezone)}`,
+    bodyText: waJoin(
+      waTitle('Confirmi programarea?'),
+      '',
+      waField('Client', client?.display_name),
+      waField('Specialist', employee?.name),
+      waField('Serviciu', service.name),
+      waField('Când', formatSlotLabel(slotStart, business.timezone)),
+    ),
     buttons: [
-      { id: PREFIX.CONFIRM, title: '✅ Confirm' },
-      { id: PREFIX.CANCEL, title: '❌ Anulează' },
+      { id: PREFIX.CONFIRM, title: 'Confirmă' },
+      { id: PREFIX.CANCEL, title: 'Anulează' },
     ],
     menuKind: 'confirm',
   });
@@ -825,7 +813,10 @@ export async function startBookingFlow({
       business,
       recipientPhone,
       requestId,
-      text: `Hai să programăm o vizită la *${business.name}*. 📅`,
+      text: waJoin(
+        waTitle(`Programare — ${business.name}`),
+        'Hai să găsim un moment potrivit.',
+      ),
     });
   }
 
@@ -1645,12 +1636,17 @@ export async function offerResumeOrAlternatives({
       business,
       recipientPhone,
       requestId,
-      bodyText:
-        `Slotul *${label}* (${service.name}) este încă liber.\n` +
-        `Vrei să reiei confirmarea?`,
+      bodyText: waJoin(
+        waTitle('Slot încă disponibil'),
+        '',
+        waField('Serviciu', service.name),
+        waField('Când', label),
+        '',
+        'Reiei confirmarea?',
+      ),
       buttons: [
-        { id: PREFIX.RESUME_YES, title: '✅ Da, reia' },
-        { id: PREFIX.RESUME_NO, title: '📅 Alte ore' },
+        { id: PREFIX.RESUME_YES, title: 'Da, reia' },
+        { id: PREFIX.RESUME_NO, title: 'Alte ore' },
       ],
       menuKind: 'resume',
     });

@@ -3,6 +3,7 @@ import { logError } from '../db/loggerService.js';
 import { persistLastMenu, appendRecentTurn } from '../db/conversationStateService.js';
 import { toMetaPhone, toTwilioWhatsApp, toE164 } from '../utils/phone.js';
 import { recordFailure, recordSuccess, isCircuitOpen, TECHNICAL_FALLBACK_MESSAGE } from './circuitBreaker.js';
+import { CALENDAR_ANCHOR_TEXT } from '../utils/calendarLink.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -565,7 +566,7 @@ export async function sendMessageWithUrlButton({
     });
 
     // Fallback: single contiguous markdown link (no bare URL dump, no duplicate CTA text)
-    const calendarMd = `[📅 Adaugă în calendar](${url})`;
+    const calendarMd = `[${CALENDAR_ANCHOR_TEXT}](${url})`;
     const withAnchor = bodyText.includes(url)
       ? bodyText
       : `${bodyText}\n\n${calendarMd}`;

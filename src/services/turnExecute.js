@@ -251,8 +251,8 @@ function confirmMenu() {
   return {
     kind: 'confirm',
     options: [
-      { id: PREFIX.CONFIRM, title: '✅ Confirm' },
-      { id: PREFIX.CANCEL, title: '❌ Anulează' },
+      { id: PREFIX.CONFIRM, title: 'Confirmă' },
+      { id: PREFIX.CANCEL, title: 'Anulează' },
     ],
   };
 }
@@ -769,7 +769,7 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
       user_message_template_key: 'ASK_DATE',
       data: {
         service_name: service.name,
-        client_message: '📅 *Pe ce dată?*\nEx: *luni* sau *18 aug*',
+        client_message: '*Pe ce dată?*\nEx: *luni* sau *18 aug*',
       },
       machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE,
     });
@@ -1352,8 +1352,8 @@ async function executeCancel({ business, recipientPhone, extract, activeDraft, c
     menu: {
       kind: 'confirm',
       options: [
-        { id: MOD_PREFIX.CONFIRM_CANCEL, title: '✅ Anulează' },
-        { id: MOD_PREFIX.ABORT, title: '❌ Renunță' },
+        { id: MOD_PREFIX.CONFIRM_CANCEL, title: 'Anulează' },
+        { id: MOD_PREFIX.ABORT, title: 'Renunță' },
       ],
     },
   });
@@ -2067,7 +2067,7 @@ async function runBookingMachine(params) {
       next_required_step: 'CHOOSE_DATE',
       user_message_template_key: 'ASK_DATE',
       data: {
-        client_message: '📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*',
+        client_message: '*Când vrei programarea?*\nZiua și ora — ex: *luni la 17*',
         service_name: reduced.draft.service_name,
       },
       machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE_TIME,

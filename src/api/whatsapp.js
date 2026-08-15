@@ -258,7 +258,8 @@ async function processTwilioWebhook(body, requestId) {
         recipientPhone,
         requestId,
         text:
-          `⏱️ Sesiunea de programare a expirat (${ttlMin} min fără răspuns) și a fost anulată.\n` +
+          `*Sesiune expirată*\n` +
+          `Nu am primit răspuns în ${ttlMin} min — programarea în curs a fost anulată.\n\n` +
           `Scrie *programare* sau *1* ca să începi din nou.`,
       });
     }

@@ -1,5 +1,6 @@
 import { getConfiguredBusinessHours, formatBusinessHoursText } from '../utils/datetime.js';
 import { unknownInfoClientMessage } from '../utils/workingHours.js';
+import { WA_DIVIDER, waField, waJoin, waTitle } from '../utils/waCopy.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -40,31 +41,40 @@ export function getBusinessContactInfo(business) {
  */
 export function formatContactMessage(business) {
   const info = getBusinessContactInfo(business);
-  const lines = [`📞 *${business.name}*`, ''];
-
-  if (info.phone) lines.push(`📱 ${info.phone}`);
-  if (info.email) lines.push(`✉️ ${info.email}`);
-  if (info.address) lines.push(`📍 ${info.address}`);
-  if (info.website) lines.push(`🔗 ${info.website}`);
-  if (info.mapsUrl) lines.push(`🗺️ ${info.mapsUrl}`);
+  const hasAny =
+    info.phone || info.email || info.address || info.website || info.mapsUrl || info.hours;
 
   const structuredHours = getConfiguredBusinessHours(business);
+  if (!hasAny && !structuredHours) {
+    return waJoin(waTitle(business.name), '', unknownInfoClientMessage());
+  }
+
+  const mapsLine = info.mapsUrl
+    ? `[Indicații către locație](${String(info.mapsUrl).trim().replace(/\s+/g, '')})`
+    : null;
+
+  const parts = [
+    waTitle(business.name),
+    '',
+    waField('Telefon', info.phone),
+    waField('Email', info.email),
+    waField('Adresă', info.address),
+    waField('Website', info.website),
+    mapsLine,
+  ];
+
   if (structuredHours) {
-    lines.push('', '🕐 *Program*');
-    lines.push(
+    parts.push(
+      '',
+      WA_DIVIDER,
+      '',
+      waTitle('Program'),
       formatBusinessHoursText(structuredHours).replace(/^- /gm, ''),
     );
   } else if (info.hours) {
-    lines.push(`Program: ${info.hours}`);
+    parts.push('', waField('Program', info.hours));
   }
 
-  if (lines.length <= 2) {
-    return (
-      `📞 *${business.name}*\n\n` +
-      unknownInfoClientMessage()
-    );
-  }
-
-  lines.push('', 'Suntem aici 👋');
-  return lines.join('\n');
+  parts.push('', 'Suntem aici pentru tine.');
+  return waJoin(...parts);
 }

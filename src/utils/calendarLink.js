@@ -172,7 +172,7 @@ export function buildAddToCalendarLink(event) {
 }
 
 /** Label text inside markdown brackets (no surrounding []). */
-export const CALENDAR_ANCHOR_TEXT = '📅 Adaugă în calendar';
+export const CALENDAR_ANCHOR_TEXT = 'Adaugă în calendar';
 
 /** @deprecated use CALENDAR_ANCHOR_TEXT — kept for older call sites */
 export const CALENDAR_ANCHOR_LABEL = `[${CALENDAR_ANCHOR_TEXT}]`;
@@ -181,7 +181,7 @@ export const CALENDAR_ANCHOR_LABEL = `[${CALENDAR_ANCHOR_TEXT}]`;
 export const CALENDAR_CTA_BUTTON_TITLE = 'Adaugă în calendar';
 
 /**
- * Contiguous markdown calendar link: [📅 Adaugă în calendar](url)
+ * Contiguous markdown calendar link: [Adaugă în calendar](url)
  * @param {string} url
  * @returns {string}
  */
@@ -195,7 +195,7 @@ export function formatCalendarAnchorMarkdown(url) {
  * Builds calendar event fields + WhatsApp-ready invite from a booking.
  *
  * Prefer Twilio CTA button for calendar (no body duplicate).
- * `markdownLine` is for text-only fallback: [📅 Adaugă în calendar](url)
+ * `markdownLine` is for text-only fallback: [Adaugă în calendar](url)
  *
  * @param {Object} params
  * @param {import('../db/businessService.js').Business} params.business

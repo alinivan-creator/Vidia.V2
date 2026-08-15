@@ -1,11 +1,13 @@
 /**
  * Layer 3 — WhatsApp text from Layer 2 actions only.
  * Never invents availability, hours, or confirmations.
+ * Presentation polish only — same facts, calmer layout.
  */
 
 import { MACHINE_ACTIONS } from '../booking/stateMachine.js';
 import { localToUtc } from '../../utils/datetime.js';
 import { formatServiceAskMessage } from '../../utils/serviceMatch.js';
+import { waField, waJoin, waTitle } from '../../utils/waCopy.js';
 
 const MONTHS_RO = [
   'ianuarie', 'februarie', 'martie', 'aprilie', 'mai', 'iunie',
@@ -39,13 +41,13 @@ function formatTime24(hhmm) {
   return String(hhmm);
 }
 
-function nearbyHoursLine(alternatives) {
+function nearbyHoursLine(alternatives, en = false) {
   const labels = (alternatives || [])
     .map((a) => a.label || a.time || a.id)
     .filter(Boolean)
     .slice(0, 6);
   if (!labels.length) return '';
-  return `🕐 Liber: ${labels.join(' · ')}`;
+  return waField(en ? 'Available' : 'Disponibil', labels.join(' · '));
 }
 
 /**
@@ -80,58 +82,84 @@ export function formatMachineAction({
 
   switch (action) {
     case MACHINE_ACTIONS.ACTION_SHOW_CONFIRMATION: {
-      const nameLine = clientName ? `👤 *${clientName}*\n` : '';
-      const empLine = employeeName ? `💇 *${employeeName}*\n` : '';
-      return (
-        (en ? `✨ *Confirm this booking?*\n\n` : `✨ *Confirmi programarea?*\n\n`) +
-        nameLine +
-        empLine +
-        `✂️ *${service}*\n` +
-        `📅 ${dateLabel}\n` +
-        `🕐 ${timeLabel}`
+      return waJoin(
+        waTitle(en ? 'Confirm this booking?' : 'Confirmi programarea?'),
+        '',
+        waField(en ? 'Guest' : 'Client', clientName),
+        waField(en ? 'Specialist' : 'Specialist', employeeName),
+        waField(en ? 'Service' : 'Serviciu', service),
+        waField(en ? 'Date' : 'Data', dateLabel),
+        waField(en ? 'Time' : 'Ora', timeLabel),
       );
     }
     case MACHINE_ACTIONS.ACTION_ASK_CLARIFICATION: {
       const n = clarifyValue != null ? String(clarifyValue) : '';
       if (n) {
         return en
-          ? `❓ Is *${n}* the date or the time *${n}:00*?`
-          : `❓ *${n}* e data sau ora *${n}:00*?`;
+          ? waJoin(waTitle('Quick check'), `Is *${n}* the date or the time *${n}:00*?`)
+          : waJoin(waTitle('Lămurire'), `*${n}* e data sau ora *${n}:00*?`);
       }
       return en
-        ? '❓ Is that a *date* or a *time*?'
-        : '❓ E vorba de o *dată* sau de o *oră*?';
+        ? waJoin(waTitle('Quick check'), 'Is that a *date* or a *time*?')
+        : waJoin(waTitle('Lămurire'), 'E vorba de o *dată* sau de o *oră*?');
     }
     case MACHINE_ACTIONS.ACTION_SLOT_UNAVAILABLE: {
       const occupied = occupiedLabel
-        ? (en ? `😔 *${occupiedLabel}* is not available.` : `😔 *${occupiedLabel}* nu e disponibil.`)
+        ? (en ? `*${occupiedLabel}* is not available.` : `*${occupiedLabel}* nu e disponibil.`)
         : (en
-          ? `😔 *${timeLabel}* is not available${dateLabel ? ` — ${dateLabel}` : ''}.`
-          : `😔 *${timeLabel}* nu e disponibil${dateLabel ? ` — ${dateLabel}` : ''}.`);
-      const nearby = nearbyHoursLine(alternatives);
-      return nearby
-        ? `${occupied}\n${nearby}\n${en ? 'Send a time — e.g. *18:00*.' : 'Scrie ora — ex: *18:00*.'}`
-        : `${occupied}\n${en ? 'Send another time — e.g. *18:00*.' : 'Scrie altă oră — ex: *18:00*.'}`;
+          ? `*${timeLabel}* is not available${dateLabel ? ` — ${dateLabel}` : ''}.`
+          : `*${timeLabel}* nu e disponibil${dateLabel ? ` — ${dateLabel}` : ''}.`);
+      const nearby = nearbyHoursLine(alternatives, en);
+      return waJoin(
+        waTitle(en ? 'Unavailable' : 'Indisponibil'),
+        occupied,
+        nearby ? '' : null,
+        nearby || null,
+        '',
+        en ? 'Send a time — e.g. *18:00*.' : 'Scrie ora — ex: *18:00*.',
+      );
     }
     case MACHINE_ACTIONS.ACTION_ASK_SERVICE:
       return formatServiceAskMessage(services);
     case MACHINE_ACTIONS.ACTION_ASK_DATE:
       return en
-        ? `📅 *Which date*${draft.service_name ? ` for *${draft.service_name}*` : ''}?\nE.g. *Monday* or *18 Aug*`
-        : `📅 *Pe ce dată*${draft.service_name ? ` vrei *${draft.service_name}*` : ''}?\nEx: *luni* sau *18 aug*`;
+        ? waJoin(
+          waTitle(draft.service_name ? `Date — ${draft.service_name}` : 'Which date?'),
+          'E.g. *Monday* or *18 Aug*',
+        )
+        : waJoin(
+          waTitle(draft.service_name ? `Data — ${draft.service_name}` : 'Pe ce dată?'),
+          'Ex: *luni* sau *18 aug*',
+        );
     case MACHINE_ACTIONS.ACTION_ASK_TIME: {
-      const nearby = nearbyHoursLine(alternatives);
+      const nearby = nearbyHoursLine(alternatives, en);
       const head = en
-        ? `🕐 *What time*${draft.service_name ? ` — *${draft.service_name}*` : ''}${dateLabel ? `\n📅 ${dateLabel}` : ''}?`
-        : `🕐 *La ce oră*${draft.service_name ? ` — *${draft.service_name}*` : ''}${dateLabel ? `\n📅 ${dateLabel}` : ''}?`;
-      return nearby
-        ? `${head}\n${nearby}\n${en ? 'E.g. *17* or *17:00*' : 'Ex: *17* sau *17:00*'}`
-        : `${head}\n${en ? 'E.g. *17* or *17:00*' : 'Ex: *17* sau *17:00*'}`;
+        ? waJoin(
+          waTitle(draft.service_name ? `Time — ${draft.service_name}` : 'What time?'),
+          dateLabel ? waField('Date', dateLabel) : null,
+        )
+        : waJoin(
+          waTitle(draft.service_name ? `Ora — ${draft.service_name}` : 'La ce oră?'),
+          dateLabel ? waField('Data', dateLabel) : null,
+        );
+      return waJoin(
+        head,
+        nearby ? '' : null,
+        nearby || null,
+        '',
+        en ? 'E.g. *17* or *17:00*' : 'Ex: *17* sau *17:00*',
+      );
     }
     case MACHINE_ACTIONS.ACTION_ASK_DATE_TIME:
       return en
-        ? '📅 *When do you want the appointment?*\nDay and time — e.g. *Monday at 17*'
-        : '📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*';
+        ? waJoin(
+          waTitle('When do you want the appointment?'),
+          'Day and time — e.g. *Monday at 17*',
+        )
+        : waJoin(
+          waTitle('Când vrei programarea?'),
+          'Ziua și ora — ex: *luni la 17*',
+        );
     default:
       return null;
   }
@@ -147,7 +175,8 @@ export function formatterSystemHint(action) {
   if (action === MACHINE_ACTIONS.ACTION_SHOW_CONFIRMATION) {
     return (
       'Reformulează cald în română, păstrând EXACT numele clientului, serviciul, data și ora din text. ' +
-      'Nu schimba data/ora. Nu spune că e deja confirmată. Nu adăuga ore libere.'
+      'Nu schimba data/ora. Nu spune că e deja confirmată. Nu adăuga ore libere. ' +
+      'Păstrează structura clară pe câmpuri (Client / Serviciu / Data / Ora).'
     );
   }
   if (action === MACHINE_ACTIONS.ACTION_ASK_CLARIFICATION) {

@@ -4,6 +4,7 @@
  */
 
 import { buildAiTransparencyWelcome, buildBookingConfirmationMessage, buildGdprNote, buildMapsInviteLine } from '../utils/businessMessages.js';
+import { WA_DIVIDER, waField, waFooter, waJoin, waServiceMeta, waTitle } from '../utils/waCopy.js';
 import { formatContactMessage } from './contactService.js';
 import { completeTenantChat } from './aiContextLoader.js';
 import {
@@ -22,15 +23,6 @@ import { formatServiceAskMessage, bookingExamplePhrase } from '../utils/serviceM
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 /** @typedef {import('./handlerResult.js').HandlerResult} HandlerResult */
-
-function formatServiceLine(s) {
-  const price =
-    s.price_ron != null && s.price_ron !== ''
-      ? `💰 ${s.price_ron} LEI`
-      : '💰 —';
-  const duration = s.duration_minutes ? `⏱️ ${s.duration_minutes} min` : '';
-  return `${price}${duration ? `  |  ${duration}` : ''}`;
-}
 
 /**
  * Deterministic templates from backend JSON. No invented facts.
@@ -67,17 +59,19 @@ export function renderHandlerResult(business, result) {
     case 'ASK_NAME':
       return (
         (typeof d.client_message === 'string' && d.client_message)
-        || '👤 *Cum te cheamă?*\nPrenume și nume — ex: *Ana Popescu*'
+        || waJoin(
+          waTitle('Cum te cheamă?'),
+          'Prenume și nume — ex: *Ana Popescu*',
+        )
       );
     case 'ASK_CONFIRM': {
-      const emp = d.employee_name ? `💇 *${d.employee_name}*\n` : '';
-      const name = d.client_name ? `👤 *${d.client_name}*\n` : '';
-      return (
-        `✨ *Confirmi programarea?*\n\n` +
-        name +
-        emp +
-        `✂️ *${d.service_name || 'Serviciu'}*\n` +
-        `🕐 ${d.slot_label || ''}`
+      return waJoin(
+        waTitle('Confirmi programarea?'),
+        '',
+        waField('Client', d.client_name),
+        waField('Specialist', d.employee_name),
+        waField('Serviciu', d.service_name || 'Serviciu'),
+        waField('Când', d.slot_label || ''),
       );
     }
     case 'CONFIRMATION_BOOKED':
@@ -92,73 +86,111 @@ export function renderHandlerResult(business, result) {
       });
     case 'CONFIRMATION_RESCHEDULE': {
       const maps = buildMapsInviteLine(business)?.messageLine;
-      return (
-        `✅ *Programare actualizată*\n\n` +
-        `✂️ ${d.service_name || 'Serviciu'}\n` +
-        `🕐 ${d.slot_label || ''}` +
-        (maps ? `\n${maps}` : '') +
-        `\n\n🔁 *reprogramare*  ·  ❌ *anulează*`
+      return waJoin(
+        waTitle('Programare actualizată'),
+        '',
+        waField('Serviciu', d.service_name || 'Serviciu'),
+        waField('Când', d.slot_label || ''),
+        maps ? '' : null,
+        maps || null,
+        '',
+        WA_DIVIDER,
+        '',
+        waFooter(['*reprogramare*', '*anulează*']),
       );
     }
     case 'CONFIRMATION_CANCELLED':
-      return '✅ Programarea a fost *anulată*.\nTe așteptăm oricând.';
+      return waJoin(
+        waTitle('Programare anulată'),
+        'Te așteptăm oricând dorești o nouă programare.',
+      );
     case 'CANCEL_PENDING':
-      return '✅ Am anulat.\nPentru una nouă, scrie *programare*.';
+      return waJoin(
+        waTitle('Anulat'),
+        'Pentru o programare nouă, scrie *programare*.',
+      );
     case 'FLOW_ABORTED':
-      return '👌 Ok, m-am oprit.\nCu ce te mai pot ajuta?';
+      return waJoin(
+        waTitle('Ok, m-am oprit'),
+        'Cu ce te mai pot ajuta?',
+      );
     case 'MISSING_EMPLOYEE': {
       const names = (d.services || []).map((e) => e.name).filter(Boolean);
-      const intro = d.client_message || '💇 Nu am găsit specialistul. Alege din echipă:';
-      return names.length ? `${intro} ${names.join(', ')}.` : intro;
+      const intro = d.client_message || 'Nu am găsit specialistul. Alege din echipă:';
+      return names.length
+        ? waJoin(waTitle('Specialist'), `${intro} ${names.join(', ')}.`)
+        : intro;
     }
     case 'MISSING_SERVICE':
       return formatServiceAskMessage(d.services || []);
     case 'ASK_DATE':
       return (
         (typeof d.client_message === 'string' && d.client_message)
-        || `📅 *Pe ce dată*${d.service_name ? ` — *${d.service_name}*` : ''}?\nEx: *luni* sau *18 aug*`
+        || waJoin(
+          waTitle(d.service_name ? `Data — ${d.service_name}` : 'Pe ce dată?'),
+          'Ex: *luni* sau *18 aug*',
+        )
       );
     case 'ASK_TIME': {
       const head = d.service_name
-        ? `🕐 *La ce oră* — *${d.service_name}*${d.date_label ? `\n📅 ${d.date_label}` : ''}?`
-        : '🕐 *La ce oră?*';
+        ? waJoin(
+          waTitle(`Ora — ${d.service_name}`),
+          d.date_label ? `*Data*\n${d.date_label}` : null,
+        )
+        : waTitle('La ce oră?');
       const alts = (d.alternatives || []).map((s) => s.time || s.label).filter(Boolean).slice(0, 6);
       if (alts.length) {
-        return `${head}\n🕐 Liber: ${alts.join(' · ')}\nEx: *18* sau *18:00*`;
+        return waJoin(head, '', `*Disponibil*\n${alts.join(' · ')}`, '', 'Ex: *18* sau *18:00*');
       }
-      return `${head}\nEx: *10:30* sau *18*`;
+      return waJoin(head, '', 'Ex: *10:30* sau *18*');
     }
     case 'ASK_CLARIFY_DATE_OR_TIME':
       return (
         (typeof d.client_message === 'string' && d.client_message)
-        || `❓ *${d.date_label || d.value}* e data sau ora *${d.time_label || d.value}*?`
+        || waJoin(
+          waTitle('Lămurire'),
+          `*${d.date_label || d.value}* e data sau ora *${d.time_label || d.value}*?`,
+        )
       );
     case 'MISSING_SLOT': {
       const head = d.service_name
-        ? `🕐 *La ce oră* — *${d.service_name}*?`
-        : '🕐 *La ce oră?*';
+        ? waTitle(`Ora — ${d.service_name}`)
+        : waTitle('La ce oră?');
       const alts = (d.alternatives || []).map((s) => s.time || s.label).filter(Boolean).slice(0, 6);
       return alts.length
-        ? `${head}\n🕐 Liber: ${alts.join(' · ')}\nEx: *17:00*`
-        : `${head}\nEx: *17:00*`;
+        ? waJoin(head, '', `*Disponibil*\n${alts.join(' · ')}`, '', 'Ex: *17:00*')
+        : waJoin(head, '', 'Ex: *17:00*');
     }
     case 'SLOT_UNAVAILABLE': {
       const occupied = d.occupied_label
-        ? `😔 *${d.occupied_label}* tocmai s-a ocupat.`
-        : (d.client_message || '😔 Intervalul nu e disponibil.');
+        ? `*${d.occupied_label}* tocmai s-a ocupat.`
+        : (d.client_message || 'Intervalul nu e disponibil.');
       const alts = (d.alternatives || []).map((s) => s.time || s.label).filter(Boolean).slice(0, 6);
-      if (!alts.length) return `${occupied}\nScrie altă oră.`;
-      return `${occupied}\n🕐 Liber: ${alts.join(' · ')}\nScrie ora pe care o vrei.`;
+      if (!alts.length) {
+        return waJoin(waTitle('Indisponibil'), occupied, '', 'Scrie altă oră.');
+      }
+      return waJoin(
+        waTitle('Indisponibil'),
+        occupied,
+        '',
+        `*Disponibil*\n${alts.join(' · ')}`,
+        '',
+        'Scrie ora pe care o vrei.',
+      );
     }
     case 'MISSING_APPOINTMENT': {
       const intent = d.intent === 'cancel' ? 'anulezi' : 'reprogramezi';
-      return `📋 Care programare vrei să ${intent}?${menuBlock}`;
+      return waJoin(
+        waTitle('Programări'),
+        `Care programare vrei să ${intent}?${menuBlock}`,
+      );
     }
     case 'CONFIRM_CANCEL':
-      return (
-        `❌ *Confirmi anularea?*\n\n` +
-        `✂️ *${d.service_name || 'Programare'}*\n` +
-        `🕐 ${d.slot_label || ''}`
+      return waJoin(
+        waTitle('Confirmi anularea?'),
+        '',
+        waField('Serviciu', d.service_name || 'Programare'),
+        waField('Când', d.slot_label || ''),
       );
     case 'CLOSED_HOURS':
     case 'ERROR_DURATION':
@@ -170,75 +202,96 @@ export function renderHandlerResult(business, result) {
     case 'SERVICES_LIST': {
       const services = d.services || [];
       if (!services.length) return unknownInfoClientMessage();
-      const lines = ['✂️ *Servicii*', ''];
-      services.forEach((s) => {
-        lines.push(`*${s.name}*`);
-        lines.push(formatServiceLine(s));
-        lines.push('');
+      const blocks = [waTitle(`Servicii — ${business.name}`), ''];
+      services.forEach((s, i) => {
+        const meta = waServiceMeta(s);
+        blocks.push(`*${i + 1}. ${s.name}*`);
+        if (meta) blocks.push(meta);
+        blocks.push('');
       });
-      lines.push(`Pentru programare: *${bookingExamplePhrase(services)}*`);
-      return lines.join('\n');
+      blocks.push(WA_DIVIDER, '', `Pentru programare: *${bookingExamplePhrase(services)}*`);
+      return blocks.join('\n');
     }
     case 'HOURS_LIST':
       if (!d.hours_configured || !d.hours_text) {
         return unknownInfoClientMessage();
       }
       return lang === 'en'
-        ? `🕐 *Hours — ${business.name}*\n\n${d.hours_text}`
-        : `🕐 *Program — ${business.name}*\n\n${d.hours_text}`;
+        ? waJoin(waTitle(`Hours — ${business.name}`), '', d.hours_text)
+        : waJoin(waTitle(`Program — ${business.name}`), '', d.hours_text);
     case 'HOURS_AND_SERVICES': {
       const hoursBlock = d.hours_configured && d.hours_text
         ? (lang === 'en'
-          ? `🕐 *Hours — ${business.name}*\n\n${d.hours_text}`
-          : `🕐 *Program — ${business.name}*\n\n${d.hours_text}`)
+          ? waJoin(waTitle(`Hours — ${business.name}`), '', d.hours_text)
+          : waJoin(waTitle(`Program — ${business.name}`), '', d.hours_text))
         : '';
       const services = d.services || [];
-      const serviceLines = ['✂️ *Servicii*', ''];
-      services.forEach((s) => {
-        serviceLines.push(`*${s.name}*`);
-        serviceLines.push(formatServiceLine(s));
-        serviceLines.push('');
+      const serviceBlocks = [waTitle('Servicii'), ''];
+      services.forEach((s, i) => {
+        const meta = waServiceMeta(s);
+        serviceBlocks.push(`*${i + 1}. ${s.name}*`);
+        if (meta) serviceBlocks.push(meta);
+        serviceBlocks.push('');
       });
-      return [hoursBlock, serviceLines.join('\n')].filter(Boolean).join('\n\n');
+      return [hoursBlock, serviceBlocks.join('\n')].filter(Boolean).join(`\n\n${WA_DIVIDER}\n\n`);
     }
     case 'CONTACT':
       return formatContactMessage(business);
     case 'MENU':
       return buildAiTransparencyWelcome(business);
     case 'CALLBACK_SENT':
-      return (
-        `📞 Am notat.\nUn coleg de la *${d.business_name || business.name}* te sună în curând.`
+      return waJoin(
+        waTitle('Cerere înregistrată'),
+        `Un coleg de la *${d.business_name || business.name}* te sună în curând.`,
       );
     case 'MY_APPOINTMENTS': {
       const rows = d.appointments || [];
       if (!rows.length) {
-        return '📋 Nicio programare activă.\nPentru una nouă: *luni la 17*';
+        return waJoin(
+          waTitle('Programările tale'),
+          'Nicio programare activă.',
+          '',
+          'Pentru una nouă: *luni la 17*',
+        );
       }
-      const lines = rows.map((a) => `• *${a.service_name || 'Programare'}* — ${a.slot_label || ''}`);
-      return (
-        `📋 *Programările tale*\n\n${lines.join('\n')}\n\n` +
-        `❌ *anulează*  ·  🔁 *reprogramare*`
+      const lines = rows.map((a) => `• *${a.service_name || 'Programare'}*\n  ${a.slot_label || ''}`);
+      return waJoin(
+        waTitle('Programările tale'),
+        '',
+        lines.join('\n\n'),
+        '',
+        WA_DIVIDER,
+        '',
+        waFooter(['*anulează*', '*reprogramare*']),
       );
     }
     case 'CHAT_FALLBACK':
       return lang === 'en'
-        ? (
-          `👋 I'm the booking assistant for *${d.business_name || business.name}*.\n` +
-          `How can I help?  ·  booking  ·  hours  ·  contact`
+        ? waJoin(
+          waTitle(`Booking assistant — ${d.business_name || business.name}`),
+          'How can I help?',
+          '',
+          waFooter(['booking', 'hours', 'contact']),
         )
-        : (
-          `👋 Sunt asistentul de programări al *${d.business_name || business.name}*.\n` +
-          `Cu ce te pot ajuta?  ·  programare  ·  orar  ·  contact`
+        : waJoin(
+          waTitle(`Asistent programări — ${d.business_name || business.name}`),
+          'Cu ce te pot ajuta?',
+          '',
+          waFooter(['programare', 'orar', 'contact']),
         );
     case 'OFF_TOPIC':
       return lang === 'en'
-        ? (
-          `👋 I'm the booking assistant for *${d.business_name || business.name}*.\n` +
-          `I can't discuss that.\n\nI can help with: booking · hours · contact`
+        ? waJoin(
+          waTitle(`Booking assistant — ${d.business_name || business.name}`),
+          "I can't discuss that.",
+          '',
+          waFooter(['booking', 'hours', 'contact']),
         )
-        : (
-          `👋 Sunt asistentul de programări al *${d.business_name || business.name}*.\n` +
-          `Nu pot discuta asta.\n\nPot: programare · orar · contact`
+        : waJoin(
+          waTitle(`Asistent programări — ${d.business_name || business.name}`),
+          'Nu pot discuta asta.',
+          '',
+          waFooter(['programare', 'orar', 'contact']),
         );
     case 'MISSING_INFO':
       return d.client_message
@@ -331,7 +384,7 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
       business,
       recipientPhone,
       requestId,
-      text: '📅 Adaugă în calendar',
+      text: 'Adaugă în calendar',
       buttonTitle: result.calendar_cta.title || 'Adaugă în calendar',
       buttonUrl: result.calendar_cta.url,
     });
@@ -382,7 +435,7 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
         business,
         recipientPhone,
         requestId,
-        bodyText: '✨ Cu ce te putem ajuta?',
+        bodyText: 'Cu ce te putem ajuta?',
         buttons: result.menu.options,
         footerText: business.name,
         menuKind: 'entry',

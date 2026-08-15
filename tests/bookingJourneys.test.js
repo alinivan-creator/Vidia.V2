@@ -411,15 +411,18 @@ describe('real booking journeys', () => {
       { name: 'Tuns', duration_minutes: 30 },
       { name: 'Tuns + Barba', duration_minutes: 60 },
     ]);
-    assert.match(text, /1\. Tuns · 30 min/);
-    assert.match(text, /2\. Tuns \+ Barba · 60 min/);
+    assert.match(text, /\*1\. Tuns\*/);
+    assert.match(text, /30 min/);
+    assert.match(text, /\*2\. Tuns \+ Barba\*/);
+    assert.match(text, /60 min/);
     assert.match(text, /numărul.*numele/);
     const presented = reply('MISSING_SERVICE', {
       services: [
         { id: 'svc-barba', name: 'Tuns + Barba', duration_minutes: 60 },
       ],
     });
-    assert.match(presented, /Tuns \+ Barba · 60 min/);
+    assert.match(presented, /Tuns \+ Barba/);
+    assert.match(presented, /60 min/);
   });
 
   it('Salut → 1 → 1 keeps Tuns Clasic and asks for the slot, not the service again', () => {

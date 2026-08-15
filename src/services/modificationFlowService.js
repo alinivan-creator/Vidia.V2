@@ -14,7 +14,7 @@ import {
   resetConversationState,
 } from '../db/conversationStateService.js';
 import { getAvailableSlots, isSlotAvailable } from '../db/cacheService.js';
-import { formatSlotLabel, decodeSlotId, slotNumberEmoji } from '../utils/datetime.js';
+import { formatSlotLabel, decodeSlotId } from '../utils/datetime.js';
 import {
   assertWithinWorkingHours,
   durationMissingClientMessage,
@@ -24,6 +24,7 @@ import {
 } from '../utils/workingHours.js';
 import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
 import { buildGdprNote, buildMapsInviteLine } from '../utils/businessMessages.js';
+import { WA_DIVIDER, waField, waJoin, waTitle } from '../utils/waCopy.js';
 import {
   lazySyncCalendar,
   updateCalendarEvent,
@@ -366,13 +367,15 @@ async function offerActionForAppointment({
       business,
       recipientPhone,
       requestId,
-      bodyText:
-        `Confirmi anularea?\n\n` +
-        `📋 *${service.name || 'Programare'}*\n` +
-        `🕐 ${when}`,
+      bodyText: waJoin(
+        waTitle('Confirmi anularea?'),
+        '',
+        waField('Serviciu', service.name || 'Programare'),
+        waField('Când', when),
+      ),
       buttons: [
-        { id: MOD_PREFIX.CONFIRM_CANCEL, title: '✅ Anulează' },
-        { id: MOD_PREFIX.ABORT, title: '❌ Renunță' },
+        { id: MOD_PREFIX.CONFIRM_CANCEL, title: 'Anulează' },
+        { id: MOD_PREFIX.ABORT, title: 'Renunță' },
       ],
       menuKind: 'confirm',
     });
@@ -468,22 +471,21 @@ async function sendRescheduleSlotPicker({ business, recipientPhone, appointment,
   const serviceName =
     /** @type {{ name?: string }} */ (appointment.selected_service ?? {}).name || 'serviciu';
   const lines = [
-    `📅 *Alege ora pentru ${serviceName}:*`,
-    '_(Primele opțiuni disponibile)_',
+    waTitle(`Alege ora — ${serviceName}`),
+    '',
+    'Primele opțiuni disponibile',
     '',
   ];
   options.forEach((opt, i) => {
-    lines.push(`🟦 ${i + 1}. ${opt.title}`);
-    lines.push('');
+    lines.push(`*${i + 1}.*  ${opt.title}`);
   });
-  while (lines.length && lines[lines.length - 1] === '') lines.pop();
-  lines.push('', '👉 _Răspunde cu numărul opțiunii dorite._');
+  lines.push('', WA_DIVIDER, '', 'Scrie *numărul* opțiunii.');
 
   await sendTextMessage({
     business,
     recipientPhone,
     requestId,
-    text: lines.join('\n'),
+    text: waJoin(...lines),
   });
 }
 
@@ -850,7 +852,6 @@ export async function applyRescheduleSlot({
     endIso: slotEnd,
   });
   const mapsInvite = buildMapsInviteLine(business);
-  const mapsLine = mapsInvite?.messageLine ? `\n${mapsInvite.messageLine}` : '';
 
   // Order: 1) GDPR note, 2) updated booking confirmation
   await sendTextMessage({
@@ -860,12 +861,18 @@ export async function applyRescheduleSlot({
     text: buildGdprNote(business),
   });
 
-  const updateBody =
-    `✅ *Programare actualizată!*\n\n` +
-    `📋 ${service.name || 'Serviciu'}\n` +
-    `🕐 ${formatSlotLabel(slotStart, business.timezone)}` +
-    `${mapsLine}\n\n` +
-    'Te așteptăm! Pentru anulare, scrie *anulează*.';
+  const updateBody = waJoin(
+    waTitle('Programare actualizată'),
+    '',
+    waField('Serviciu', service.name || 'Serviciu'),
+    waField('Când', formatSlotLabel(slotStart, business.timezone)),
+    mapsInvite?.messageLine ? '' : null,
+    mapsInvite?.messageLine || null,
+    '',
+    WA_DIVIDER,
+    '',
+    'Te așteptăm. Pentru anulare, scrie *anulează*.',
+  );
 
   if (calendarInvite.url) {
     await sendMessageWithUrlButton({

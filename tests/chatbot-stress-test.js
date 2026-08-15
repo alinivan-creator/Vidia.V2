@@ -123,8 +123,8 @@ const ENTRY_MENU = {
 const CONFIRM_MENU = {
   kind: 'confirm',
   options: [
-    { id: BOOKING_PREFIXES.CONFIRM, title: '✅ Confirm' },
-    { id: BOOKING_PREFIXES.CANCEL, title: '❌ Anulează' },
+    { id: BOOKING_PREFIXES.CONFIRM, title: 'Confirmă' },
+    { id: BOOKING_PREFIXES.CANCEL, title: 'Anulează' },
   ],
 };
 

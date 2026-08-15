@@ -1,14 +1,16 @@
 /**
  * Welcome / confirmation / GDPR helpers for WhatsApp messaging.
  * Legal URLs + confirmation_message live in booking_settings (zero-migration).
+ * Presentation only — facts come from Admin / booking engine.
  */
 
 import { getBusinessContactInfo } from '../services/contactService.js';
+import { WA_DIVIDER, waField, waFooter, waJoin, waTitle } from './waCopy.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
 /** Friendly Maps CTA label (without brackets) — used inside markdown `[…](url)`. */
-export const MAPS_ANCHOR_LABEL = '🚗 Pornește spre locație';
+export const MAPS_ANCHOR_LABEL = 'Indicații către locație';
 
 /**
  * @param {Business} business
@@ -61,11 +63,11 @@ function alreadyDisclosesAi(text) {
 export function buildAiTransparencyWelcome(business) {
   const base =
     (business.welcome_message && business.welcome_message.trim())
-      || `Bun venit la *${business.name}*!`;
+      || `Bun venit la *${business.name}*.`;
 
   const disclosure = alreadyDisclosesAi(base)
     ? ''
-    : `👋 Sunt *asistentul virtual* al *${business.name}*.\n\n`;
+    : `Sunt *asistentul virtual* al *${business.name}*.`;
 
   const { termsUrl, gdprUrl } = getMessagingSettings(business);
   const legalLink = (gdprUrl || termsUrl || '').trim().replace(/\s+/g, '');
@@ -73,14 +75,21 @@ export function buildAiTransparencyWelcome(business) {
     ? ` în conformitate cu [politica de confidențialitate](${legalLink})`
     : ' în conformitate cu politica de confidențialitate';
 
-  const privacyBlock =
-    `Salut! 👋 Pentru a începe conversația te informăm că prelucrăm datele tale${policyBit}.\n\n` +
-    `Prin continuarea conversației și trimiterea detaliilor, ești de acord cu acest lucru. 🔒`;
+  const privacyBlock = waJoin(
+    waTitle('Confidențialitate'),
+    `Prelucrăm datele tale${policyBit}.`,
+    'Prin continuarea conversației și trimiterea detaliilor, ești de acord cu acest lucru.',
+  );
 
-  return (
-    `${privacyBlock}\n\n` +
-    `${disclosure}${base}` +
-    `\n\n📅 programări  ·  🕐 orar  ·  📞 contact`
+  return waJoin(
+    privacyBlock,
+    '',
+    disclosure || null,
+    disclosure ? '' : null,
+    base,
+    '',
+    WA_DIVIDER,
+    waFooter(['Programări', 'Orar', 'Contact']),
   );
 }
 
@@ -97,14 +106,12 @@ export function buildBusinessMapsLink(business) {
   const configured = info.mapsUrl?.trim() || null;
 
   if (configured) {
-    // Already a maps / geo URL from Admin
     return { url: configured, address };
   }
 
   if (!address) return null;
 
   const query = encodeURIComponent(address);
-  // Works on Android (Google Maps) and iOS (Maps / browser → open in Maps)
   return {
     url: `https://www.google.com/maps/search/?api=1&query=${query}`,
     address,
@@ -120,14 +127,12 @@ export function buildMapsInviteLine(business) {
   const maps = buildBusinessMapsLink(business);
   if (!maps?.url) return null;
 
-  // Keep URL on one line, no spaces/newlines between ] and (
   const url = String(maps.url).trim().replace(/\s+/g, '');
   if (!url) return null;
 
   return {
     url,
     address: maps.address,
-    // WhatsApp markdown: [label](url) must be contiguous for a single blue link
     messageLine: `[${MAPS_ANCHOR_LABEL}](${url})`,
   };
 }
@@ -140,13 +145,15 @@ export function buildMapsInviteLine(business) {
 export function buildGdprNote(business) {
   const { termsUrl, gdprUrl } = getMessagingSettings(business);
   const link = (gdprUrl || termsUrl || '').trim().replace(/\s+/g, '');
-  const body =
-    '_🔒 Confidențialitate: folosim datele pentru această programare și pentru comunicări utile ' +
-    '(inclusiv SMS de la salon/clinică). Poți opri SMS-urile scriind *stop sms* pe WhatsApp._';
+  const body = waJoin(
+    waTitle('Confidențialitate'),
+    'Folosim datele pentru această programare și pentru comunicări utile (inclusiv SMS).',
+    'Poți opri SMS-urile scriind *stop sms*.',
+  );
   if (link) {
-    return `${body}\n[Detalii termeni / GDPR](${link})`;
+    return waJoin(body, '', `[Detalii termeni / GDPR](${link})`);
   }
-  return `${body}\nPentru detalii, scrie *contact*.`;
+  return waJoin(body, '', 'Pentru detalii, scrie *contact*.');
 }
 
 /**
@@ -158,9 +165,9 @@ export function buildGdprNote(business) {
  * @param {string} params.serviceName
  * @param {string} params.slotLabel
  * @param {string} [params.clientName]
- * @param {string} [params.calendarLine] — optional `[📅 Adaugă în calendar](url)` (omit if CTA button used)
- * @param {string} [params.mapsLine] — `[🚗 Pornește spre locație](url)` single contiguous line
- * @param {boolean} [params.includeGdpr=false] — prefer false; send GDPR as its own message *before* confirmation
+ * @param {string} [params.calendarLine]
+ * @param {string} [params.mapsLine]
+ * @param {boolean} [params.includeGdpr=false]
  * @returns {string}
  */
 export function buildBookingConfirmationMessage({
@@ -173,7 +180,6 @@ export function buildBookingConfirmationMessage({
   includeGdpr = false,
 }) {
   const { confirmationMessage } = getMessagingSettings(business);
-  const nameLine = clientName ? `👤 ${clientName}\n` : '';
   const resolvedMapsLine = mapsLine || buildMapsInviteLine(business)?.messageLine || '';
 
   const custom = confirmationMessage
@@ -182,23 +188,26 @@ export function buildBookingConfirmationMessage({
       .replace(/\{\{datetime\}\}/gi, slotLabel)
       .replace(/\{\{name\}\}/gi, clientName || '')
       .replace(/\{\{business\}\}/gi, business.name)
-    : 'Ne vedem curând 👋\n🔁 *reprogramare*  ·  ❌ *anulează*';
+    : waJoin(
+      'Ne vedem curând.',
+      waFooter(['*reprogramare*', '*anulează*']),
+    );
 
   const parts = [
-    '✅ *Programare confirmată*',
+    waTitle('Programare confirmată'),
     '',
-    nameLine + `✂️ ${serviceName}`,
-    `🕐 ${slotLabel}`,
-  ];
+    waField('Client', clientName || null),
+    waField('Serviciu', serviceName),
+    waField('Când', slotLabel),
+  ].filter(Boolean);
 
-  // Links: calendar (if not using CTA) then maps — each on its own clean line
   if (calendarLine || resolvedMapsLine) {
     parts.push('');
     if (calendarLine) parts.push(calendarLine.trim());
     if (resolvedMapsLine) parts.push(resolvedMapsLine.trim());
   }
 
-  parts.push('', custom);
+  parts.push('', WA_DIVIDER, '', custom);
   if (includeGdpr) {
     parts.push('', buildGdprNote(business));
   }
