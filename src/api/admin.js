@@ -317,12 +317,14 @@ adminRouter.post('/businesses/:id/sms-campaigns', async (req, res) => {
     const body = String(req.body?.body ?? '').trim();
     const clientIds = Array.isArray(req.body?.client_ids) ? req.body.client_ids : null;
     const phones = req.body?.phones ?? req.body?.recipients ?? null;
+    const smsFromNumber = req.body?.sms_from_number ?? null;
 
     const result = await sendSmsCampaign({
       business,
       body,
       phones,
       clientIds,
+      smsFromNumber,
       createdBy: 'admin',
     });
 

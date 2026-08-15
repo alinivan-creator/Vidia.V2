@@ -706,6 +706,14 @@ $('#bf-sms-send')?.addEventListener('click', async () => {
     status.textContent = 'Mesajul SMS este prea scurt.';
     return;
   }
+  const smsFrom = ($('#bf-sms-from')?.value || '').trim();
+  if (!smsFrom) {
+    status.textContent =
+      'Completează „Număr SMS From” cu numărul Twilio pentru SMS (ex. +40721234567 sau 0721234567), apoi reîncearcă.';
+    status.classList.add('text-vidia-red');
+    $('#bf-sms-from')?.focus();
+    return;
+  }
   const phones = ($('#bf-sms-recipients')?.value || '').trim();
   status.textContent = 'Se trimite…';
   status.classList.remove('text-vidia-red');
@@ -713,7 +721,7 @@ $('#bf-sms-send')?.addEventListener('click', async () => {
   try {
     const result = await api(`/businesses/${businessId}/sms-campaigns`, {
       method: 'POST',
-      body: JSON.stringify({ body, phones }),
+      body: JSON.stringify({ body, phones, sms_from_number: smsFrom }),
     });
     const parts = [];
     if (result.error && !(result.sent > 0)) parts.push(result.error);

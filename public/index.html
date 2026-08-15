@@ -356,8 +356,12 @@
             Campanie: lista goală = toți cu opt-in; cu numere = doar acele numere (fără opt-in sunt sărite).
           </p>
           <div class="mb-3">
-            <label class="text-sm font-medium">Număr SMS From (expeditor Twilio, obligatoriu)</label>
-            <input id="bf-sms-from" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="+407xxxxxxxx" />
+            <label class="text-sm font-medium">Număr SMS From (expeditor Twilio)</label>
+            <input id="bf-sms-from" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="+407xxxxxxxx sau 07xxxxxxxx" />
+            <p class="text-xs text-slate-500 mt-1">
+              Numărul de telefon Twilio pentru <strong>SMS</strong> (nu WhatsApp SID). Exemplu: <code>+40721234567</code> sau <code>0721234567</code>.
+              Complezi aici, apoi poți trimite campania — valoarea se salvează automat la trimitere.
+            </p>
           </div>
           <div class="mb-4 border border-vidia-border rounded-lg p-3 bg-vidia-light/40">
             <label class="text-sm font-medium">Bază opt-in manuală</label>

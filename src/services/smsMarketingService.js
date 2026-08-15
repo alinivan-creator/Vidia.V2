@@ -100,7 +100,7 @@ async function runPool(items, concurrency, worker) {
  * Requires booking_settings.sms_from_number (dedicated SMS number) — never WhatsApp SID.
  * @param {Business} business
  */
-function resolveSmsCredentials(business) {
+function resolveSmsCredentials(business, overrides = {}) {
   const accountSid =
     business.twilio_account_sid ||
     business.whatsapp_business_account_id ||
@@ -110,18 +110,22 @@ function resolveSmsCredentials(business) {
     business.whatsapp_access_token ||
     null;
   const settings = /** @type {Record<string, unknown>} */ (business.booking_settings ?? {});
-  const smsFrom = normalizeSmsFromNumber(settings.sms_from_number);
+  const smsFrom = normalizeSmsFromNumber(
+    overrides.smsFromNumber ?? settings.sms_from_number,
+  );
 
   /** @type {string[]} */
   const missing = [];
-  if (!accountSid) missing.push('twilio_account_sid');
-  if (!authToken) missing.push('twilio_auth_token');
+  if (!accountSid) missing.push('Twilio Account SID (câmpul Twilio pe afacere)');
+  if (!authToken) missing.push('Twilio Auth Token');
   if (!smsFrom) {
-    missing.push('booking_settings.sms_from_number (E.164 dedicat, ex. +407xxxxxxxx)');
+    missing.push(
+      'Număr SMS From (câmpul din Admin → SMS Marketing, format +407… sau 07…, apoi Salvează)',
+    );
   }
 
   if (missing.length) {
-    throw new Error(`Credențiale SMS incomplete: ${missing.join(', ')}`);
+    throw new Error(`Credențiale SMS incomplete: ${missing.join(' · ')}`);
   }
 
   return {
@@ -378,6 +382,30 @@ export async function optInClientAfterBooking({ businessId, rawPhone }) {
 }
 
 /**
+ * Persists SMS From on the business booking_settings (Admin form may send it with the campaign).
+ * @param {string} businessId
+ * @param {string} smsFrom — already normalized E.164
+ */
+async function persistSmsFromNumber(businessId, smsFrom) {
+  const { data: row } = await supabase
+    .from('businesses')
+    .select('booking_settings')
+    .eq('id', businessId)
+    .maybeSingle();
+  const prev = row?.booking_settings && typeof row.booking_settings === 'object'
+    ? /** @type {Record<string, unknown>} */ (row.booking_settings)
+    : {};
+  if (prev.sms_from_number === smsFrom) return;
+  await supabase
+    .from('businesses')
+    .update({
+      booking_settings: { ...prev, sms_from_number: smsFrom },
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', businessId);
+}
+
+/**
  * Sends a bulk/targeted SMS campaign.
  * `phones` (textarea list) takes priority; otherwise opted-in clients (optionally filtered by clientIds).
  *
@@ -386,6 +414,7 @@ export async function optInClientAfterBooking({ businessId, rawPhone }) {
  * @param {string} params.body
  * @param {string[] | string | null} [params.phones]
  * @param {string[] | null} [params.clientIds] — used only when phones is empty
+ * @param {string | null} [params.smsFromNumber] — optional override from Admin form (also persisted)
  * @param {string} [params.createdBy]
  * @param {string | null} [params.requestId]
  */
@@ -394,6 +423,7 @@ export async function sendSmsCampaign({
   body,
   phones = null,
   clientIds = null,
+  smsFromNumber = null,
   createdBy = 'admin',
   requestId = null,
 }) {
@@ -411,8 +441,26 @@ export async function sendSmsCampaign({
     };
   }
 
+  const normalizedFrom = normalizeSmsFromNumber(smsFromNumber);
+  /** @type {Business} */
+  let biz = business;
+  if (normalizedFrom) {
+    const settings = {
+      ...(business.booking_settings && typeof business.booking_settings === 'object'
+        ? business.booking_settings
+        : {}),
+      sms_from_number: normalizedFrom,
+    };
+    biz = /** @type {Business} */ ({ ...business, booking_settings: settings });
+    try {
+      await persistSmsFromNumber(business.id, normalizedFrom);
+    } catch (err) {
+      console.warn('[smsMarketing] persist sms_from_number failed:', err);
+    }
+  }
+
   try {
-    resolveSmsCredentials(business);
+    resolveSmsCredentials(biz);
   } catch (error) {
     return {
       ok: false,
@@ -562,7 +610,7 @@ export async function sendSmsCampaign({
     }
 
     const result = await sendSmsMessage({
-      business,
+      business: biz,
       toPhone: phone,
       body: text,
       requestId,

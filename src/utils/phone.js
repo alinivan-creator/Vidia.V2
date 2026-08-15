@@ -21,8 +21,12 @@ export function stripWhatsAppPrefix(value) {
  * @returns {string} E.164, e.g. "+40712345678"
  */
 export function toE164(rawPhone) {
-  const digits = stripWhatsAppPrefix(rawPhone).replace(/\D/g, '');
+  let digits = stripWhatsAppPrefix(rawPhone).replace(/\D/g, '');
   if (!digits) return '';
+  // Romania local mobile: 07xxxxxxxx → 407xxxxxxxx
+  if (/^07\d{8}$/.test(digits)) {
+    digits = `40${digits.slice(1)}`;
+  }
   return `+${digits}`;
 }
 
