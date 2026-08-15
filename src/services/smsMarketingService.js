@@ -234,32 +234,147 @@ export async function listSmsOptedInClients(businessId) {
 
 /**
  * Sets marketing SMS opt-in / opt-out for a client.
+ * Creates the client row when opting in a phone that is not yet in the DB (Admin manual list).
  * @param {Object} params
  * @param {string} params.businessId
  * @param {string} params.rawPhone
  * @param {boolean} params.optIn
+ * @param {string | null} [params.source] — e.g. booking | admin | whatsapp
  */
-export async function setClientSmsOptIn({ businessId, rawPhone, optIn }) {
+export async function setClientSmsOptIn({ businessId, rawPhone, optIn, source = null }) {
   const phone = toE164(rawPhone);
-  if (!phone) return null;
+  if (!phone || !businessId) return null;
 
+  const now = new Date().toISOString();
   const patch = optIn
-    ? { sms_opt_in: true, sms_opt_in_at: new Date().toISOString(), sms_opt_out_at: null }
-    : { sms_opt_in: false, sms_opt_out_at: new Date().toISOString() };
+    ? { sms_opt_in: true, sms_opt_in_at: now, sms_opt_out_at: null }
+    : { sms_opt_in: false, sms_opt_out_at: now };
 
-  const { data, error } = await supabase
+  const { data: updated, error: updateError } = await supabase
     .from('clients')
     .update(patch)
     .eq('business_id', businessId)
     .eq('phone_number', phone)
-    .select('id, phone_number, sms_opt_in')
+    .select('id, phone_number, display_name, sms_opt_in')
     .maybeSingle();
 
-  if (error) {
-    console.warn('[smsMarketing] setClientSmsOptIn failed:', error.message);
+  if (updateError) {
+    console.warn('[smsMarketing] setClientSmsOptIn update failed:', updateError.message);
     return null;
   }
-  return data;
+  if (updated) return updated;
+
+  if (!optIn) return null;
+
+  const { data: inserted, error: insertError } = await supabase
+    .from('clients')
+    .insert({
+      business_id: businessId,
+      phone_number: phone,
+      first_contact_at: now,
+      last_contact_at: now,
+      sms_opt_in: true,
+      sms_opt_in_at: now,
+    })
+    .select('id, phone_number, display_name, sms_opt_in')
+    .single();
+
+  if (insertError) {
+    // Race: row created between update and insert — retry update
+    if (/duplicate|unique/i.test(insertError.message ?? '')) {
+      const { data: retry } = await supabase
+        .from('clients')
+        .update(patch)
+        .eq('business_id', businessId)
+        .eq('phone_number', phone)
+        .select('id, phone_number, display_name, sms_opt_in')
+        .maybeSingle();
+      return retry ?? null;
+    }
+    console.warn('[smsMarketing] setClientSmsOptIn insert failed:', insertError.message, source || '');
+    return null;
+  }
+  return inserted;
+}
+
+/**
+ * Opt-in many phones from Admin (manual list). Invalid numbers are reported, not thrown.
+ * @param {Object} params
+ * @param {string} params.businessId
+ * @param {unknown} params.phones
+ * @returns {Promise<{ ok: boolean; added: number; already: number; invalid: string[]; clients: object[] }>}
+ */
+export async function addSmsOptInPhones({ businessId, phones }) {
+  const parsed = parseSmsRecipientList(phones);
+  /** @type {object[]} */
+  const clients = [];
+  let added = 0;
+  let already = 0;
+
+  for (const phone of parsed.phones) {
+    const before = await supabase
+      .from('clients')
+      .select('id, sms_opt_in')
+      .eq('business_id', businessId)
+      .eq('phone_number', phone)
+      .maybeSingle();
+    const wasIn = before.data?.sms_opt_in === true;
+    const row = await setClientSmsOptIn({
+      businessId,
+      rawPhone: phone,
+      optIn: true,
+      source: 'admin',
+    });
+    if (row) {
+      clients.push(row);
+      if (wasIn) already += 1;
+      else added += 1;
+    }
+  }
+
+  return {
+    ok: parsed.phones.length > 0 && (added + already) > 0,
+    added,
+    already,
+    invalid: parsed.invalid,
+    clients,
+  };
+}
+
+/**
+ * Revoke SMS opt-in for phones (Admin or WhatsApp stop).
+ * @param {Object} params
+ * @param {string} params.businessId
+ * @param {unknown} params.phones
+ */
+export async function removeSmsOptInPhones({ businessId, phones }) {
+  const parsed = parseSmsRecipientList(phones);
+  let removed = 0;
+  for (const phone of parsed.phones) {
+    const row = await setClientSmsOptIn({
+      businessId,
+      rawPhone: phone,
+      optIn: false,
+      source: 'admin',
+    });
+    if (row && row.sms_opt_in === false) removed += 1;
+  }
+  return { ok: true, removed, invalid: parsed.invalid };
+}
+
+/**
+ * After a confirmed booking — client joins the SMS opt-in base automatically.
+ * @param {Object} params
+ * @param {string} params.businessId
+ * @param {string} params.rawPhone
+ */
+export async function optInClientAfterBooking({ businessId, rawPhone }) {
+  return setClientSmsOptIn({
+    businessId,
+    rawPhone,
+    optIn: true,
+    source: 'booking',
+  });
 }
 
 /**

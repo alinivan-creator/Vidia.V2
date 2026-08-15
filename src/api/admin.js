@@ -33,6 +33,8 @@ import { invalidateGoogleAccessToken } from '../services/googleCalendarService.j
 import {
   sendSmsCampaign,
   listSmsOptedInClients,
+  addSmsOptInPhones,
+  removeSmsOptInPhones,
 } from '../services/smsMarketingService.js';
 import { logError } from '../db/loggerService.js';
 import {
@@ -269,6 +271,42 @@ adminRouter.delete('/businesses/:id/employees/:employeeId', async (req, res) => 
 adminRouter.get('/businesses/:id/sms-opted-in', async (req, res) => {
   const clients = await listSmsOptedInClients(req.params.id);
   res.json({ clients, count: clients.length });
+});
+
+adminRouter.post('/businesses/:id/sms-opt-in', async (req, res) => {
+  try {
+    const business = await getBusinessById(req.params.id);
+    if (!business) return res.status(404).json({ error: 'Afacere inexistentă' });
+    const phones = req.body?.phones ?? req.body?.recipients ?? '';
+    const result = await addSmsOptInPhones({ businessId: business.id, phones });
+    res.status(result.ok || result.added > 0 || result.already > 0 ? 200 : 400).json(result);
+  } catch (error) {
+    await logError({
+      message: 'POST /admin/businesses/:id/sms-opt-in failed',
+      source: 'system',
+      severity: 'error',
+      error,
+    });
+    res.status(500).json({ error: 'Eroare server' });
+  }
+});
+
+adminRouter.post('/businesses/:id/sms-opt-out', async (req, res) => {
+  try {
+    const business = await getBusinessById(req.params.id);
+    if (!business) return res.status(404).json({ error: 'Afacere inexistentă' });
+    const phones = req.body?.phones ?? req.body?.recipients ?? '';
+    const result = await removeSmsOptInPhones({ businessId: business.id, phones });
+    res.json(result);
+  } catch (error) {
+    await logError({
+      message: 'POST /admin/businesses/:id/sms-opt-out failed',
+      source: 'system',
+      severity: 'error',
+      error,
+    });
+    res.status(500).json({ error: 'Eroare server' });
+  }
 });
 
 adminRouter.post('/businesses/:id/sms-campaigns', async (req, res) => {

@@ -609,6 +609,90 @@ async function persistEmployees(businessId) {
   }
 }
 
+async function loadSmsOptInCount(businessId) {
+  const el = $('#bf-sms-optin-count');
+  const listEl = $('#bf-sms-optin-list');
+  if (!el || !businessId) return;
+  try {
+    const data = await api(`/businesses/${businessId}/sms-opted-in`, { optional: true });
+    const clients = data.clients || [];
+    el.textContent = `Clienți cu opt-in SMS: ${data.count ?? clients.length}`;
+    if (listEl) {
+      if (!clients.length) {
+        listEl.innerHTML = '<p class="text-slate-400">Niciun număr în bază încă.</p>';
+      } else {
+        listEl.innerHTML = clients
+          .slice(0, 100)
+          .map((c) => {
+            const name = c.display_name ? ` — ${esc(c.display_name)}` : '';
+            return `<div>${esc(c.phone_number || '')}${name}</div>`;
+          })
+          .join('');
+        if (clients.length > 100) {
+          listEl.innerHTML += `<div class="text-slate-400">… +${clients.length - 100} în plus</div>`;
+        }
+      }
+    }
+  } catch {
+    el.textContent = 'Clienți cu opt-in SMS: —';
+    if (listEl) listEl.innerHTML = '';
+  }
+}
+
+async function runSmsOptInAction(mode) {
+  const businessId = $('#bf-id').value;
+  const status = $('#bf-sms-optin-status');
+  const phones = ($('#bf-sms-optin-phones')?.value || '').trim();
+  if (!businessId) {
+    if (status) status.textContent = 'Salvează mai întâi afacerea.';
+    return;
+  }
+  if (!phones) {
+    if (status) status.textContent = 'Introdu cel puțin un număr.';
+    return;
+  }
+  if (status) {
+    status.textContent = mode === 'add' ? 'Se adaugă…' : 'Se scoate…';
+    status.classList.remove('text-vidia-red');
+  }
+  try {
+    const path = mode === 'add'
+      ? `/businesses/${businessId}/sms-opt-in`
+      : `/businesses/${businessId}/sms-opt-out`;
+    const result = await api(path, {
+      method: 'POST',
+      body: JSON.stringify({ phones }),
+    });
+    if (mode === 'add') {
+      const parts = [
+        `Adăugate: ${result.added ?? 0}`,
+        `deja în listă: ${result.already ?? 0}`,
+      ];
+      if (result.invalid?.length) parts.push(`invalide: ${result.invalid.length}`);
+      if (status) status.textContent = parts.join(' · ');
+      if (status) status.classList.toggle('text-vidia-red', !(result.added > 0 || result.already > 0));
+    } else {
+      const parts = [`Scoase: ${result.removed ?? 0}`];
+      if (result.invalid?.length) parts.push(`invalide: ${result.invalid.length}`);
+      if (status) status.textContent = parts.join(' · ');
+    }
+    if ($('#bf-sms-optin-phones')) $('#bf-sms-optin-phones').value = '';
+    await loadSmsOptInCount(businessId);
+  } catch (err) {
+    if (status) {
+      status.textContent = err.message || 'Operație eșuată';
+      status.classList.add('text-vidia-red');
+    }
+  }
+}
+
+$('#bf-sms-optin-add')?.addEventListener('click', () => runSmsOptInAction('add'));
+$('#bf-sms-optin-remove')?.addEventListener('click', () => runSmsOptInAction('remove'));
+$('#bf-sms-optin-refresh')?.addEventListener('click', () => {
+  const businessId = $('#bf-id').value;
+  if (businessId) loadSmsOptInCount(businessId);
+});
+
 $('#bf-sms-send')?.addEventListener('click', async () => {
   const businessId = $('#bf-id').value;
   const status = $('#bf-sms-status');
@@ -733,6 +817,9 @@ function openBusinessModal(id = null, opts = {}) {
     $('#bf-sms-recipients').value = '';
     $('#bf-sms-body').value = '';
     $('#bf-sms-status').textContent = '';
+    if ($('#bf-sms-optin-phones')) $('#bf-sms-optin-phones').value = '';
+    if ($('#bf-sms-optin-status')) $('#bf-sms-optin-status').textContent = '';
+    if ($('#bf-sms-optin-list')) $('#bf-sms-optin-list').innerHTML = '';
     $('#bf-sms-optin-count').textContent = '';
     $('#bf-journal-section').classList.remove('hidden');
     loadEmployeesForBusiness(b.id);
@@ -772,6 +859,10 @@ function openBusinessModal(id = null, opts = {}) {
     $('#bf-sms-body').value = '';
     $('#bf-sms-status').textContent = '';
     $('#bf-sms-optin-count').textContent = '';
+    if ($('#bf-sms-optin-phones')) $('#bf-sms-optin-phones').value = '';
+    if ($('#bf-sms-optin-status')) $('#bf-sms-optin-status').textContent = '';
+    if ($('#bf-sms-optin-list')) $('#bf-sms-optin-list').innerHTML = '';
+    $('#bf-sms-optin-count').textContent = '';
     $('#bf-journal-section').classList.add('hidden');
     $('#bf-journal-body').innerHTML = '';
     $('#bf-journal-stats').innerHTML = '';
@@ -802,17 +893,6 @@ function ensureAiModelOption(model) {
     opt.value = model;
     opt.textContent = model;
     sel.appendChild(opt);
-  }
-}
-
-async function loadSmsOptInCount(businessId) {
-  const el = $('#bf-sms-optin-count');
-  if (!el || !businessId) return;
-  try {
-    const data = await api(`/businesses/${businessId}/sms-opted-in`, { optional: true });
-    el.textContent = `Clienți cu opt-in SMS: ${data.count ?? (data.clients || []).length}`;
-  } catch {
-    el.textContent = 'Opt-in SMS: — (migrarea 010?)';
   }
 }
 

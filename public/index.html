@@ -351,12 +351,32 @@
         <div class="border-t border-vidia-border pt-4">
           <h4 class="text-sm font-semibold mb-1">SMS Marketing (Twilio)</h4>
           <p class="text-xs text-slate-500 mb-3">
-            Expeditorul (From) este un singur număr Twilio E.164. Destinatarii se pun în listă — câte un număr pe linie sau separați prin virgulă.
-            Clienții existenți fără opt-in (`da sms`) sunt săriți. Lista goală = toți clienții cu opt-in.
+            Baza de opt-in: (1) automat pe WhatsApp când clientul confirmă o programare,
+            (2) manual mai jos, (3) clientul poate scrie <code>da sms</code> / <code>stop sms</code>.
+            Campanie: lista goală = toți cu opt-in; cu numere = doar acele numere (fără opt-in sunt sărite).
           </p>
           <div class="mb-3">
             <label class="text-sm font-medium">Număr SMS From (expeditor Twilio, obligatoriu)</label>
             <input id="bf-sms-from" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="+407xxxxxxxx" />
+          </div>
+          <div class="mb-4 border border-vidia-border rounded-lg p-3 bg-vidia-light/40">
+            <label class="text-sm font-medium">Bază opt-in manuală</label>
+            <p class="text-xs text-slate-500 mt-1 mb-2">Adaugă sau scoate numere din lista de marketing (E.164).</p>
+            <textarea id="bf-sms-optin-phones" rows="3" class="w-full border border-vidia-border rounded-lg px-3 py-2 text-sm font-mono" placeholder="+407xxxxxxxx, +407yyyyyyyy"></textarea>
+            <div class="flex flex-wrap gap-2 mt-2">
+              <button type="button" id="bf-sms-optin-add" class="px-3 py-1.5 text-xs bg-slate-800 text-white rounded-lg hover:bg-slate-700">
+                Adaugă la opt-in
+              </button>
+              <button type="button" id="bf-sms-optin-remove" class="px-3 py-1.5 text-xs border border-vidia-border rounded-lg hover:bg-white">
+                Scoate din opt-in
+              </button>
+              <button type="button" id="bf-sms-optin-refresh" class="px-3 py-1.5 text-xs border border-vidia-border rounded-lg hover:bg-white">
+                Reîmprospătează lista
+              </button>
+            </div>
+            <p id="bf-sms-optin-status" class="text-xs text-slate-500 mt-2 whitespace-pre-wrap"></p>
+            <p id="bf-sms-optin-count" class="text-xs font-medium text-slate-700 mt-2"></p>
+            <div id="bf-sms-optin-list" class="mt-2 max-h-36 overflow-y-auto text-xs font-mono text-slate-600 space-y-0.5"></div>
           </div>
           <div class="mb-3">
             <label class="text-sm font-medium">Destinatari campanie</label>
@@ -370,7 +390,6 @@
             </button>
           </div>
           <p id="bf-sms-status" class="text-xs text-slate-500 mt-2 whitespace-pre-wrap"></p>
-          <p id="bf-sms-optin-count" class="text-xs text-slate-500 mt-1"></p>
         </div>
 
         <div class="border-t border-vidia-border pt-4">

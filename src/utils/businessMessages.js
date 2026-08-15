@@ -68,15 +68,19 @@ export function buildAiTransparencyWelcome(business) {
     : `👋 Sunt *asistentul virtual* al *${business.name}*.\n\n`;
 
   const { termsUrl, gdprUrl } = getMessagingSettings(business);
-  const legalLink = gdprUrl || termsUrl;
-  const legalLine = legalLink
-    ? `\n\n_Continuând, ești de acord cu prelucrarea datelor pentru programări. ${legalLink}_`
-    : '';
+  const legalLink = (gdprUrl || termsUrl || '').trim().replace(/\s+/g, '');
+  const policyBit = legalLink
+    ? ` în conformitate cu [politica de confidențialitate](${legalLink})`
+    : ' în conformitate cu politica de confidențialitate';
+
+  const privacyBlock =
+    `Salut! 👋 Pentru a începe conversația te informăm că prelucrăm datele tale${policyBit}.\n\n` +
+    `Prin continuarea conversației și trimiterea detaliilor, ești de acord cu acest lucru. 🔒`;
 
   return (
+    `${privacyBlock}\n\n` +
     `${disclosure}${base}` +
-    `\n\n📅 programări  ·  🕐 orar  ·  📞 contact` +
-    legalLine
+    `\n\n📅 programări  ·  🕐 orar  ·  📞 contact`
   );
 }
 
@@ -136,17 +140,13 @@ export function buildMapsInviteLine(business) {
 export function buildGdprNote(business) {
   const { termsUrl, gdprUrl } = getMessagingSettings(business);
   const link = (gdprUrl || termsUrl || '').trim().replace(/\s+/g, '');
+  const body =
+    '_🔒 Confidențialitate: folosim datele pentru această programare și pentru comunicări utile ' +
+    '(inclusiv SMS de la salon/clinică). Poți opri SMS-urile scriind *stop sms* pe WhatsApp._';
   if (link) {
-    // Mask legal URL — never dump bare URL alone under the note
-    return (
-      '_🔒 Confidențialitate (GDPR): folosim numele și telefonul doar pentru această programare._\n' +
-      `[Detalii termeni / GDPR](${link})`
-    );
+    return `${body}\n[Detalii termeni / GDPR](${link})`;
   }
-  return (
-    '_🔒 Confidențialitate (GDPR): folosim numele și telefonul doar pentru această programare. ' +
-    'Pentru detalii, scrie *contact*._'
-  );
+  return `${body}\nPentru detalii, scrie *contact*.`;
 }
 
 /**

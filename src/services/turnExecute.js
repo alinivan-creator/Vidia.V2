@@ -63,6 +63,7 @@ import { getPendingTtlMinutes } from '../config/conversationConfig.js';
 import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
 import { getBusinessContactInfo } from './contactService.js';
 import { createCallbackRequest } from '../db/callbackRequestService.js';
+import { optInClientAfterBooking } from './smsMarketingService.js';
 import { expirePendingIfNeeded } from './pendingExpiryService.js';
 import { clearPendingOffer } from './pendingOfferService.js';
 import { BOOKING_PREFIXES, MOD_PREFIX } from './flowIds.js';
@@ -887,6 +888,10 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
     googleEventLink: result.htmlLink,
     context: { ...draft.conversation_context, step: 'confirmed' },
     requestId,
+  });
+  await optInClientAfterBooking({
+    businessId: business.id,
+    rawPhone: recipientPhone,
   });
   await resetConversationState({
     businessId: business.id,

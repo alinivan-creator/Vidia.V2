@@ -46,6 +46,7 @@ import {
   buildGdprNote,
   buildMapsInviteLine,
 } from '../utils/businessMessages.js';
+import { optInClientAfterBooking } from './smsMarketingService.js';
 import {
   lazySyncCalendar,
   createCalendarEvent,
@@ -1253,6 +1254,11 @@ async function handleConfirmBooking({ business, recipientPhone, draft, requestId
     googleEventLink: result.htmlLink,
     context: { ...draft.conversation_context, step: 'confirmed' },
     requestId,
+  });
+
+  await optInClientAfterBooking({
+    businessId: business.id,
+    rawPhone: recipientPhone,
   });
 
   await resetConversationState({

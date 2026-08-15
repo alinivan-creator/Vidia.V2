@@ -90,6 +90,13 @@ Fișiere cheie: `public/admin.js`, `src/db/adminService.js`, `src/utils/datetime
 
 ---
 
-## Concluzie
+## SMS opt-in (bază clienți)
 
-Motorul e multi-tenant; Admin e sursa de adevăr. Salon + clinică în paralel: număr unic, catalog corect, ore setate, fapte FAQ.
+| Canal | Cum |
+|-------|-----|
+| WhatsApp automat | La **confirmarea programării** clientul intră în opt-in SMS |
+| WhatsApp manual | Clientul scrie `da sms` / `stop sms` |
+| Admin manual | Secțiunea SMS → „Bază opt-in manuală” (adaugă / scoate numere) |
+
+Welcome WhatsApp include consimțământul GDPR la începutul conversației. După programare, nota GDPR menționează și SMS + `stop sms`.
+
