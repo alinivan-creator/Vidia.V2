@@ -227,17 +227,20 @@ export async function sweepStalePendingForPhone({
   if (pickerUnstuck.unstuck) {
     conv = pickerUnstuck.conv;
     draft = pickerUnstuck.draft;
+    expired = true;
   }
 
-  return { draft, conv, expired, lastIntent };
+  return { draft, conv, expired, lastIntent, idleExpired: pickerUnstuck.unstuck === true };
 }
 
-/** Idle picker (service/employee/slot) older than this is treated as a new conversation. */
-const STALE_PICKER_MS = 30 * 60 * 1000;
+/** Idle picker (service/date/slot) uses the same TTL as pending holds (default 5 min). */
+function stalePickerMs(business) {
+  return Math.max(1, getPendingTtlMinutes(business)) * 60 * 1000;
+}
 
 /**
- * CHOOSING_SERVICE left overnight (or after a Vercel isolate drop) must not
- * swallow the next "salut" / question without a reply.
+ * CHOOSING_SERVICE / waiting_for_* left idle longer than pending TTL must not
+ * resume as if the client never left — cancel draft and reset to IDLE.
  */
 async function unstickStaleBookingPicker({
   business,
@@ -265,16 +268,19 @@ async function unstickStaleBookingPicker({
     return { unstuck: false, conv, draft };
   }
 
+  const ttlMs = stalePickerMs(business);
   const convAge = conv?.updated_at ? Date.now() - new Date(conv.updated_at).getTime() : Number.POSITIVE_INFINITY;
   const draftAge = draft?.updated_at ? Date.now() - new Date(draft.updated_at).getTime() : 0;
-  const stale = convAge >= STALE_PICKER_MS || draftAge >= STALE_PICKER_MS;
+  const stale = convAge >= ttlMs || draftAge >= ttlMs;
   if (!stale) {
     return { unstuck: false, conv, draft };
   }
 
-  console.log('[webhook] Unstick stale booking picker', {
+  console.log('[webhook] Cancel stale booking conversation (idle TTL)', {
     step,
     convAgeMs: convAge,
+    draftAgeMs: draftAge,
+    ttlMs,
     draftState: draft?.state ?? null,
   });
 
@@ -282,7 +288,7 @@ async function unstickStaleBookingPicker({
     await cancelActiveDraftsForPhone({
       businessId: business.id,
       rawPhone,
-      context: { step: 'unstuck_stale_picker' },
+      context: { step: 'cancelled_idle_ttl', idle_ms: Math.max(convAge, draftAge) },
       requestId,
     });
   }
@@ -290,6 +296,10 @@ async function unstickStaleBookingPicker({
   const preserved = { ...(conv.context_data ?? {}) };
   delete preserved.draft_id;
   delete preserved.awaiting_name;
+  delete preserved.booking_wait;
+  delete preserved.pending_date_text;
+  delete preserved.pending_time_text;
+  delete preserved.pending_service_id;
   const updated = await setConversationStep({
     businessId: business.id,
     rawPhone,
@@ -298,6 +308,7 @@ async function unstickStaleBookingPicker({
       last_booking_intent: preserved.last_booking_intent ?? null,
       recent_turns: preserved.recent_turns ?? [],
       last_menu: null,
+      idle_expired_at: new Date().toISOString(),
     },
     mergeContext: false,
     requestId,

@@ -20,6 +20,7 @@ import {
   sendTypingIndicator,
   sendTextMessage,
   sendTechnicalFallbackMessage,
+  clearRememberedMenuOptions,
 } from '../services/whatsappService.js';
 import { toE164, toMetaPhone } from '../utils/phone.js';
 import { debugLog } from '../utils/debugLog.js';
@@ -249,11 +250,25 @@ async function processTwilioWebhook(body, requestId) {
     let activeDraft = swept.draft;
     const expiry = { expired: swept.expired, lastIntent: swept.lastIntent };
 
+    if (swept.idleExpired) {
+      clearRememberedMenuOptions(business.id, recipientPhone);
+      const ttlMin = Number(business?.booking_settings?.pending_ttl_minutes) || 5;
+      await sendTextMessage({
+        business,
+        recipientPhone,
+        requestId,
+        text:
+          `⏱️ Sesiunea de programare a expirat (${ttlMin} min fără răspuns) și a fost anulată.\n` +
+          `Scrie *programare* sau *1* ca să începi din nou.`,
+      });
+    }
+
     console.log('[webhook] Conversation state:', {
       step: convState.current_step,
       contextKeys: Object.keys(convState.context_data ?? {}),
       isNewClient: isNew,
       pendingSwept: swept.expired,
+      idleExpired: Boolean(swept.idleExpired),
     });
 
     if (textBody.trim()) {
