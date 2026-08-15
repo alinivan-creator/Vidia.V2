@@ -203,10 +203,17 @@ export function looksLikeNewBookingRequest(text) {
     return true;
   }
   if (/\b(sa ma programez|programeaza-ma|programeaza ma|o programare noua)\b/.test(n)) return true;
-  if (/\b(vreau|as vrea|doresc|hai)\b/.test(n) && /\b(programar|rezervar)/.test(n)) {
+  if (/\b(vreau|as vrea|doresc|hai|fac|face|faceti)\b/.test(n) && /\b(programar|rezervar)/.test(n)) {
     return true;
   }
   if (/\b(programez|programeaza)\b/.test(n) && !/\b(ce|care|am uitat)\b/.test(n)) return true;
+  if (
+    /\b(tuns|tunde|tundeti|tunsoare|barba|aranjat|aranjati|aranjez)\b/.test(n)
+    && !/\b(pret|preturi|cost|cat costa|tarif|orar|orele|durata|cat dureaza)\b/.test(n)
+    && !(/\bprogram\b/.test(n) && !/\bprogramar/.test(n))
+  ) {
+    return true;
+  }
   if (
     looksLikeDatetimeOrSlot(n)
     && /\b(la|ora|vreau|as vrea|doresc|hai|tuns|programar|rezervar)\b/.test(n)

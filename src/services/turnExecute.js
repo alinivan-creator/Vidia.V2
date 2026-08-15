@@ -106,14 +106,20 @@ function catalogDuration(business, service) {
   return resolveServiceDurationMinutes(business, service);
 }
 
-export function hydrateExtract(extract, convState, timezone) {
-  const ctx = convState?.context_data || {};
-  const next = { ...extract };
-  const freshMenuStart = extract.source === 'menu'
+function isFreshMenuStart(extract) {
+  return extract?.source === 'menu'
     && !extract.date_text
     && !extract.time_text
     && !extract.datetime
-    && !extract.slot_id;
+    && !extract.slot_id
+    && !extract.service_id
+    && !extract.service_name;
+}
+
+export function hydrateExtract(extract, convState, timezone) {
+  const ctx = convState?.context_data || {};
+  const next = { ...extract };
+  const freshMenuStart = isFreshMenuStart(extract);
   if (freshMenuStart) {
     next.date_text = null;
     next.time_text = null;
@@ -154,11 +160,7 @@ export function hydrateExtract(extract, convState, timezone) {
 async function persistPendingExtract({ business, recipientPhone, extract, requestId }) {
   /** @type {Record<string, unknown>} */
   const context = {};
-  const freshMenuStart = extract.source === 'menu'
-    && !extract.date_text
-    && !extract.time_text
-    && !extract.datetime
-    && !extract.slot_id;
+  const freshMenuStart = isFreshMenuStart(extract);
   if (freshMenuStart) {
     context.pending_date_text = null;
     context.pending_time_text = null;
@@ -1917,13 +1919,7 @@ async function runBookingMachine(params) {
   const namedThisTurn = Boolean(extract.service_id || extract.service_name);
   const keepLeftoverService = namedThisTurn
     || sessionKeepsChosenService(mapSessionState(convState?.current_step));
-  if (
-    extract.source === 'menu'
-    && !extract.date_text
-    && !extract.time_text
-    && !extract.slot_id
-    && !extract.service_id
-  ) {
+  if (isFreshMenuStart(extract)) {
     draft = {
       ...draft,
       date: null,

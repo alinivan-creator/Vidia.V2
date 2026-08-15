@@ -759,11 +759,16 @@ export async function extractTurnIntent({
       });
     }
   }
-  if (wait === BOOKING_WAIT.SERVICE && !looksLikeDatetimeOrSlot(textBody)) {
+  if (!looksLikeExistingAppointmentQuery(textBody)
+    && triage.intent !== 'faq'
+    && triage.intent !== 'contact'
+    && triage.intent !== 'cancel'
+    && !looksLikeDatetimeOrSlot(textBody)
+  ) {
     const named = matchServiceMention(textBody, services);
     if (named) {
       return emptyExtract({
-        action: 'select_service',
+        action: wait === BOOKING_WAIT.SERVICE ? 'select_service' : 'book',
         service_id: named.id,
         service_name: named.name,
         confidence: 'high',
@@ -843,6 +848,7 @@ export async function extractTurnIntent({
       || extract.datetime
       || extract.date_text
       || extract.time_text
+      || extract.service_id
       || looksLikeDatetimeOrSlot(textBody)
     ) {
       extract.action = inModify ? 'reschedule' : 'book';

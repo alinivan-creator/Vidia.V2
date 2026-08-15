@@ -59,6 +59,42 @@ const BUSINESS = {
   services: [{ id: 'svc-tuns', name: 'Tuns', duration_minutes: 30, price_ron: 80 }],
 };
 
+const SALON_SERVICES = [
+  { id: 'svc-clasic', name: 'Tuns Clasic', duration_minutes: 30 },
+  { id: 'svc-combo', name: 'Tuns + Barba', duration_minutes: 45 },
+  { id: 'svc-aranjat', name: 'Aranjat Barba', duration_minutes: 20 },
+];
+const SALON = {
+  ...BUSINESS,
+  services: SALON_SERVICES,
+  booking_settings: { ...BUSINESS.booking_settings, services: SALON_SERVICES },
+};
+const ENTRY_MENU = {
+  kind: 'entry',
+  options: [
+    { id: 'book', title: 'Programare' },
+    { id: 'info', title: 'Detalii & Prețuri' },
+    { id: 'contact', title: 'Contact & Locație' },
+  ],
+};
+
+function afterHydrateReduce(extract, convState, text = '') {
+  const hydrated = hydrateExtract(extract, convState, TZ);
+  const reduced = reduceBookingTurn({
+    state: convState.current_step === 'waiting_for_service'
+      ? SESSION_STATES.WAITING_FOR_SERVICE
+      : SESSION_STATES.INIT,
+    draft: emptyDraft(convState.context_data?.draft_booking),
+    text,
+    timezone: TZ,
+    extractDate: hydrated.date_text,
+    extractTime: hydrated.time_text,
+    extractServiceId: hydrated.service_id,
+    extractServiceName: hydrated.service_name,
+  });
+  return { hydrated, reduced };
+}
+
 function hoursCheck(dateKey, hhmm) {
   const start = localToUtc(dateKey, hhmm, TZ);
   const end = new Date(start.getTime() + 30 * 60 * 1000);
@@ -365,6 +401,70 @@ describe('real booking journeys', () => {
       ],
     });
     assert.match(presented, /Tuns \+ Barba \(60 min\)/);
+  });
+
+  it('Salut → 1 → 1 keeps Tuns Clasic and asks for the slot, not the service again', () => {
+    const start = resolveDeterministicInbound({
+      textBody: '1',
+      lastMenu: ENTRY_MENU,
+      wait: null,
+      timezone: TZ,
+      business: SALON,
+    });
+    assert.equal(start.action, 'book');
+    const first = afterHydrateReduce(start, { current_step: 'IDLE', context_data: {} }, '1');
+    assert.equal(first.hydrated.service_id, null);
+    assert.equal(first.reduced.action, MACHINE_ACTIONS.ACTION_ASK_SERVICE);
+
+    const pick = resolveDeterministicInbound({
+      textBody: '1',
+      lastMenu: {
+        kind: 'service',
+        options: SALON_SERVICES.map((s) => ({ id: `svc_${s.id}`, title: s.name })),
+      },
+      wait: BOOKING_WAIT.SERVICE,
+      timezone: TZ,
+      business: SALON,
+    });
+    assert.equal(pick.action, 'select_service');
+    assert.equal(pick.service_id, 'svc-clasic');
+    const second = afterHydrateReduce(
+      pick,
+      {
+        current_step: 'waiting_for_service',
+        context_data: { draft_booking: {}, last_menu: { kind: 'service' } },
+      },
+      '1',
+    );
+    assert.equal(second.hydrated.service_id, 'svc-clasic', 'hydrate must not wipe the chosen service');
+    assert.equal(second.reduced.action, MACHINE_ACTIONS.ACTION_ASK_DATE_TIME);
+    assert.equal(second.reduced.draft.service_id, 'svc-clasic');
+  });
+
+  it('first-message intents: greeting+book, hours, and beard wording', () => {
+    assert.equal(triageUserIntent('Salut, vreau sa fac o programare').intent, 'book');
+    assert.equal(looksLikeGreeting('Salut, vreau sa fac o programare'), false);
+    assert.equal(looksLikeNewBookingRequest('Salut, vreau sa fac o programare'), true);
+
+    assert.equal(triageUserIntent('ce program aveti').intent, 'faq');
+    assert.equal(looksLikeNewBookingRequest('ce program aveti'), false);
+
+    assert.equal(matchServiceMention('tundeti si barba', SALON_SERVICES)?.id, 'svc-combo');
+    assert.equal(matchServiceMention('aranjati barba', SALON_SERVICES)?.id, 'svc-aranjat');
+    assert.equal(matchServiceMention('tuns clasic', SALON_SERVICES)?.id, 'svc-clasic');
+    assert.equal(matchServiceMention('faceti si barba', SALON_SERVICES), null);
+
+    const named = matchServiceMention('tundeti si barba', SALON_SERVICES);
+    const fromName = reduceBookingTurn({
+      state: SESSION_STATES.INIT,
+      draft: emptyDraft(),
+      text: 'tundeti si barba',
+      timezone: TZ,
+      extractServiceId: named.id,
+      extractServiceName: named.name,
+    });
+    assert.equal(fromName.action, MACHINE_ACTIONS.ACTION_ASK_DATE_TIME);
+    assert.equal(fromName.draft.service_id, 'svc-combo');
   });
 
   it('client-facing copy stays human', () => {

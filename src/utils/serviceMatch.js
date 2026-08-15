@@ -4,6 +4,12 @@
  * must come from a service the client actually chose.
  */
 
+const ALIAS_GROUPS = [
+  ['tuns', 'tunde', 'tundeti', 'tunsoare', 'tunsu'],
+  ['barba', 'barbierit', 'barbier'],
+  ['aranj', 'aranjat', 'aranjati', 'aranjez', 'aranjezi', 'aranjeaza'],
+];
+
 function normalize(text) {
   return String(text ?? '')
     .toLowerCase()
@@ -15,6 +21,26 @@ function normalize(text) {
 
 function nameTokens(name) {
   return normalize(name).split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
+}
+
+function stemToken(token) {
+  const t = normalize(token);
+  for (const group of ALIAS_GROUPS) {
+    if (group.some((g) => t === g || t.startsWith(g) || (g.startsWith(t) && t.length >= 4))) {
+      return group[0];
+    }
+  }
+  return t;
+}
+
+function scoreService(userStems, service) {
+  const name = normalize(service.name);
+  const parts = nameTokens(service.name).map(stemToken);
+  let score = 0;
+  for (const stem of userStems) {
+    if (name === stem || parts.includes(stem) || name.includes(stem)) score += 1;
+  }
+  return score;
 }
 
 /**
@@ -41,20 +67,17 @@ export function matchServiceMention(text, services) {
 
   const tokens = n.split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
   if (!tokens.length) return null;
+  const userStems = [...new Set(tokens.map(stemToken))];
 
-  const hits = list.filter((s) => {
-    const name = normalize(s.name);
-    const parts = nameTokens(s.name);
-    return tokens.some((t) => name === t || parts.includes(t) || name.includes(t));
-  });
-  if (hits.length === 1) return hits[0];
-  if (hits.length > 1) {
-    const distinctive = hits.filter((s) => {
-      const parts = nameTokens(s.name);
-      return tokens.some((t) => parts.includes(t) && !hits.every((h) => nameTokens(h.name).includes(t)));
-    });
-    if (distinctive.length === 1) return distinctive[0];
-  }
+  /** @type {{ service: { id: string, name: string }, score: number }[]} */
+  const ranked = list
+    .map((service) => ({ service, score: scoreService(userStems, service) }))
+    .filter((row) => row.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  if (!ranked.length) return null;
+  if (ranked.length === 1) return ranked[0].service;
+  if (ranked[0].score > ranked[1].score) return ranked[0].service;
   return null;
 }
 
