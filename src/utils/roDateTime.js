@@ -288,6 +288,10 @@ function parseRelativeDate(normalized, timezone, now) {
     return addCalendarDays(today, 2);
   }
   if (/\bmaine\b/.test(normalized) || /\btomorrow\b/.test(normalized)) return addCalendarDays(today, 1);
+  if (/\balaltaieri\b/.test(normalized) || /\bday before yesterday\b/.test(normalized)) {
+    return addCalendarDays(today, -2);
+  }
+  if (/\bieri\b/.test(normalized) || /\byesterday\b/.test(normalized)) return addCalendarDays(today, -1);
   if (/\bazi\b/.test(normalized) || /\btoday\b/.test(normalized)) return today;
 
   const dayName = Object.keys(WEEKDAY_MAP)
@@ -313,6 +317,12 @@ function parseTimeFromText(normalized, meridian, dayHours = null) {
   const clock = normalized.match(/\b(\d{1,2})[:.,](\d{2})\b/);
   if (clock) {
     return formatParsedClock(Number(clock[1]), Number(clock[2]), meridian, dayHours);
+  }
+
+  const spacedClock = normalized.match(/\b(?:la|ora|at)\s+(\d{1,2})\s+(\d{2})\b/)
+    || normalized.match(/^(\d{1,2})\s+(\d{2})$/);
+  if (spacedClock) {
+    return formatParsedClock(Number(spacedClock[1]), Number(spacedClock[2]), meridian, dayHours);
   }
 
   const faraSfert = normalized.match(/\b(?:la|ora)?\s*(\d{1,2})\s+fara\s+(?:un\s+)?sfert\b/);

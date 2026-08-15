@@ -156,7 +156,7 @@ function explicitField(normalized) {
     || normalized.match(/\b(\d{1,2})[:.,](\d{2})\b/);
   const dateHit = normalized.match(/\b(?:data(?:\s+de)?|ziua(?:\s+de)?|pe|on(?:\s+the)?)\s+(\d{1,2})\b/);
   const hasTimeWords = /\b(ora|dimineata|dupa[\s-]*amiaza|seara)\b/.test(normalized);
-  const hasDateWords = /\b(data|ziua|luni|marti|miercuri|joi|vineri|sambata|duminica|aug|ian|feb|mar|apr|mai|iun|iul|sep|oct|nov|dec)\b/.test(normalized);
+  const hasDateWords = /\b(data|ziua|luni|marti|miercuri|joi|vineri|sambata|duminica|maine|azi|poimaine|ieri|alaltaieri|today|tomorrow|yesterday|monday|tuesday|wednesday|thursday|friday|saturday|sunday|aug|ian|feb|mar|apr|mai|iun|iul|sep|oct|nov|dec)\b/.test(normalized);
 
   if (hasTimeWords && !hasDateWords && timeHit) return 'time';
   if (hasDateWords && !hasTimeWords && (dateHit || /\b\d{1,2}\s+(ian|feb|mar|apr|mai|iun|iul|aug|sep|oct|nov|dec)/.test(normalized))) {
@@ -193,6 +193,7 @@ function canBeDay(n) {
  * @param {string | null} params.wait
  * @param {string} params.timezone
  * @param {string | null} [params.pendingDateKey]
+ * @param {Date} [params.now]
  * @returns {{
  *   kind: 'none' | 'date' | 'time' | 'datetime' | 'ambiguous' | 'clarification_date' | 'clarification_time',
  *   value?: number,
@@ -209,6 +210,7 @@ export function interpretNumericFreeText({
   timezone,
   pendingDateKey = null,
   dayHours = null,
+  now = new Date(),
 }) {
   const normalized = normalize(text);
   if (!normalized) return { kind: 'none' };
@@ -222,14 +224,18 @@ export function interpretNumericFreeText({
     }
   }
 
-  const spoken = parseRomanianDateTimeParts(text, timezone, new Date(), { dayHours });
-  const hasClockMinutes = /\b\d{1,2}[:.,]\d{2}\b/.test(normalized);
+  const spoken = parseRomanianDateTimeParts(text, timezone, now, { dayHours });
+  if (spoken.dateKey && spoken.timeHHmm) {
+    return { kind: 'datetime', dateKey: spoken.dateKey, timeHHmm: spoken.timeHHmm };
+  }
+  if (spoken.dateKey && !spoken.timeHHmm) {
+    return { kind: 'date', dateKey: spoken.dateKey };
+  }
+  const hasClockMinutes = /\b\d{1,2}[:.,]\d{2}\b/.test(normalized)
+    || /\b(?:la|ora|at)\s+\d{1,2}\s+\d{2}\b/.test(normalized);
   const hasColloquial = /\b(jumatate|jumate|juma|sfer(?:t)?|fara)\b/.test(normalized)
     || /\b\d{1,2}\s+si\s+\d{1,2}\b/.test(normalized);
   if (spoken.timeHHmm && (hasClockMinutes || hasColloquial)) {
-    if (spoken.dateKey) {
-      return { kind: 'none' };
-    }
     return { kind: 'time', timeHHmm: spoken.timeHHmm };
   }
 
@@ -249,7 +255,7 @@ export function interpretNumericFreeText({
       kind: 'date',
       value,
       rejected,
-      dateKey: dateKeyFromDayNumber(value, timezone, pendingDateKey),
+      dateKey: dateKeyFromDayNumber(value, timezone, pendingDateKey, now),
     };
   }
 
@@ -261,7 +267,7 @@ export function interpretNumericFreeText({
       kind: 'date',
       value,
       rejected,
-      dateKey: dateKeyFromDayNumber(value, timezone, pendingDateKey),
+      dateKey: dateKeyFromDayNumber(value, timezone, pendingDateKey, now),
     };
   }
   if (wait === BOOKING_WAIT.CONFIRMATION && canBeHour(value) && (correction || lone != null)) {
@@ -270,8 +276,7 @@ export function interpretNumericFreeText({
   if (
     wait === BOOKING_WAIT.DATE_TIME
     && canBeHour(value)
-    && (correction || lone != null)
-    && pendingDateKey
+    && lone != null
   ) {
     return { kind: 'time', value, rejected, timeHHmm: timeFromHourNumber(value, timezone, dayHours) };
   }
@@ -287,7 +292,7 @@ export function interpretNumericFreeText({
       kind: 'ambiguous',
       value,
       rejected,
-      dateKey: dateKeyFromDayNumber(value, timezone, pendingDateKey),
+      dateKey: dateKeyFromDayNumber(value, timezone, pendingDateKey, now),
       timeHHmm: timeFromHourNumber(value, timezone, dayHours),
       dateLabel: String(value),
       timeLabel: String(value),
@@ -301,7 +306,7 @@ export function interpretNumericFreeText({
       kind: 'date',
       value,
       rejected,
-      dateKey: dateKeyFromDayNumber(value, timezone, pendingDateKey),
+      dateKey: dateKeyFromDayNumber(value, timezone, pendingDateKey, now),
     };
   }
   return { kind: 'none' };

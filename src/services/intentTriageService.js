@@ -98,7 +98,7 @@ export function looksLikeDatetimeOrSlot(text) {
   if (looksLikeOffTopicChat(n)) return false;
   const days = [
     'luni', 'marti', 'miercuri', 'joi', 'vineri', 'sambata', 'duminica',
-    'maine', 'azi', 'poimaine', 'today', 'tomorrow',
+    'maine', 'azi', 'poimaine', 'ieri', 'alaltaieri', 'today', 'tomorrow', 'yesterday',
     'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
   ];
   if (days.some((d) => n.includes(d))) return true;

@@ -17,8 +17,10 @@ import {
   looksLikeNewBookingRequest,
   triageUserIntent,
 } from '../src/services/intentTriageService.js';
-import { looksLikePersonName, recoverSoftParserIntent, resolveExplicitSlot } from '../src/services/turnExtract.js';
+import { looksLikePersonName, recoverSoftParserIntent, resolveExplicitSlot, resolveDeterministicInbound } from '../src/services/turnExtract.js';
 import { BOOKING_WAIT, interpretNumericFreeText } from '../src/services/bookingWaitState.js';
+import { assertWithinWorkingHours } from '../src/utils/workingHours.js';
+import { localToUtc } from '../src/utils/datetime.js';
 
 const TZ = 'Europe/Bucharest';
 const HOURS_09_18 = { open: '09:00', close: '18:00' };
@@ -316,5 +318,122 @@ describe('slot overlap grace (5 minutes)', () => {
     const end = new Date('2026-08-17T09:15:00.000Z');
     assert.equal(intervalOverlapMinutes(start, end, existingStart, existingEnd), 15);
     assert.equal(intervalsOverlap(start, end, existingStart, existingEnd), true);
+  });
+});
+
+describe('clock, relative days, and no past bookings (Saturday 15 Aug 2026)', () => {
+  const hours = { dayHours: HOURS_09_18 };
+  const SUNDAY = '2026-08-16';
+  const SATURDAY_CLOSED = {
+    name: 'Salon',
+    timezone: TZ,
+    services: [
+      { id: 'svc-clasic', name: 'Tuns Clasic', duration_minutes: 30 },
+      { id: 'svc-combo', name: 'Tuns + Barba', duration_minutes: 45 },
+      { id: 'svc-aranjat', name: 'Aranjat Barba', duration_minutes: 20 },
+    ],
+    booking_settings: {
+      services: [
+        { id: 'svc-clasic', name: 'Tuns Clasic', duration_minutes: 30 },
+        { id: 'svc-combo', name: 'Tuns + Barba', duration_minutes: 45 },
+        { id: 'svc-aranjat', name: 'Aranjat Barba', duration_minutes: 20 },
+      ],
+      business_hours: {
+        '0': null,
+        '1': HOURS_09_18,
+        '2': HOURS_09_18,
+        '3': HOURS_09_18,
+        '4': HOURS_09_18,
+        '5': HOURS_09_18,
+        '6': null,
+      },
+    },
+  };
+  const SERVICE_MENU = {
+    kind: 'service',
+    options: [
+      { id: 'svc_svc-clasic', title: 'Tuns Clasic' },
+      { id: 'svc_svc-combo', title: 'Tuns + Barba' },
+      { id: 'svc_svc-aranjat', title: 'Aranjat Barba' },
+    ],
+  };
+
+  it('Maine la 12 is Sunday 16 Aug 12:00, never Saturday', () => {
+    const parsed = parseRomanianDateTimeParts('Maine la 12', TZ, SATURDAY, hours);
+    assert.equal(parsed.dateKey, SUNDAY);
+    assert.equal(parsed.timeHHmm, '12:00');
+
+    const numeric = interpretNumericFreeText({
+      text: 'Maine la 12',
+      wait: BOOKING_WAIT.DATE,
+      timezone: TZ,
+      dayHours: HOURS_09_18,
+      now: SATURDAY,
+    });
+    assert.equal(numeric.kind, 'datetime');
+    assert.equal(numeric.dateKey, SUNDAY);
+    assert.equal(numeric.timeHHmm, '12:00');
+  });
+
+  it('poimâine / ieri / alaltăieri offset from today', () => {
+    assert.equal(parseRomanianDateTimeParts('poimaine', TZ, SATURDAY, hours).dateKey, '2026-08-17');
+    assert.equal(parseRomanianDateTimeParts('ieri', TZ, SATURDAY, hours).dateKey, '2026-08-14');
+    assert.equal(parseRomanianDateTimeParts('alaltaieri', TZ, SATURDAY, hours).dateKey, '2026-08-13');
+    assert.equal(parseRomanianDateTimeParts('azi', TZ, SATURDAY, hours).dateKey, '2026-08-15');
+  });
+
+  it('Luni la 12 30 is Monday 12:30 without a colon', () => {
+    const parsed = parseRomanianDateTimeParts('Luni la 12 30', TZ, SATURDAY, hours);
+    assert.equal(parsed.dateKey, MONDAY);
+    assert.equal(parsed.timeHHmm, '12:30');
+  });
+
+  it('closed-day message for Maine uses Sunday, not Saturday', () => {
+    const start = localToUtc(SUNDAY, '12:00', TZ);
+    const end = new Date(start.getTime() + 20 * 60_000);
+    const check = assertWithinWorkingHours(SATURDAY_CLOSED, start, end, 'ro', SATURDAY);
+    assert.equal(check.ok, false);
+    assert.equal(check.reason, 'closed');
+    assert.match(check.message, /Duminică/);
+    assert.doesNotMatch(check.message, /Sâmbătă/);
+  });
+
+  it('rejects ieri, alaltăieri, and azi morning after afternoon now', () => {
+    const ieri = localToUtc('2026-08-14', '12:00', TZ);
+    const ieriCheck = assertWithinWorkingHours(
+      SATURDAY_CLOSED,
+      ieri,
+      new Date(ieri.getTime() + 30 * 60_000),
+      'ro',
+      SATURDAY,
+    );
+    assert.equal(ieriCheck.reason, 'past');
+
+    const morning = localToUtc('2026-08-15', '10:00', TZ);
+    const morningCheck = assertWithinWorkingHours(
+      SATURDAY_CLOSED,
+      morning,
+      new Date(morning.getTime() + 30 * 60_000),
+      'ro',
+      SATURDAY,
+    );
+    assert.equal(morningCheck.reason, 'past');
+  });
+
+  it('while asking for date/time, 3 is 15:00 not Aranjat Barba', () => {
+    const extracted = resolveDeterministicInbound({
+      textBody: '3',
+      lastMenu: SERVICE_MENU,
+      wait: BOOKING_WAIT.DATE_TIME,
+      timezone: TZ,
+      business: SATURDAY_CLOSED,
+      dayHours: HOURS_09_18,
+      now: SATURDAY,
+    });
+    assert.equal(extracted.action, 'book');
+    assert.equal(extracted.service_id, null);
+    assert.equal(extracted.service_name, null);
+    assert.equal(extracted.time_text, '15:00');
+    assert.notEqual(extracted.service_name, 'Aranjat Barba');
   });
 });

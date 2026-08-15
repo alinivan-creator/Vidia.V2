@@ -253,6 +253,7 @@ function extractFromChoiceId(choiceId, base, business) {
  * @param {Business} params.business
  * @param {boolean} [params.inModify]
  * @param {{ open?: string, close?: string } | null} [params.dayHours]
+ * @param {Date} [params.now]
  * @returns {TurnExtract | null}
  */
 export function resolveDeterministicInbound({
@@ -264,6 +265,7 @@ export function resolveDeterministicInbound({
   business,
   inModify = false,
   dayHours = null,
+  now = new Date(),
 }) {
   const loneNumber = /^\d{1,2}$/.test(String(textBody ?? '').trim());
   if (wait === BOOKING_WAIT.SERVICE && loneNumber) {
@@ -290,13 +292,6 @@ export function resolveDeterministicInbound({
       });
     }
   }
-  const entryFallback = (business.menu_buttons || []).slice(0, 3).map((btn) => ({
-    id: btn.id,
-    title: String(btn.label || btn.title || ''),
-  }));
-  const choiceMenu = lastMenu?.options?.length
-    ? lastMenu
-    : (entryFallback.length ? { kind: 'entry', options: entryFallback } : null);
   if (
     wait === BOOKING_WAIT.CONFIRMATION
     && lastMenu?.kind === 'confirm'
@@ -306,13 +301,33 @@ export function resolveDeterministicInbound({
     const choiceId = resolveNumberedChoice(textBody, lastMenu.options);
     if (choiceId) return extractFromChoiceId(choiceId, {}, business);
   }
+  if (!wait && loneNumber) {
+    const entryOptions = lastMenu?.kind === 'entry' && lastMenu.options?.length
+      ? lastMenu.options
+      : (business.menu_buttons || []).map((btn) => ({ id: btn.id, title: btn.label }));
+    if (entryOptions.length) {
+      const choiceId = resolveNumberedChoice(textBody, entryOptions);
+      if (choiceId) return extractFromChoiceId(choiceId, {}, business);
+      const idx = Number(String(textBody).trim()) - 1;
+      const buttons = business.menu_buttons || [];
+      if (idx >= 0 && idx < buttons.length) {
+        return extractFromChoiceId(buttons[idx].id, {}, business);
+      }
+    }
+  }
+  const slotMenu = lastMenu?.kind && lastMenu.kind !== 'service' && lastMenu.kind !== 'entry'
+    ? lastMenu
+    : null;
   if (
     wait !== BOOKING_WAIT.SERVICE
     && wait !== BOOKING_WAIT.CONFIRMATION
-    && choiceMenu?.options?.length
+    && wait !== BOOKING_WAIT.DATE
+    && wait !== BOOKING_WAIT.TIME
+    && wait !== BOOKING_WAIT.DATE_TIME
+    && slotMenu?.options?.length
     && loneNumber
   ) {
-    const choiceId = resolveNumberedChoice(textBody, choiceMenu.options);
+    const choiceId = resolveNumberedChoice(textBody, slotMenu.options);
     if (choiceId) return extractFromChoiceId(choiceId, {}, business);
   }
 
@@ -322,6 +337,7 @@ export function resolveDeterministicInbound({
     timezone,
     pendingDateKey,
     dayHours,
+    now,
   });
   if (numeric.kind === 'ambiguous') {
     return emptyExtract({
@@ -340,10 +356,13 @@ export function resolveDeterministicInbound({
     });
   }
   if (numeric.kind === 'date' || numeric.kind === 'time' || numeric.kind === 'datetime') {
+    const named = matchServiceMention(textBody, getBookingConfig(business).services);
     return emptyExtract({
       action: inModify ? 'reschedule' : 'book',
       date_text: numeric.kind === 'time' ? null : numeric.dateKey,
       time_text: numeric.kind === 'date' ? null : numeric.timeHHmm,
+      service_id: named?.id ?? null,
+      service_name: named?.name ?? null,
       confidence: 'high',
       source: 'state',
     });
@@ -448,6 +467,7 @@ function mapExtractionToTurnExtract(parsed, { textBody, isPendingHold, inModify,
     text: textBody,
     wait,
     timezone,
+    now: new Date(),
   });
 
   if (parsed.is_ambiguous) {
@@ -572,7 +592,7 @@ function applyCatalogMatches(extract, textBody, services, employees, timezone, o
  */
 function textHasExplicitDay(text) {
   const n = normalize(text);
-  return /\b(luni|marti|miercuri|joi|vineri|sambata|duminica|maine|azi|poimaine|monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow)\b/.test(n)
+  return /\b(luni|marti|miercuri|joi|vineri|sambata|duminica|maine|azi|poimaine|ieri|alaltaieri|monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|yesterday)\b/.test(n)
     || /\b\d{1,2}\s*(ian|feb|mar|apr|mai|iun|iul|aug|sep|oct|nov|dec)/.test(n)
     || /\b(?:pe|on(?:\s+the)?)\s+\d{1,2}/.test(n);
 }
@@ -636,11 +656,12 @@ export async function extractTurnIntent({
   const services = getBookingConfig(business).services;
   const employees = await listEmployees(business.id, { activeOnly: true });
   const tz = business.timezone;
+  const now = new Date();
   const wait = getBookingWait(convState);
   const pendingDateKey = typeof convState.context_data?.pending_date_text === 'string'
     ? convState.context_data.pending_date_text
     : null;
-  const hoursWhen = pendingDateKey && tz ? localToUtc(pendingDateKey, '12:00', tz) : new Date();
+  const hoursWhen = pendingDateKey && tz ? localToUtc(pendingDateKey, '12:00', tz) : now;
   const dayHours = getHoursForDate(business, hoursWhen).dayHours;
   const isPendingHold =
     activeDraft?.state === 'pending_confirmation'
@@ -651,6 +672,12 @@ export async function extractTurnIntent({
 
   if (looksLikeExistingAppointmentQuery(textBody)) {
     return emptyExtract({ action: 'list_appointments', confidence: 'high', source: 'keyword' });
+  }
+  if (looksLikeOffTopicChat(textBody)) {
+    return emptyExtract({ action: 'off_topic', confidence: 'high', source: 'keyword' });
+  }
+  if (looksLikeBusinessFactQuestion(textBody)) {
+    return emptyExtract({ action: 'missing_info', confidence: 'high', source: 'keyword' });
   }
 
   if (wait === BOOKING_WAIT.CLARIFICATION) {
@@ -738,6 +765,7 @@ export async function extractTurnIntent({
     business,
     inModify: step === CONVERSATION_STEPS.RESCHEDULING || step === CONVERSATION_STEPS.MODIFYING,
     dayHours,
+    now,
   });
   if (deterministic) return deterministic;
 
@@ -779,7 +807,7 @@ export async function extractTurnIntent({
   }
 
   const inModify = step === CONVERSATION_STEPS.RESCHEDULING || step === CONVERSATION_STEPS.MODIFYING;
-  const explicit = resolveExplicitSlot(textBody, business);
+  const explicit = resolveExplicitSlot(textBody, business, now);
   if (explicit?.dateKey && explicit?.timeHHmm && !looksLikeExistingAppointmentQuery(textBody)) {
     const mod = triageUserIntent(textBody, { businessType: business.business_type });
     if (mod.intent !== 'cancel') {

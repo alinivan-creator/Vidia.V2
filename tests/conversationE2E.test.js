@@ -11,6 +11,7 @@ import {
   looksLikeNewBookingRequest,
   looksLikeExistingAppointmentQuery,
   looksLikeDatetimeOrSlot,
+  looksLikeOffTopicChat,
   triageUserIntent,
   isExplicitConfirmReply,
   isExplicitCancelReply,
@@ -130,6 +131,9 @@ function extractTurn(text, conv) {
   if (looksLikeExistingAppointmentQuery(text)) {
     return emptyExtract({ action: 'list_appointments', source: 'keyword' });
   }
+  if (looksLikeOffTopicChat(text)) {
+    return emptyExtract({ action: 'off_topic', source: 'keyword' });
+  }
 
   const onConfirm = step === 'waiting_for_confirmation'
     || step === 'CONFIRMING'
@@ -149,6 +153,7 @@ function extractTurn(text, conv) {
     pendingDateKey,
     business: BUSINESS,
     dayHours,
+    now: NOW,
   });
   if (deterministic) return deterministic;
 
@@ -381,7 +386,7 @@ function createChat(occupied = []) {
       }) || reduced.draft.duration;
       const start = localToUtc(reduced.draft.date, reduced.draft.time, TZ);
       const end = new Date(start.getTime() + Number(duration) * 60_000);
-      const hours = assertWithinWorkingHours(BUSINESS, start, end);
+      const hours = assertWithinWorkingHours(BUSINESS, start, end, 'ro', NOW);
       if (!hours.ok) {
         persistReduced(conv, {
           ...reduced,

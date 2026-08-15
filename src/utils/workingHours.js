@@ -61,10 +61,11 @@ export function getHoursForDate(business, date) {
  * @param {Date | string} end
  * @returns {{ ok: true, reason: null, message: null } | { ok: false, reason: string, message: string }}
  */
-export function assertWithinWorkingHours(business, start, end, lang = 'ro') {
+export function assertWithinWorkingHours(business, start, end, lang = 'ro', now = new Date()) {
   const startDate = start instanceof Date ? start : new Date(start);
   const endDate = end instanceof Date ? end : new Date(end);
   const en = lang === 'en';
+  const clock = now instanceof Date ? now : new Date();
   if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || endDate <= startDate) {
     return {
       ok: false,
@@ -78,6 +79,15 @@ export function assertWithinWorkingHours(business, start, end, lang = 'ro') {
   const dayName = en && weekdayKey
     ? (WEEKDAY_LABELS_EN[/** @type {keyof typeof WEEKDAY_LABELS_EN} */ (weekdayKey)] || info.dayName)
     : info.dayName;
+  if (startDate.getTime() < clock.getTime() - 60_000) {
+    return {
+      ok: false,
+      reason: 'past',
+      message: en
+        ? 'That time is in the past. Please choose a future day and time.'
+        : 'Ora aleasă a trecut. Alege o zi și o oră din *viitor* — ex: *luni la 12:30*.',
+    };
+  }
   if (!info.configured) {
     return {
       ok: false,

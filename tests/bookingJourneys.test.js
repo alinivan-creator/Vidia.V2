@@ -98,7 +98,7 @@ function afterHydrateReduce(extract, convState, text = '') {
 function hoursCheck(dateKey, hhmm) {
   const start = localToUtc(dateKey, hhmm, TZ);
   const end = new Date(start.getTime() + 30 * 60 * 1000);
-  return assertWithinWorkingHours(BUSINESS, start, end);
+  return assertWithinWorkingHours(BUSINESS, start, end, 'ro', NOW);
 }
 
 function reply(key, data = {}) {
@@ -116,15 +116,16 @@ describe('real booking journeys', () => {
 
     const one = resolveDeterministicInbound({
       textBody: '1',
-      lastMenu: null,
-      wait: BOOKING_WAIT.DATE_TIME,
+      lastMenu: ENTRY_MENU,
+      wait: null,
       timezone: TZ,
-      pendingDateKey: '2026-08-16',
       business: BUSINESS,
+      now: NOW,
     });
     assert.equal(one.action, 'book');
     assert.equal(one.date_text, null);
     assert.equal(one.time_text, null);
+    assert.equal(one.source, 'menu');
 
     const slot = resolveExplicitSlot('Marti la 3 daca e loc', BUSINESS, NOW);
     assert.equal(slot.dateKey, TUESDAY);

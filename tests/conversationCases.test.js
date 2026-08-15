@@ -57,9 +57,8 @@ describe('inbound cases: greeting, menu, booking, off-topic', () => {
     const extracted = resolveDeterministicInbound({
       textBody: '1',
       lastMenu: null,
-      wait: BOOKING_WAIT.TIME,
+      wait: null,
       timezone: TZ,
-      pendingDateKey: '2026-08-17',
       business: BUSINESS,
       dayHours: HOURS_09_18,
     });
@@ -96,9 +95,8 @@ describe('inbound cases: greeting, menu, booking, off-topic', () => {
     const extracted = resolveDeterministicInbound({
       textBody: '1',
       lastMenu: ENTRY_MENU,
-      wait: BOOKING_WAIT.TIME,
+      wait: null,
       timezone: TZ,
-      pendingDateKey: '2026-08-17',
       business: BUSINESS,
       dayHours: HOURS_09_18,
     });

@@ -183,6 +183,7 @@ function extractTurn(text, conv, business) {
     business,
     inModify,
     dayHours,
+    now: NOW,
   });
   if (deterministic) return deterministic;
 
@@ -484,7 +485,7 @@ function createChat(business, occupied = []) {
       }) || reduced.draft.duration;
       const start = localToUtc(reduced.draft.date, reduced.draft.time, TZ);
       const end = new Date(start.getTime() + Number(duration) * 60_000);
-      const hours = assertWithinWorkingHours(business, start, end, lang);
+      const hours = assertWithinWorkingHours(business, start, end, lang, NOW);
       if (!hours.ok) {
         persistReduced(conv, {
           ...reduced,
@@ -757,7 +758,26 @@ describe('VIDIA chatbot stress suite', () => {
     });
   });
 
-  it('E matrix: typos, no diacritics, jumate, 11:20', () => {
+  it('relative days, spaced clock, and no past morning slots', () => {
+    runScript('E-maine-not-today', 'Salon Park', 'ro', TENANT_PARKING, ['tuns clasic', 'Maine la 12'], (turns) => {
+      const last = turns[turns.length - 1];
+      assert.equal(last.draft.date, '2026-08-16', 'maine on Saturday must be Sunday, not Saturday');
+      assert.notEqual(last.draft.date, '2026-08-15');
+      if (last.action === 'CLOSED') {
+        assert.match(last.text, /Duminică/);
+        assert.doesNotMatch(last.text, /Sâmbătă/);
+      }
+    });
+    runScript('E-luni-12-30-space', 'Salon Park', 'ro', TENANT_PARKING, ['tuns clasic', 'Luni la 12 30'], (turns) => {
+      const last = turns[turns.length - 1];
+      assert.equal(last.draft.date, '2026-08-17');
+      assert.equal(last.draft.time, '12:30');
+    });
+    runScript('E-azi-past-morning', 'Salon Park', 'ro', TENANT_PARKING, ['tuns clasic', 'azi la 10'], (turns) => {
+      const last = turns[turns.length - 1];
+      assert.equal(last.action, 'CLOSED');
+      assert.match(last.text, /trecut|viitor/i);
+    });
     const matrix = [
       ['tuns clasic', 'luni la 11 jumate'],
       ['tuns clasic', 'luni la 11 jumatate'],
