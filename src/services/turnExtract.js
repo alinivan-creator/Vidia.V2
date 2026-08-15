@@ -256,6 +256,71 @@ function extractFromChoiceId(choiceId, base, business) {
   return emptyExtract({ ...base, action: 'unknown', choice_id: choiceId, source: 'menu' });
 }
 
+/**
+ * Numbered menus always beat "1" = 01:00. Isolated digits are times only in a time wait.
+ *
+ * @param {Object} params
+ * @param {string} params.textBody
+ * @param {{ kind?: string, options?: { id: string }[] } | null} params.lastMenu
+ * @param {string | null} params.wait
+ * @param {string} params.timezone
+ * @param {string | null} [params.pendingDateKey]
+ * @param {Business} params.business
+ * @param {boolean} [params.inModify]
+ * @param {{ open?: string, close?: string } | null} [params.dayHours]
+ * @returns {TurnExtract | null}
+ */
+export function resolveDeterministicInbound({
+  textBody,
+  lastMenu,
+  wait,
+  timezone,
+  pendingDateKey = null,
+  business,
+  inModify = false,
+  dayHours = null,
+}) {
+  const loneNumber = /^\d{1,2}$/.test(String(textBody ?? '').trim());
+  if (lastMenu?.options?.length && loneNumber) {
+    const choiceId = resolveNumberedChoice(textBody, lastMenu.options);
+    if (choiceId) return extractFromChoiceId(choiceId, {}, business);
+  }
+
+  const numeric = interpretNumericFreeText({
+    text: textBody,
+    wait,
+    timezone,
+    pendingDateKey,
+    dayHours,
+  });
+  if (numeric.kind === 'ambiguous') {
+    return emptyExtract({
+      action: 'clarify_needed',
+      confidence: 'high',
+      source: 'state',
+      ambiguity: {
+        value: numeric.value,
+        rejected: numeric.rejected ?? null,
+        date_key: numeric.dateKey,
+        time_hhmm: numeric.timeHHmm,
+        date_label: numeric.dateLabel,
+        time_label: numeric.timeLabel,
+        resume_wait: wait,
+      },
+    });
+  }
+  if (numeric.kind === 'date' || numeric.kind === 'time') {
+    return emptyExtract({
+      action: inModify ? 'reschedule' : 'book',
+      date_text: numeric.kind === 'date' ? numeric.dateKey : null,
+      time_text: numeric.kind === 'time' ? numeric.timeHHmm : null,
+      confidence: 'high',
+      source: 'state',
+    });
+  }
+  return null;
+}
+
 export function looksLikePersonName(text) {
   const n = normalize(text);
   if (!n || n.length > 60 || /\d/.test(n) || /[?]/.test(String(text ?? ''))) return false;
@@ -573,57 +638,17 @@ export async function extractTurnIntent({
     }
   }
 
-  const loneNumber = /^\d{1,2}$/.test(String(textBody ?? '').trim());
-  const numeric = interpretNumericFreeText({
-    text: textBody,
+  const deterministic = resolveDeterministicInbound({
+    textBody,
+    lastMenu,
     wait,
     timezone: tz,
     pendingDateKey,
+    business,
+    inModify: step === CONVERSATION_STEPS.RESCHEDULING || step === CONVERSATION_STEPS.MODIFYING,
+    dayHours,
   });
-
-  const menuInRange = Boolean(
-    lastMenu?.options?.length
-    && loneNumber
-    && Number(String(textBody).trim()) >= 1
-    && Number(String(textBody).trim()) <= lastMenu.options.length,
-  );
-
-  if (numeric.kind === 'ambiguous') {
-    return emptyExtract({
-      action: 'clarify_needed',
-      confidence: 'high',
-      source: 'state',
-      ambiguity: {
-        value: numeric.value,
-        rejected: numeric.rejected ?? null,
-        date_key: numeric.dateKey,
-        time_hhmm: numeric.timeHHmm,
-        date_label: numeric.dateLabel,
-        time_label: numeric.timeLabel,
-        resume_wait: wait,
-      },
-    });
-  }
-
-  if (!menuInRange && (numeric.kind === 'date' || numeric.kind === 'time')) {
-    const inModify = step === CONVERSATION_STEPS.RESCHEDULING || step === CONVERSATION_STEPS.MODIFYING;
-    return emptyExtract({
-      action: inModify ? 'reschedule' : 'book',
-      date_text: numeric.kind === 'date' ? numeric.dateKey : null,
-      time_text: numeric.kind === 'time' ? numeric.timeHHmm : null,
-      confidence: 'high',
-      source: 'state',
-    });
-  }
-
-  if (lastMenu?.options?.length && lastMenu.kind !== 'slot' && lastMenu.kind !== 'service') {
-    if (loneNumber || !looksLikeDatetimeOrSlot(textBody)) {
-      const choiceId = resolveNumberedChoice(textBody, lastMenu.options);
-      if (choiceId) {
-        return extractFromChoiceId(choiceId, {}, business);
-      }
-    }
-  }
+  if (deterministic) return deterministic;
 
   if (step === CONVERSATION_STEPS.CONFIRMING_CANCEL && isExplicitConfirmReply(textBody)) {
     return emptyExtract({ action: 'confirm_cancel', confidence: 'high', source: 'state' });

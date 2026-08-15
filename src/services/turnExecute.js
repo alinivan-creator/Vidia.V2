@@ -1349,7 +1349,20 @@ async function executeContact(business) {
   });
 }
 
-async function executeMenu(business) {
+async function executeMenu(business, recipientPhone, requestId) {
+  if (business?.id && recipientPhone) {
+    await cancelActiveDraftsForPhone({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      context: { step: 'cancelled_by_menu' },
+      requestId,
+    });
+    await resetConversationState({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      requestId,
+    });
+  }
   return handlerResult({
     status: 'SUCCESS',
     action_performed: 'MENU',
@@ -1835,7 +1848,7 @@ async function dispatchExecute({
   if (action === 'hours') return executeHours(business);
   if (action === 'services') return executeServices(business);
   if (action === 'contact') return executeContact(business);
-  if (action === 'menu') return executeMenu(business);
+  if (action === 'menu') return executeMenu(business, recipientPhone, requestId);
   if (action === 'callback') {
     return executeCallback({ business, recipientPhone, extract, clientId, requestId, textBody });
   }

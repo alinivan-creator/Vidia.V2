@@ -279,11 +279,11 @@ async function processTwilioWebhook(body, requestId) {
         requestId,
         withMenu: !actionable,
       });
-      if (!actionable && earlyTriage.intent !== 'menu') {
+      if (!actionable) {
         const isGreeting = /^(salut|buna|bună|hello|hi|hey|servus|seara buna|buna ziua)[\s!.]*$/i.test(
           normalized,
         );
-        if (isGreeting || !textBody.trim()) return;
+        if (isGreeting || earlyTriage.intent === 'menu' || !textBody.trim()) return;
       }
     }
 

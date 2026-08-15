@@ -6,7 +6,7 @@
 
 import { CONVERSATION_STEPS } from '../db/conversationStateService.js';
 import { formatDateKey } from '../utils/datetime.js';
-import { parseRomanianDateTimeParts } from '../utils/roDateTime.js';
+import { coerceHourToOpenHours } from '../utils/roDateTime.js';
 
 export const BOOKING_WAIT = {
   SERVICE: 'waiting_for_service',
@@ -129,10 +129,10 @@ export function dateKeyFromDayNumber(day, timezone, pendingDateKey = null, now =
  * @param {number} hour
  * @param {string} timezone
  */
-export function timeFromHourNumber(hour, timezone) {
+export function timeFromHourNumber(hour, timezone, dayHours = null) {
   if (!Number.isInteger(hour) || hour < 0 || hour > 23) return null;
-  return parseRomanianDateTimeParts(`la ${hour}`, timezone).timeHHmm
-    || `${pad2(hour)}:00`;
+  const coerced = coerceHourToOpenHours(hour, 0, dayHours);
+  return `${pad2(coerced.hour)}:${pad2(coerced.minute || 0)}`;
 }
 
 function parseCorrection(normalized) {
@@ -207,6 +207,7 @@ export function interpretNumericFreeText({
   wait,
   timezone,
   pendingDateKey = null,
+  dayHours = null,
 }) {
   const normalized = normalize(text);
   if (!normalized) return { kind: 'none' };
@@ -229,7 +230,7 @@ export function interpretNumericFreeText({
   if (value == null) return { kind: 'none' };
 
   if (field === 'time' && canBeHour(value)) {
-    return { kind: 'time', value, rejected, timeHHmm: timeFromHourNumber(value, timezone) };
+    return { kind: 'time', value, rejected, timeHHmm: timeFromHourNumber(value, timezone, dayHours) };
   }
   if (field === 'date' && canBeDay(value)) {
     return {
@@ -241,7 +242,7 @@ export function interpretNumericFreeText({
   }
 
   if (wait === BOOKING_WAIT.TIME && canBeHour(value)) {
-    return { kind: 'time', value, rejected, timeHHmm: timeFromHourNumber(value, timezone) };
+    return { kind: 'time', value, rejected, timeHHmm: timeFromHourNumber(value, timezone, dayHours) };
   }
   if (wait === BOOKING_WAIT.DATE && canBeDay(value)) {
     return {
@@ -252,7 +253,7 @@ export function interpretNumericFreeText({
     };
   }
   if (wait === BOOKING_WAIT.CONFIRMATION && canBeHour(value) && (correction || lone != null)) {
-    return { kind: 'time', value, rejected, timeHHmm: timeFromHourNumber(value, timezone) };
+    return { kind: 'time', value, rejected, timeHHmm: timeFromHourNumber(value, timezone, dayHours) };
   }
   if (
     wait === BOOKING_WAIT.DATE_TIME
@@ -260,7 +261,11 @@ export function interpretNumericFreeText({
     && (correction || lone != null)
     && pendingDateKey
   ) {
-    return { kind: 'time', value, rejected, timeHHmm: timeFromHourNumber(value, timezone) };
+    return { kind: 'time', value, rejected, timeHHmm: timeFromHourNumber(value, timezone, dayHours) };
+  }
+
+  if (!wait && lone != null && !field && !correction) {
+    return { kind: 'none' };
   }
 
   const dateOk = canBeDay(value);
@@ -271,13 +276,13 @@ export function interpretNumericFreeText({
       value,
       rejected,
       dateKey: dateKeyFromDayNumber(value, timezone, pendingDateKey),
-      timeHHmm: timeFromHourNumber(value, timezone),
+      timeHHmm: timeFromHourNumber(value, timezone, dayHours),
       dateLabel: String(value),
       timeLabel: String(value),
     };
   }
   if (timeOk && !dateOk) {
-    return { kind: 'time', value, rejected, timeHHmm: timeFromHourNumber(value, timezone) };
+    return { kind: 'time', value, rejected, timeHHmm: timeFromHourNumber(value, timezone, dayHours) };
   }
   if (dateOk && !timeOk) {
     return {
