@@ -86,6 +86,7 @@ import {
   persistSessionDraft,
   readDraftBooking,
   reduceBookingTurn,
+  sessionKeepsChosenService,
 } from '../lib/booking/stateMachine.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
@@ -118,10 +119,13 @@ export function hydrateExtract(extract, convState, timezone) {
     next.time_text = null;
     next.datetime = null;
     next.slot_id = null;
+    next.service_id = null;
+    next.service_name = null;
     return next;
   }
   const turnHasDate = Boolean(extract.date_text);
   const turnHasTime = Boolean(extract.time_text);
+  const keepService = sessionKeepsChosenService(mapSessionState(convState?.current_step));
 
   if (!turnHasDate && typeof ctx.pending_date_text === 'string' && ctx.pending_date_text) {
     next.date_text = ctx.pending_date_text;
@@ -129,7 +133,9 @@ export function hydrateExtract(extract, convState, timezone) {
   if (!turnHasTime && typeof ctx.pending_time_text === 'string' && ctx.pending_time_text) {
     next.time_text = ctx.pending_time_text;
   }
-  if (!next.service_id && typeof ctx.pending_service_id === 'string') next.service_id = ctx.pending_service_id;
+  if (!next.service_id && keepService && typeof ctx.pending_service_id === 'string') {
+    next.service_id = ctx.pending_service_id;
+  }
   if (!next.employee_id && typeof ctx.pending_employee_id === 'string') next.employee_id = ctx.pending_employee_id;
   if (!next.slot_id && typeof ctx.pending_slot_id === 'string') next.slot_id = ctx.pending_slot_id;
   if (!next.appointment_id && typeof ctx.appointment_id === 'string') next.appointment_id = ctx.appointment_id;
@@ -175,13 +181,18 @@ async function persistPendingExtract({ business, recipientPhone, extract, reques
     const prevDraft = latestDraft.context_data?.draft_booking && typeof latestDraft.context_data.draft_booking === 'object'
       ? /** @type {Record<string, unknown>} */ (latestDraft.context_data.draft_booking)
       : {};
+    const keepService = Boolean(extract.service_id || extract.service_name)
+      || sessionKeepsChosenService(mapSessionState(latestDraft.current_step));
     context.draft_booking = {
       ...prevDraft,
       ...(extract.service_id ? { service_id: extract.service_id } : {}),
       ...(extract.service_name ? { service_name: extract.service_name } : {}),
       ...(extract.date_text ? { date: extract.date_text } : {}),
       ...(extract.time_text ? { time: extract.time_text } : {}),
-      ...(freshMenuStart ? { date: null, time: null, service_id: null, service_name: null, duration: null } : {}),
+      ...((freshMenuStart || !keepService)
+        ? { service_id: null, service_name: null, duration: null }
+        : {}),
+      ...(freshMenuStart ? { date: null, time: null } : {}),
     };
   }
   if (!Object.keys(context).length) return;
@@ -355,7 +366,12 @@ async function missingService(business, recipientPhone, draft, requestId) {
     businessId: business.id,
     rawPhone: recipientPhone,
     step: CONVERSATION_STEPS.WAITING_FOR_SERVICE,
-    context: { draft_id: draft?.id, intent: 'book', booking_wait: BOOKING_WAIT.SERVICE },
+    context: {
+      draft_id: draft?.id,
+      intent: 'book',
+      booking_wait: BOOKING_WAIT.SERVICE,
+      last_menu: serviceMenu(business),
+    },
     requestId,
   });
   return handlerResult({
@@ -1898,6 +1914,9 @@ function bookingMachineHandles(action) {
 async function runBookingMachine(params) {
   const { business, recipientPhone, extract, convState, activeDraft, requestId, textBody } = params;
   let draft = hydrateCatalogService(readDraftBooking(convState, activeDraft), business);
+  const namedThisTurn = Boolean(extract.service_id || extract.service_name);
+  const keepLeftoverService = namedThisTurn
+    || sessionKeepsChosenService(mapSessionState(convState?.current_step));
   if (
     extract.source === 'menu'
     && !extract.date_text
@@ -1909,6 +1928,13 @@ async function runBookingMachine(params) {
       ...draft,
       date: null,
       time: null,
+      service_id: null,
+      service_name: null,
+      duration: null,
+    };
+  } else if (!keepLeftoverService) {
+    draft = {
+      ...draft,
       service_id: null,
       service_name: null,
       duration: null,
@@ -1952,18 +1978,23 @@ async function runBookingMachine(params) {
     rawPhone: recipientPhone,
     state: reduced.state,
     draft: reduced.draft,
-    extraContext: reduced.action === MACHINE_ACTIONS.ACTION_ASK_CLARIFICATION
-      ? {
-        clarification: {
-          value: reduced.clarify_value,
-          rejected: reduced.rejected ?? null,
-          date_candidate: reduced.draft.date,
-          time_candidate: reduced.draft.time,
-          resume_wait: getBookingWait(convState),
-          raw_value: reduced.clarify_value != null ? String(reduced.clarify_value) : '',
-        },
-      }
-      : {},
+    extraContext: {
+      ...(reduced.action === MACHINE_ACTIONS.ACTION_ASK_CLARIFICATION
+        ? {
+          clarification: {
+            value: reduced.clarify_value,
+            rejected: reduced.rejected ?? null,
+            date_candidate: reduced.draft.date,
+            time_candidate: reduced.draft.time,
+            resume_wait: getBookingWait(convState),
+            raw_value: reduced.clarify_value != null ? String(reduced.clarify_value) : '',
+          },
+        }
+        : {}),
+      ...(reduced.action === MACHINE_ACTIONS.ACTION_ASK_SERVICE
+        ? { last_menu: serviceMenu(business) }
+        : {}),
+    },
     requestId,
   });
 

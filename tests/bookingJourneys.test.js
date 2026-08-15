@@ -14,6 +14,7 @@ import {
   recoverSoftParserIntent,
   resolveDeterministicInbound,
   resolveExplicitSlot,
+  matchServiceMention,
 } from '../src/services/turnExtract.js';
 import { hydrateExtract } from '../src/services/turnExecute.js';
 import {
@@ -23,9 +24,12 @@ import {
   MACHINE_ACTIONS,
   SESSION_STATES,
   parseInFlightCorrection,
+  sessionKeepsChosenService,
+  afterSlotCheck,
 } from '../src/lib/booking/stateMachine.js';
 import { renderHandlerResult } from '../src/services/turnPresent.js';
 import { BOOKING_WAIT } from '../src/services/bookingWaitState.js';
+import { formatServiceAskMessage } from '../src/utils/serviceMatch.js';
 
 const TZ = 'Europe/Bucharest';
 /** Saturday 15 Aug 2026 12:53 in Bucharest */
@@ -227,6 +231,140 @@ describe('real booking journeys', () => {
     });
     assert.equal(reduced.action, MACHINE_ACTIONS.ACTION_CHECK_SLOT);
     assert.equal(reduced.draft.service_id, 'svc-tuns');
+  });
+
+  it('leftover Tuns + Barba is ignored until the client names a service', () => {
+    const leftover = hydrateExtract(
+      { action: 'book', source: 'parser', date_text: '2026-08-19', time_text: '14:00', datetime: null, slot_id: null },
+      {
+        current_step: 'IDLE',
+        context_data: {
+          pending_service_id: 'svc-barba',
+          draft_booking: { service_id: 'svc-barba', service_name: 'Tuns + Barba', duration: 60 },
+        },
+      },
+      TZ,
+    );
+    assert.equal(leftover.service_id, undefined);
+
+    const afterDate = reduceBookingTurn({
+      state: SESSION_STATES.INIT,
+      draft: emptyDraft({ service_id: leftover.service_id || null }),
+      text: 'Miercuri la 2',
+      timezone: TZ,
+      extractDate: leftover.date_text,
+      extractTime: leftover.time_text,
+    });
+    assert.equal(afterDate.action, MACHINE_ACTIONS.ACTION_ASK_SERVICE);
+    assert.equal(afterDate.draft.date, '2026-08-19');
+    assert.equal(afterDate.draft.time, '14:00');
+    assert.equal(afterDate.draft.service_id, null);
+    assert.equal(sessionKeepsChosenService(SESSION_STATES.INIT), false);
+    assert.equal(sessionKeepsChosenService(SESSION_STATES.WAITING_FOR_DATE), true);
+  });
+
+  it('keeps the chosen service when the client later sends only the slot', () => {
+    const hydrated = hydrateExtract(
+      { action: 'book', source: 'parser', date_text: '2026-08-19', time_text: '14:00', datetime: null, slot_id: null },
+      {
+        current_step: 'waiting_for_date_time',
+        context_data: { pending_service_id: 'svc-barba' },
+      },
+      TZ,
+    );
+    assert.equal(hydrated.service_id, 'svc-barba');
+  });
+
+  it('while asking for service, 1 is the first catalog item, not Programare', () => {
+    const catalog = [
+      { id: 'svc-tuns', name: 'Tuns', duration_minutes: 30 },
+      { id: 'svc-barba', name: 'Tuns + Barba', duration_minutes: 60 },
+    ];
+    const twoServices = {
+      ...BUSINESS,
+      services: catalog,
+      booking_settings: {
+        ...BUSINESS.booking_settings,
+        services: catalog,
+      },
+    };
+    const extracted = resolveDeterministicInbound({
+      textBody: '1',
+      lastMenu: {
+        kind: 'entry',
+        options: [
+          { id: 'book', title: 'Programare' },
+          { id: 'info', title: 'Detalii' },
+        ],
+      },
+      wait: BOOKING_WAIT.SERVICE,
+      timezone: TZ,
+      business: twoServices,
+    });
+    assert.equal(extracted.action, 'select_service');
+    assert.equal(extracted.service_id, 'svc-tuns');
+    const two = resolveDeterministicInbound({
+      textBody: '2',
+      lastMenu: { kind: 'entry', options: [{ id: 'book', title: 'Programare' }] },
+      wait: BOOKING_WAIT.SERVICE,
+      timezone: TZ,
+      business: twoServices,
+    });
+    assert.equal(two.service_id, 'svc-barba');
+  });
+
+  it('matches a unique short name and refuses an ambiguous tuns', () => {
+    const onlyCombo = [{ id: 'svc-barba', name: 'Tuns + Barba' }];
+    const both = [
+      { id: 'svc-tuns', name: 'Tuns clasic' },
+      { id: 'svc-barba', name: 'Tuns + Barba' },
+    ];
+    assert.equal(matchServiceMention('tuns', onlyCombo)?.id, 'svc-barba');
+    assert.equal(matchServiceMention('barba', both)?.id, 'svc-barba');
+    assert.equal(matchServiceMention('tuns', both), null);
+    assert.equal(matchServiceMention('tuns clasic', both)?.id, 'svc-tuns');
+  });
+
+  it('changing the service after a slot re-checks that duration', () => {
+    const afterChange = reduceBookingTurn({
+      state: SESSION_STATES.WAITING_FOR_CONFIRMATION,
+      draft: emptyDraft({
+        service_id: 'svc-tuns',
+        service_name: 'Tuns',
+        date: '2026-08-19',
+        time: '14:00',
+        duration: 30,
+      }),
+      text: 'tuns + barba',
+      timezone: TZ,
+      extractServiceId: 'svc-barba',
+      extractServiceName: 'Tuns + Barba',
+    });
+    assert.equal(afterChange.action, MACHINE_ACTIONS.ACTION_CHECK_SLOT);
+    assert.equal(afterChange.draft.service_id, 'svc-barba');
+    assert.equal(afterChange.draft.date, '2026-08-19');
+    assert.equal(afterChange.draft.time, '14:00');
+
+    const busy = afterSlotCheck(afterChange, { available: false, alternatives: [{ label: '15:00' }] });
+    assert.equal(busy.action, MACHINE_ACTIONS.ACTION_SLOT_UNAVAILABLE);
+    const free = afterSlotCheck(afterChange, { available: true });
+    assert.equal(free.action, MACHINE_ACTIONS.ACTION_SHOW_CONFIRMATION);
+  });
+
+  it('service ask lists duration so the client sees why the slot depends on it', () => {
+    const text = formatServiceAskMessage([
+      { name: 'Tuns', duration_minutes: 30 },
+      { name: 'Tuns + Barba', duration_minutes: 60 },
+    ]);
+    assert.match(text, /1\. Tuns \(30 min\)/);
+    assert.match(text, /2\. Tuns \+ Barba \(60 min\)/);
+    assert.match(text, /numărul sau numele/);
+    const presented = reply('MISSING_SERVICE', {
+      services: [
+        { id: 'svc-barba', name: 'Tuns + Barba', duration_minutes: 60 },
+      ],
+    });
+    assert.match(presented, /Tuns \+ Barba \(60 min\)/);
   });
 
   it('client-facing copy stays human', () => {

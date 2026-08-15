@@ -18,6 +18,7 @@ import {
 import { formatMachineAction, formatterSystemHint } from '../lib/ai/responseFormatter.js';
 import { MACHINE_ACTIONS } from '../lib/booking/stateMachine.js';
 import { unknownInfoClientMessage } from '../utils/workingHours.js';
+import { formatServiceAskMessage } from '../utils/serviceMatch.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 /** @typedef {import('./handlerResult.js').HandlerResult} HandlerResult */
@@ -108,13 +109,8 @@ export function renderHandlerResult(business, result) {
       const intro = d.client_message || 'Nu am găsit specialistul. Poți scrie alt nume din echipă:';
       return names.length ? `${intro} ${names.join(', ')}.` : intro;
     }
-    case 'MISSING_SERVICE': {
-      const names = (d.services || []).map((s) => s.name).filter(Boolean);
-      if (names.length) {
-        return `Ce serviciu dorești? Avem: ${names.join(', ')}. Scrie numele serviciului.`;
-      }
-      return 'Ce serviciu dorești? Scrie numele lui (ex: *tuns*).';
-    }
+    case 'MISSING_SERVICE':
+      return formatServiceAskMessage(d.services || []);
     case 'ASK_DATE':
       return (
         (typeof d.client_message === 'string' && d.client_message)

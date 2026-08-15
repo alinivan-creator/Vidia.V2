@@ -30,6 +30,7 @@ import {
   interpretNumericFreeText,
 } from './bookingWaitState.js';
 import { extractBookingEntities } from '../lib/ai/extractor.js';
+import { matchServiceMention } from '../utils/serviceMatch.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -86,25 +87,7 @@ function emptyExtract(overrides = {}) {
   };
 }
 
-/**
- * @param {string} text
- * @param {{ id: string, name: string }[]} services
- */
-function matchServiceMention(text, services) {
-  const n = normalize(text);
-  if (!n || n.length < 3) return null;
-  /** @type {{ id: string, name: string } | null} */
-  let best = null;
-  let bestLen = 0;
-  for (const s of services) {
-    const name = normalize(s.name);
-    if (name.length >= 3 && n.includes(name) && name.length > bestLen) {
-      best = s;
-      bestLen = name.length;
-    }
-  }
-  return best;
-}
+export { matchServiceMention };
 
 /**
  * Date hint without requiring a clock time (YYYY-MM-DD in business TZ).
@@ -281,6 +264,30 @@ export function resolveDeterministicInbound({
   dayHours = null,
 }) {
   const loneNumber = /^\d{1,2}$/.test(String(textBody ?? '').trim());
+  if (wait === BOOKING_WAIT.SERVICE && loneNumber) {
+    const catalog = getBookingConfig(business).services;
+    const serviceMenu = lastMenu?.kind === 'service' && lastMenu.options?.length
+      ? lastMenu
+      : {
+        kind: 'service',
+        options: catalog.slice(0, 10).map((s) => ({
+          id: `${PREFIX.SERVICE}${s.id}`,
+          title: s.name,
+        })),
+      };
+    const choiceId = resolveNumberedChoice(textBody, serviceMenu.options);
+    if (choiceId) return extractFromChoiceId(choiceId, {}, business);
+    const idx = Number(String(textBody).trim()) - 1;
+    if (idx >= 0 && idx < catalog.length) {
+      return emptyExtract({
+        action: 'select_service',
+        service_id: catalog[idx].id,
+        service_name: catalog[idx].name,
+        confidence: 'high',
+        source: 'menu',
+      });
+    }
+  }
   const entryFallback = (business.menu_buttons || []).slice(0, 3).map((btn) => ({
     id: btn.id,
     title: String(btn.label || btn.title || ''),
@@ -288,7 +295,7 @@ export function resolveDeterministicInbound({
   const choiceMenu = lastMenu?.options?.length
     ? lastMenu
     : (entryFallback.length ? { kind: 'entry', options: entryFallback } : null);
-  if (choiceMenu?.options?.length && loneNumber) {
+  if (wait !== BOOKING_WAIT.SERVICE && choiceMenu?.options?.length && loneNumber) {
     const choiceId = resolveNumberedChoice(textBody, choiceMenu.options);
     if (choiceId) return extractFromChoiceId(choiceId, {}, business);
   }
@@ -747,6 +754,18 @@ export async function extractTurnIntent({
         datetime: explicit.datetime,
         service_id: named?.id ?? null,
         service_name: named?.name ?? null,
+        confidence: 'high',
+        source: 'parser',
+      });
+    }
+  }
+  if (wait === BOOKING_WAIT.SERVICE && !looksLikeDatetimeOrSlot(textBody)) {
+    const named = matchServiceMention(textBody, services);
+    if (named) {
+      return emptyExtract({
+        action: 'select_service',
+        service_id: named.id,
+        service_name: named.name,
         confidence: 'high',
         source: 'parser',
       });

@@ -5,6 +5,7 @@
 
 import { MACHINE_ACTIONS } from '../booking/stateMachine.js';
 import { localToUtc } from '../../utils/datetime.js';
+import { formatServiceAskMessage } from '../../utils/serviceMatch.js';
 
 const MONTHS_RO = [
   'ianuarie', 'februarie', 'martie', 'aprilie', 'mai', 'iunie',
@@ -58,7 +59,7 @@ function nearbyHoursLine(alternatives) {
  * @param {string | null} [params.clarifyReason]
  * @param {{ label?: string }[]} [params.alternatives]
  * @param {string | null} [params.occupiedLabel]
- * @param {{ name: string }[]} [params.services]
+ * @param {{ name: string, duration_minutes?: number }[]} [params.services]
  */
 export function formatMachineAction({
   action,
@@ -104,13 +105,8 @@ export function formatMachineAction({
         ? `${occupied} ${nearby} Scrie ora pe care o vrei (ex: *18:00*).`
         : `${occupied} Scrie altă oră (ex: *18:00*).`;
     }
-    case MACHINE_ACTIONS.ACTION_ASK_SERVICE: {
-      const names = (services || []).map((s) => s.name).filter(Boolean);
-      if (names.length) {
-        return `Ce serviciu dorești? Avem: ${names.join(', ')}. Scrie numele serviciului.`;
-      }
-      return 'Ce serviciu dorești? Scrie numele lui (ex: *tuns*).';
-    }
+    case MACHINE_ACTIONS.ACTION_ASK_SERVICE:
+      return formatServiceAskMessage(services);
     case MACHINE_ACTIONS.ACTION_ASK_DATE:
       return `Pe ce dată vrei${draft.service_name ? ` *${draft.service_name}*` : ''}? Scrie de exemplu *luni* sau *18 aug*.`;
     case MACHINE_ACTIONS.ACTION_ASK_TIME: {

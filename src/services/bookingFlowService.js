@@ -62,17 +62,10 @@ import {
   clearRememberedMenuOptions,
   resolveNumberedChoice,
 } from './whatsappService.js';
+import { matchServiceMention } from '../utils/serviceMatch.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
-function normalizeChoiceText(text) {
-  return String(text ?? '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
 
 /**
  * Numbered service options reconstructed from Admin catalog (does not need Vercel memory).
@@ -84,26 +77,6 @@ export function buildServiceMenuOptions(business) {
     id: `${PREFIX.SERVICE}${s.id}`,
     title: s.name,
   }));
-}
-
-/**
- * @param {string} text
- * @param {{ id: string, name: string }[]} services
- */
-function matchServiceMention(text, services) {
-  const n = normalizeChoiceText(text);
-  if (!n || n.length < 3) return null;
-  /** @type {{ id: string, name: string } | null} */
-  let best = null;
-  let bestLen = 0;
-  for (const s of services) {
-    const name = normalizeChoiceText(s.name);
-    if (name.length >= 3 && n.includes(name) && name.length > bestLen) {
-      best = s;
-      bestLen = name.length;
-    }
-  }
-  return best;
 }
 
 /**

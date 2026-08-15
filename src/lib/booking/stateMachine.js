@@ -132,6 +132,7 @@ export function mapSessionState(step) {
       return SESSION_STATES.WAITING_FOR_DATE;
     case CONVERSATION_STEPS.WAITING_FOR_TIME:
     case CONVERSATION_STEPS.SELECTING_SLOT:
+    case CONVERSATION_STEPS.CHOOSING_EMPLOYEE:
       return SESSION_STATES.WAITING_FOR_TIME;
     case CONVERSATION_STEPS.WAITING_FOR_DATE_TIME:
       return SESSION_STATES.WAITING_FOR_DATE_TIME;
@@ -283,6 +284,20 @@ function nextFromDraft(draft) {
 
 export function nextActionFromDraft(draft) {
   return nextFromDraft(emptyDraft(draft));
+}
+
+/**
+ * Leftover catalog picks from an old draft must not skip the service question.
+ * Keep a previously chosen service only while this booking is still collecting
+ * date/time/confirm — never on a fresh "miercuri la 2".
+ *
+ * @param {string} state
+ */
+export function sessionKeepsChosenService(state) {
+  return state === SESSION_STATES.WAITING_FOR_DATE
+    || state === SESSION_STATES.WAITING_FOR_TIME
+    || state === SESSION_STATES.WAITING_FOR_DATE_TIME
+    || state === SESSION_STATES.WAITING_FOR_CONFIRMATION;
 }
 
 function applyNumberToDraft(draft, field, value, timezone) {
@@ -456,7 +471,8 @@ export async function persistSessionDraft({
 }
 
 /**
- * Fill service_id from a single-item catalog when the user did not name one.
+ * Resolve duration/name for a service the client already named.
+ * Does not pick a catalog item on their behalf.
  *
  * @param {DraftBookingSnapshot} draft
  * @param {import('../../db/businessService.js').Business} business
