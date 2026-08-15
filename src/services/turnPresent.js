@@ -207,6 +207,10 @@ export function renderHandlerResult(business, result) {
       );
     }
     case 'CHAT_FALLBACK':
+      return (
+        `Sunt asistentul de programări al *${d.business_name || business.name}*. ` +
+        `Cu ce te pot ajuta? Pot să te ajut cu o programare, programul de lucru sau datele de contact.`
+      );
     case 'OFF_TOPIC':
       return (
         `Sunt asistentul de programări al *${d.business_name || business.name}*. ` +

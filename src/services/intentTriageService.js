@@ -336,7 +336,21 @@ export function triageUserIntent(text, opts = {}) {
     return { intent: 'menu', confidence: 'high', reason: 'menu_keyword' };
   }
 
+  if (looksLikeGreeting(n)) {
+    return { intent: 'menu', confidence: 'high', reason: 'greeting' };
+  }
+
   return { intent: 'unknown', confidence: 'low', reason: 'no_keyword_match' };
+}
+
+/**
+ * Opening hello — not small-talk, not a booking, not off-topic.
+ * @param {string} text
+ */
+export function looksLikeGreeting(text) {
+  const n = normalize(text);
+  if (!n) return false;
+  return /^(salut|buna|buna ziua|buna seara|buna dimineata|hello|hi|hey|servus|ciao|noroc)[\s!.]*$/i.test(n);
 }
 
 /**

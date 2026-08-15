@@ -1455,7 +1455,13 @@ async function executeListAppointments({ business, recipientPhone, activeDraft }
 }
 
 async function executeChat(business) {
-  return executeOffTopic(business);
+  return handlerResult({
+    status: 'CHAT',
+    action_performed: null,
+    next_required_step: null,
+    user_message_template_key: 'CHAT_FALLBACK',
+    data: { business_name: business.name },
+  });
 }
 
 function normalizeFactText(text) {

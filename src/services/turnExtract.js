@@ -17,6 +17,7 @@ import {
   wantsSameExpiredBooking,
   looksLikeExistingAppointmentQuery,
   looksLikeNewBookingRequest,
+  looksLikeGreeting,
 } from './intentTriageService.js';
 import { resolveAcceptedOffer } from './pendingOfferService.js';
 import { resolveNumberedChoice } from './whatsappService.js';
@@ -274,6 +275,46 @@ function faqActionFromText(text) {
     return 'hours';
   }
   return 'services';
+}
+
+/**
+ * Parser off_topic/unknown must not steal salut, "programare", hours, contact.
+ * @param {TurnExtract} mapped
+ * @param {string} textBody
+ * @param {import('./intentTriageService.js').TriageResult} triage
+ * @param {boolean} inModify
+ * @returns {TurnExtract}
+ */
+export function recoverSoftParserIntent(mapped, textBody, triage, inModify = false) {
+  const soft = new Set(['off_topic', 'missing_info', 'unknown', 'chat']);
+  if (!soft.has(mapped.action)) return mapped;
+
+  if (looksLikeExistingAppointmentQuery(textBody) || triage.intent === 'list_appointments') {
+    return { ...mapped, action: 'list_appointments', confidence: 'high', source: 'keyword' };
+  }
+  if (
+    looksLikeNewBookingRequest(textBody)
+    || triage.intent === 'book'
+    || (looksLikeDatetimeOrSlot(textBody) && /\d/.test(String(textBody)))
+  ) {
+    return { ...mapped, action: inModify ? 'reschedule' : 'book', confidence: 'high', source: 'keyword' };
+  }
+  if (triage.intent === 'contact') {
+    return { ...mapped, action: 'contact', confidence: 'high', source: 'keyword' };
+  }
+  if (triage.intent === 'faq') {
+    return { ...mapped, action: faqActionFromText(textBody), confidence: 'high', source: 'keyword' };
+  }
+  if (triage.intent === 'cancel') {
+    return { ...mapped, action: 'cancel', confidence: 'high', source: 'keyword' };
+  }
+  if (triage.intent === 'reschedule') {
+    return { ...mapped, action: 'reschedule', confidence: 'high', source: 'keyword' };
+  }
+  if (triage.intent === 'menu' || looksLikeGreeting(textBody)) {
+    return { ...mapped, action: 'menu', confidence: 'high', source: 'keyword' };
+  }
+  return mapped;
 }
 
 function confidenceBand(value) {
@@ -640,13 +681,18 @@ export async function extractTurnIntent({
     requestId,
   });
   if (nlu) {
-    const mapped = mapExtractionToTurnExtract(nlu, {
+    const mapped = recoverSoftParserIntent(
+      mapExtractionToTurnExtract(nlu, {
+        textBody,
+        isPendingHold,
+        inModify,
+        wait,
+        timezone: tz,
+      }),
       textBody,
-      isPendingHold,
+      triage,
       inModify,
-      wait,
-      timezone: tz,
-    });
+    );
     if (mapped.action === 'clarify_needed') return mapped;
     if (mapped.action === 'list_appointments' || looksLikeExistingAppointmentQuery(textBody)) {
       return emptyExtract({

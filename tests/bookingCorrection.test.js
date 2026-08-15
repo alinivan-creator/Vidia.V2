@@ -12,10 +12,11 @@ import { formatMachineAction, formatRomanianDate } from '../src/lib/ai/responseF
 import { coerceHourToOpenHours, parseRomanianDateTimeParts } from '../src/utils/roDateTime.js';
 import {
   looksLikeExistingAppointmentQuery,
+  looksLikeGreeting,
   looksLikeNewBookingRequest,
   triageUserIntent,
 } from '../src/services/intentTriageService.js';
-import { looksLikePersonName } from '../src/services/turnExtract.js';
+import { looksLikePersonName, recoverSoftParserIntent } from '../src/services/turnExtract.js';
 
 const TZ = 'Europe/Bucharest';
 const HOURS_09_18 = { open: '09:00', close: '18:00' };
@@ -217,5 +218,26 @@ describe('off-topic vs client name', () => {
       'Nu dețin această informație, din păcate nu vă pot răspunde la această întrebare.',
     );
     assert.equal(/admin|invent|setat|configur/i.test(msg), false);
+  });
+
+  it('does not treat salut or programare as off-topic', () => {
+    assert.equal(looksLikeGreeting('Salut'), true);
+    assert.equal(triageUserIntent('Salut').intent, 'menu');
+    assert.equal(looksLikeNewBookingRequest('Programare'), true);
+    assert.equal(triageUserIntent('Programare').intent, 'book');
+
+    const stolen = { action: 'off_topic', confidence: 'low', source: 'nlu' };
+    assert.equal(
+      recoverSoftParserIntent(stolen, 'Salut', triageUserIntent('Salut')).action,
+      'menu',
+    );
+    assert.equal(
+      recoverSoftParserIntent(stolen, 'Programare', triageUserIntent('Programare')).action,
+      'book',
+    );
+    assert.equal(
+      recoverSoftParserIntent(stolen, 'ai mancat azi?', { intent: 'unknown', confidence: 'low', reason: 'x' }).action,
+      'off_topic',
+    );
   });
 });
