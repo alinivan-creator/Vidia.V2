@@ -100,3 +100,5 @@ Fișiere cheie: `public/admin.js`, `src/db/adminService.js`, `src/utils/datetime
 
 Welcome WhatsApp include consimțământul GDPR la începutul conversației. După programare, nota GDPR menționează și SMS + `stop sms`.
 
+**Fără dubluri:** un telefon = un rând `clients` per afacere (`UNIQUE business_id + phone_number`). A doua programare doar reafirmă opt-in pe același client (nu creează altul).
+

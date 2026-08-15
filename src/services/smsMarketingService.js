@@ -368,6 +368,7 @@ export async function removeSmsOptInPhones({ businessId, phones }) {
 
 /**
  * After a confirmed booking — client joins the SMS opt-in base automatically.
+ * Safe to call on every booking: same phone → same client row (no duplicates).
  * @param {Object} params
  * @param {string} params.businessId
  * @param {string} params.rawPhone
