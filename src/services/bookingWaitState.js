@@ -152,9 +152,9 @@ function parseCorrection(normalized) {
 }
 
 function explicitField(normalized) {
-  const timeHit = normalized.match(/\b(?:la|ora)\s+(\d{1,2})(?:[:.,](\d{2}))?\b/)
+  const timeHit = normalized.match(/\b(?:la|ora|at)\s+(\d{1,2})(?:[:.,](\d{2}))?\b/)
     || normalized.match(/\b(\d{1,2})[:.,](\d{2})\b/);
-  const dateHit = normalized.match(/\b(?:data(?:\s+de)?|ziua(?:\s+de)?|pe)\s+(\d{1,2})\b/);
+  const dateHit = normalized.match(/\b(?:data(?:\s+de)?|ziua(?:\s+de)?|pe|on(?:\s+the)?)\s+(\d{1,2})\b/);
   const hasTimeWords = /\b(ora|dimineata|dupa[\s-]*amiaza|seara)\b/.test(normalized);
   const hasDateWords = /\b(data|ziua|luni|marti|miercuri|joi|vineri|sambata|duminica|aug|ian|feb|mar|apr|mai|iun|iul|sep|oct|nov|dec)\b/.test(normalized);
 
@@ -162,7 +162,8 @@ function explicitField(normalized) {
   if (hasDateWords && !hasTimeWords && (dateHit || /\b\d{1,2}\s+(ian|feb|mar|apr|mai|iun|iul|aug|sep|oct|nov|dec)/.test(normalized))) {
     return 'date';
   }
-  if (/\b(?:la|ora)\s+\d{1,2}\b/.test(normalized) && !hasDateWords) return 'time';
+  if (/\b(?:la|ora|at)\s+\d{1,2}\b/.test(normalized) && !hasDateWords) return 'time';
+  if (/\b(?:pe|on(?:\s+the)?)\s+\d{1,2}\b/.test(normalized) && !hasTimeWords) return 'date';
   if (/\b(?:data|ziua)\b/.test(normalized) && !hasTimeWords) return 'date';
   if (/\b\d{1,2}[:.,]\d{2}\b/.test(normalized) && !hasDateWords) return 'time';
   return null;

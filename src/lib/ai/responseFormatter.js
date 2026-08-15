@@ -71,17 +71,19 @@ export function formatMachineAction({
   alternatives = [],
   occupiedLabel = null,
   services = [],
+  lang = 'ro',
 }) {
   const dateLabel = draft.date ? formatRomanianDate(draft.date, timezone) : '';
   const timeLabel = formatTime24(draft.time);
-  const service = draft.service_name || 'serviciul ales';
+  const service = draft.service_name || (lang === 'en' ? 'the service' : 'serviciul ales');
+  const en = lang === 'en';
 
   switch (action) {
     case MACHINE_ACTIONS.ACTION_SHOW_CONFIRMATION: {
       const nameLine = clientName ? `👤 *${clientName}*\n` : '';
       const empLine = employeeName ? `💇 *${employeeName}*\n` : '';
       return (
-        `✨ *Confirmi programarea?*\n\n` +
+        (en ? `✨ *Confirm this booking?*\n\n` : `✨ *Confirmi programarea?*\n\n`) +
         nameLine +
         empLine +
         `✂️ *${service}*\n` +
@@ -92,32 +94,44 @@ export function formatMachineAction({
     case MACHINE_ACTIONS.ACTION_ASK_CLARIFICATION: {
       const n = clarifyValue != null ? String(clarifyValue) : '';
       if (n) {
-        return `❓ *${n}* e data sau ora *${n}:00*?`;
+        return en
+          ? `❓ Is *${n}* the date or the time *${n}:00*?`
+          : `❓ *${n}* e data sau ora *${n}:00*?`;
       }
-      return '❓ E vorba de o *dată* sau de o *oră*?';
+      return en
+        ? '❓ Is that a *date* or a *time*?'
+        : '❓ E vorba de o *dată* sau de o *oră*?';
     }
     case MACHINE_ACTIONS.ACTION_SLOT_UNAVAILABLE: {
       const occupied = occupiedLabel
-        ? `😔 *${occupiedLabel}* nu e disponibil.`
-        : `😔 *${timeLabel}* nu e disponibil${dateLabel ? ` — ${dateLabel}` : ''}.`;
+        ? (en ? `😔 *${occupiedLabel}* is not available.` : `😔 *${occupiedLabel}* nu e disponibil.`)
+        : (en
+          ? `😔 *${timeLabel}* is not available${dateLabel ? ` — ${dateLabel}` : ''}.`
+          : `😔 *${timeLabel}* nu e disponibil${dateLabel ? ` — ${dateLabel}` : ''}.`);
       const nearby = nearbyHoursLine(alternatives);
       return nearby
-        ? `${occupied}\n${nearby}\nScrie ora — ex: *18:00*.`
-        : `${occupied}\nScrie altă oră — ex: *18:00*.`;
+        ? `${occupied}\n${nearby}\n${en ? 'Send a time — e.g. *18:00*.' : 'Scrie ora — ex: *18:00*.'}`
+        : `${occupied}\n${en ? 'Send another time — e.g. *18:00*.' : 'Scrie altă oră — ex: *18:00*.'}`;
     }
     case MACHINE_ACTIONS.ACTION_ASK_SERVICE:
       return formatServiceAskMessage(services);
     case MACHINE_ACTIONS.ACTION_ASK_DATE:
-      return `📅 *Pe ce dată*${draft.service_name ? ` vrei *${draft.service_name}*` : ''}?\nEx: *luni* sau *18 aug*`;
+      return en
+        ? `📅 *Which date*${draft.service_name ? ` for *${draft.service_name}*` : ''}?\nE.g. *Monday* or *18 Aug*`
+        : `📅 *Pe ce dată*${draft.service_name ? ` vrei *${draft.service_name}*` : ''}?\nEx: *luni* sau *18 aug*`;
     case MACHINE_ACTIONS.ACTION_ASK_TIME: {
       const nearby = nearbyHoursLine(alternatives);
-      const head = `🕐 *La ce oră*${draft.service_name ? ` — *${draft.service_name}*` : ''}${dateLabel ? `\n📅 ${dateLabel}` : ''}?`;
+      const head = en
+        ? `🕐 *What time*${draft.service_name ? ` — *${draft.service_name}*` : ''}${dateLabel ? `\n📅 ${dateLabel}` : ''}?`
+        : `🕐 *La ce oră*${draft.service_name ? ` — *${draft.service_name}*` : ''}${dateLabel ? `\n📅 ${dateLabel}` : ''}?`;
       return nearby
-        ? `${head}\n${nearby}\nEx: *17* sau *17:00*`
-        : `${head}\nEx: *17* sau *17:00*`;
+        ? `${head}\n${nearby}\n${en ? 'E.g. *17* or *17:00*' : 'Ex: *17* sau *17:00*'}`
+        : `${head}\n${en ? 'E.g. *17* or *17:00*' : 'Ex: *17* sau *17:00*'}`;
     }
     case MACHINE_ACTIONS.ACTION_ASK_DATE_TIME:
-      return '📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*';
+      return en
+        ? '📅 *When do you want the appointment?*\nDay and time — e.g. *Monday at 17*'
+        : '📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*';
     default:
       return null;
   }

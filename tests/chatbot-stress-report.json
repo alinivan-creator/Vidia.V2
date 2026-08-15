@@ -1,0 +1,921 @@
+{
+  "generated_at": "2026-08-15T12:08:40.002Z",
+  "total": 41,
+  "passed": 41,
+  "failed": 0,
+  "tenants": [
+    "Salon Park (parking:true)",
+    "Salon Centru (parking:null)"
+  ],
+  "failures": [],
+  "scenarios": [
+    {
+      "id": "A1-17-vs-18",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "tuns clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "Salut, Vreau o programare pe 17",
+          "action": "ACTION_ASK_TIME",
+          "draft_date": "2026-08-17",
+          "draft_time": null,
+          "reply": "🕐 *La ce oră* — *Tuns Clasic*\n📅 Luni, 17 august?\nEx: *17* sau *17:00*"
+        },
+        {
+          "user": "La 17",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-17",
+          "draft_time": "17:00",
+          "reply": "✨ *Confirmi programarea?*\n\n👤 *Alin Ivan*\n✂️ *Tuns Clasic*\n📅 Luni, 17 august\n🕐 17:00"
+        },
+        {
+          "user": "Nuuu, am greșit, nu 17, 18",
+          "action": "CLOSED",
+          "draft_date": "2026-08-17",
+          "draft_time": "18:00",
+          "reply": "*Luni* lucrăm *09:00–18:00*. Ora aleasă este în afara programului."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "A3-corr-1",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "tuns clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "luni la 17",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-17",
+          "draft_time": "17:00",
+          "reply": "✨ *Confirmi programarea?*\n\n👤 *Alin Ivan*\n✂️ *Tuns Clasic*\n📅 Luni, 17 august\n🕐 17:00"
+        },
+        {
+          "user": "nu 17, 18",
+          "action": "CLOSED",
+          "draft_date": "2026-08-17",
+          "draft_time": "18:00",
+          "reply": "*Luni* lucrăm *09:00–18:00*. Ora aleasă este în afara programului."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "A3-corr-2",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "tuns clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "luni la 17",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-17",
+          "draft_time": "17:00",
+          "reply": "✨ *Confirmi programarea?*\n\n👤 *Alin Ivan*\n✂️ *Tuns Clasic*\n📅 Luni, 17 august\n🕐 17:00"
+        },
+        {
+          "user": "Nuuu, am gresit, nu 17, 18",
+          "action": "CLOSED",
+          "draft_date": "2026-08-17",
+          "draft_time": "18:00",
+          "reply": "*Luni* lucrăm *09:00–18:00*. Ora aleasă este în afara programului."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "A3-corr-3",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "tuns clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "luni la 17",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-17",
+          "draft_time": "17:00",
+          "reply": "✨ *Confirmi programarea?*\n\n👤 *Alin Ivan*\n✂️ *Tuns Clasic*\n📅 Luni, 17 august\n🕐 17:00"
+        },
+        {
+          "user": "nu 17 ci 18",
+          "action": "CLOSED",
+          "draft_date": "2026-08-17",
+          "draft_time": "18:00",
+          "reply": "*Luni* lucrăm *09:00–18:00*. Ora aleasă este în afara programului."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "B1-parking-yes",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Aveți parcare?",
+          "action": "ADMIN_FACT",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "Avem parcare proprie chiar în fața salonului."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "B1-parking-missing",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Centru",
+      "turns": [
+        {
+          "user": "Aveti parcare?",
+          "action": "MISSING_INFO",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "Din păcate, nu dețin informații despre parcare în acest moment. Vrei să te pun în legătură directă cu cineva de la locație?"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "B2-women-yes",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Tundeți și femei?",
+          "action": "ADMIN_FACT",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "Da, tundem și doamne — tuns clasic și aranjat."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "B2-kids-yes",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Tundeți și copii?",
+          "action": "ADMIN_FACT",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "Primim și copii, fete și băieți."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "B2-women-no",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Centru",
+      "turns": [
+        {
+          "user": "Tundeti si femei?",
+          "action": "ADMIN_FACT",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "Din păcate nu oferim servicii pentru femei."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "B2-kids-missing",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Centru",
+      "turns": [
+        {
+          "user": "Tundeti si copii?",
+          "action": "MISSING_INFO",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "Din păcate, nu dețin informații despre servicii pentru copii în acest moment. Vrei să te pun în legătură directă cu cineva de la locație?"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "B3-prices-hours",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Care sunt prețurile voastre și ce program aveți?",
+          "action": "HOURS_AND_SERVICES",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "🕐 *Program — Salon Park*\n\n- Luni: 09:00 – 18:00\n- Marți: 09:00 – 18:00\n- Miercuri: 09:00 – 18:00\n- Joi: 09:00 – 18:00\n- Vineri: 09:00 – 18:00\n- Sâmbătă: 10:00 – 14:00\n- Duminică: închis\n\n✂️ *Servicii*\n\n*Tuns Clasic*\n💰 "
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "B3-weather",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Cum va fi vremea mâine?",
+          "action": "OFF_TOPIC",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "👋 Sunt asistentul de programări al *Salon Park*.\nNu pot discuta asta.\n\nPot: programare · orar · contact"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "C1-cancel",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "tuns clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "luni la 11",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-17",
+          "draft_time": "11:00",
+          "reply": "✨ *Confirmi programarea?*\n\n👤 *Alin Ivan*\n✂️ *Tuns Clasic*\n📅 Luni, 17 august\n🕐 11:00"
+        },
+        {
+          "user": "anulează",
+          "action": "CANCELLED",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "✅ Am anulat.\nPentru una nouă, scrie *programare*."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "C1-23",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "tuns clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "luni la 23:00",
+          "action": "CLOSED",
+          "draft_date": "2026-08-17",
+          "draft_time": "23:00",
+          "reply": "*Luni* lucrăm *09:00–18:00*. Ora aleasă este în afara programului."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "C2-reschedule",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Vreau să mut mâine la 14:00",
+          "action": "CLOSED",
+          "draft_date": "2026-08-16",
+          "draft_time": "14:00",
+          "reply": "*Duminică* suntem *închiși*."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "D1-en-book",
+      "ok": true,
+      "lang": "en",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Hello, I want to book Tuns Clasic for Monday at 4 PM",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-17",
+          "draft_time": "16:00",
+          "reply": "✨ *Confirm this booking?*\n\n👤 *Alin Ivan*\n✂️ *Tuns Clasic*\n📅 Luni, 17 august\n🕐 16:00"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "D1-en-sunday-closed",
+      "ok": true,
+      "lang": "en",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Tuns Clasic tomorrow at 4 PM",
+          "action": "CLOSED",
+          "draft_date": "2026-08-16",
+          "draft_time": "16:00",
+          "reply": "*Duminică* suntem *închiși*."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "D2-en-parking-yes",
+      "ok": true,
+      "lang": "en",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Do you have parking?",
+          "action": "ADMIN_FACT",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "Avem parcare proprie chiar în fața salonului."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "D2-en-parking-no",
+      "ok": true,
+      "lang": "en",
+      "tenant": "Salon Centru",
+      "turns": [
+        {
+          "user": "Do you have parking?",
+          "action": "MISSING_INFO",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "Unfortunately I don't have information about parking right now. Want me to connect you with someone at the location?"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "D3-en-cancel",
+      "ok": true,
+      "lang": "en",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Tuns Clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "Monday at 11",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-17",
+          "draft_time": "11:00",
+          "reply": "✨ *Confirmi programarea?*\n\n👤 *Alin Ivan*\n✂️ *Tuns Clasic*\n📅 Luni, 17 august\n🕐 11:00"
+        },
+        {
+          "user": "cancel",
+          "action": "CANCELLED",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "✅ Am anulat.\nPentru una nouă, scrie *programare*."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "D3-en-weather",
+      "ok": true,
+      "lang": "en",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "How is the weather tomorrow?",
+          "action": "OFF_TOPIC",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "👋 I'm the booking assistant for *Salon Park*.\nI can't discuss that.\n\nI can help with: booking · hours · contact"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "D3-en-prices-hours",
+      "ok": true,
+      "lang": "en",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "What are your prices and hours?",
+          "action": "HOURS_AND_SERVICES",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "🕐 *Hours — Salon Park*\n\n- Luni: 09:00 – 18:00\n- Marți: 09:00 – 18:00\n- Miercuri: 09:00 – 18:00\n- Joi: 09:00 – 18:00\n- Vineri: 09:00 – 18:00\n- Sâmbătă: 10:00 – 14:00\n- Duminică: închis\n\n✂️ *Servicii*\n\n*Tuns Clasic*\n💰 70"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "D3-en-women",
+      "ok": true,
+      "lang": "en",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Do you cut women's hair?",
+          "action": "ADMIN_FACT",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "Da, tundem și doamne — tuns clasic și aranjat."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "D3-en-23",
+      "ok": true,
+      "lang": "en",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Tuns Clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "Monday at 11 PM",
+          "action": "CLOSED",
+          "draft_date": "2026-08-17",
+          "draft_time": "23:00",
+          "reply": "*Luni* lucrăm *09:00–18:00*. Ora aleasă este în afara programului."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "E-matrix-1",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "tuns clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "luni la 11 jumate",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-17",
+          "draft_time": "11:30",
+          "reply": "✨ *Confirmi programarea?*\n\n👤 *Alin Ivan*\n✂️ *Tuns Clasic*\n📅 Luni, 17 august\n🕐 11:30"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "E-matrix-2",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "tuns clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "luni la 11 jumatate",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-17",
+          "draft_time": "11:30",
+          "reply": "✨ *Confirmi programarea?*\n\n👤 *Alin Ivan*\n✂️ *Tuns Clasic*\n📅 Luni, 17 august\n🕐 11:30"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "E-matrix-3",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "tuns clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "Luni la 11:30",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-17",
+          "draft_time": "11:30",
+          "reply": "✨ *Confirmi programarea?*\n\n👤 *Alin Ivan*\n✂️ *Tuns Clasic*\n📅 Luni, 17 august\n🕐 11:30"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "E-matrix-4",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "tuns clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "luni la 11,20",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-17",
+          "draft_time": "11:20",
+          "reply": "✨ *Confirmi programarea?*\n\n👤 *Alin Ivan*\n✂️ *Tuns Clasic*\n📅 Luni, 17 august\n🕐 11:20"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "E-matrix-5",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "tuns clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "luni la 11:40",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-17",
+          "draft_time": "11:40",
+          "reply": "✨ *Confirmi programarea?*\n\n👤 *Alin Ivan*\n✂️ *Tuns Clasic*\n📅 Luni, 17 august\n🕐 11:40"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "E-matrix-6",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "tuns + barba",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "marti la 3",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-18",
+          "draft_time": "15:00",
+          "reply": "✨ *Confirmi programarea?*\n\n👤 *Alin Ivan*\n✂️ *Tuns + Barba*\n📅 Marți, 18 august\n🕐 15:00"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "E-matrix-7",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "programare",
+          "action": "ACTION_ASK_SERVICE",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "✨ *Ce serviciu dorești?*\n\n1. Tuns Clasic · 30 min\n2. Tuns + Barba · 45 min\n3. Aranjat Barba · 20 min\n\nScrie *numărul* sau *numele*."
+        },
+        {
+          "user": "1",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "tuns clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "joi la 10",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-20",
+          "draft_time": "10:00",
+          "reply": "✨ *Confirmi programarea?*\n\n👤 *Alin Ivan*\n✂️ *Tuns Clasic*\n📅 Joi, 20 august\n🕐 10:00"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "E-matrix-8",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "salut",
+          "action": "MENU",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "👋 Sunt *asistentul virtual* al *Salon Park*.\n\nBun venit la *Salon Park*!\n\n📅 programări  ·  🕐 orar  ·  📞 contact"
+        },
+        {
+          "user": "1",
+          "action": "ACTION_ASK_SERVICE",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "✨ *Ce serviciu dorești?*\n\n1. Tuns Clasic · 30 min\n2. Tuns + Barba · 45 min\n3. Aranjat Barba · 20 min\n\nScrie *numărul* sau *numele*."
+        },
+        {
+          "user": "2",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "vineri la 16",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-21",
+          "draft_time": "16:00",
+          "reply": "✨ *Confirmi programarea?*\n\n👤 *Alin Ivan*\n✂️ *Tuns + Barba*\n📅 Vineri, 21 august\n🕐 16:00"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "E-matrix-9",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "tuns clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "azi la 15",
+          "action": "ACTION_ASK_DATE",
+          "draft_date": null,
+          "draft_time": "15:00",
+          "reply": "📅 *Pe ce dată* vrei *Tuns Clasic*?\nEx: *luni* sau *18 aug*"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "E-matrix-10",
+      "ok": true,
+      "lang": "ro",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "tuns clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "maine la 10",
+          "action": "ACTION_ASK_DATE",
+          "draft_date": null,
+          "draft_time": "10:00",
+          "reply": "📅 *Pe ce dată* vrei *Tuns Clasic*?\nEx: *luni* sau *18 aug*"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "E2-en-1",
+      "ok": true,
+      "lang": "en",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Tuns Clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "Monday at 11",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-17",
+          "draft_time": "11:00",
+          "reply": "✨ *Confirmi programarea?*\n\n👤 *Alin Ivan*\n✂️ *Tuns Clasic*\n📅 Luni, 17 august\n🕐 11:00"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "E2-en-2",
+      "ok": true,
+      "lang": "en",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Tuns Clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "tomorrow at 4pm",
+          "action": "CLOSED",
+          "draft_date": "2026-08-16",
+          "draft_time": "16:00",
+          "reply": "*Sunday* we are *closed*."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "E2-en-3",
+      "ok": true,
+      "lang": "en",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Tuns Clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "today at 15:00",
+          "action": "CLOSED",
+          "draft_date": "2026-08-15",
+          "draft_time": "15:00",
+          "reply": "*Saturday* we are open *10:00–14:00*. That time is outside working hours."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "E2-en-4",
+      "ok": true,
+      "lang": "en",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Hello",
+          "action": "MENU",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "👋 Sunt *asistentul virtual* al *Salon Park*.\n\nBun venit la *Salon Park*!\n\n📅 programări  ·  🕐 orar  ·  📞 contact"
+        },
+        {
+          "user": "I want to book a haircut",
+          "action": "ACTION_ASK_SERVICE",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "✨ *Ce serviciu dorești?*\n\n1. Tuns Clasic · 30 min\n2. Tuns + Barba · 45 min\n3. Aranjat Barba · 20 min\n\nScrie *numărul* sau *numele*."
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "E2-en-5",
+      "ok": true,
+      "lang": "en",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Tuns Clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "Tuesday at 10",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-18",
+          "draft_time": "10:00",
+          "reply": "✨ *Confirmi programarea?*\n\n👤 *Alin Ivan*\n✂️ *Tuns Clasic*\n📅 Marți, 18 august\n🕐 10:00"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "E2-en-6",
+      "ok": true,
+      "lang": "en",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Tuns Clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "Wednesday at 2 PM",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-19",
+          "draft_time": "14:00",
+          "reply": "✨ *Confirmi programarea?*\n\n👤 *Alin Ivan*\n✂️ *Tuns Clasic*\n📅 Miercuri, 19 august\n🕐 14:00"
+        }
+      ],
+      "error": null
+    },
+    {
+      "id": "E2-en-7",
+      "ok": true,
+      "lang": "en",
+      "tenant": "Salon Park",
+      "turns": [
+        {
+          "user": "Tuns Clasic",
+          "action": "ACTION_ASK_DATE_TIME",
+          "draft_date": null,
+          "draft_time": null,
+          "reply": "📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*"
+        },
+        {
+          "user": "Friday at 16:00",
+          "action": "ACTION_SHOW_CONFIRMATION",
+          "draft_date": "2026-08-21",
+          "draft_time": "16:00",
+          "reply": "✨ *Confirmi programarea?*\n\n👤 *Alin Ivan*\n✂️ *Tuns Clasic*\n📅 Vineri, 21 august\n🕐 16:00"
+        }
+      ],
+      "error": null
+    }
+  ]
+}

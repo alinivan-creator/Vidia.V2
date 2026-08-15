@@ -18,7 +18,9 @@ import {
   looksLikeExistingAppointmentQuery,
   looksLikeNewBookingRequest,
   looksLikeGreeting,
+  looksLikeOffTopicChat,
 } from './intentTriageService.js';
+import { looksLikeBusinessFactQuestion } from '../utils/businessInfoLookup.js';
 import { resolveAcceptedOffer } from './pendingOfferService.js';
 import { resolveNumberedChoice } from './whatsappService.js';
 import { parseRomanianDateTimeParts } from '../utils/roDateTime.js';
@@ -364,9 +366,11 @@ export function looksLikePersonName(text) {
 
 function faqActionFromText(text) {
   const n = normalize(text);
-  if (/\b(program|orar|orele|deschid|inchid|cand sunteti)\b/.test(n) && !/\bprogramar/.test(n)) {
-    return 'hours';
-  }
+  const hours = /\b(program|orar|orele|deschid|inchid|cand sunteti|hours|opening)\b/.test(n)
+    && !/\bprogramar/.test(n);
+  const prices = /\b(pret|preturi|cost|tarif|price|prices)\b/.test(n);
+  if (hours && prices) return 'hours_and_services';
+  if (hours) return 'hours';
   return 'services';
 }
 
@@ -384,6 +388,12 @@ export function recoverSoftParserIntent(mapped, textBody, triage, inModify = fal
 
   if (looksLikeExistingAppointmentQuery(textBody) || triage.intent === 'list_appointments') {
     return { ...mapped, action: 'list_appointments', confidence: 'high', source: 'keyword' };
+  }
+  if (looksLikeBusinessFactQuestion(textBody) || triage.reason === 'business_fact') {
+    return { ...mapped, action: 'missing_info', confidence: 'high', source: 'keyword' };
+  }
+  if (looksLikeOffTopicChat(textBody) || triage.reason === 'off_topic_chat') {
+    return { ...mapped, action: 'off_topic', confidence: 'high', source: 'keyword' };
   }
   if (
     looksLikeNewBookingRequest(textBody)
@@ -562,8 +572,9 @@ function applyCatalogMatches(extract, textBody, services, employees, timezone, o
  */
 function textHasExplicitDay(text) {
   const n = normalize(text);
-  return /\b(luni|marti|miercuri|joi|vineri|sambata|duminica|maine|azi|poimaine)\b/.test(n)
-    || /\b\d{1,2}\s*(ian|feb|mar|apr|mai|iun|iul|aug|sep|oct|nov|dec)/.test(n);
+  return /\b(luni|marti|miercuri|joi|vineri|sambata|duminica|maine|azi|poimaine|monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow)\b/.test(n)
+    || /\b\d{1,2}\s*(ian|feb|mar|apr|mai|iun|iul|aug|sep|oct|nov|dec)/.test(n)
+    || /\b(?:pe|on(?:\s+the)?)\s+\d{1,2}/.test(n);
 }
 
 /**
@@ -577,7 +588,7 @@ function textHasExplicitDay(text) {
 export function resolveExplicitSlot(textBody, business, now = new Date()) {
   const tz = business.timezone || 'Europe/Bucharest';
   const n = normalize(textBody);
-  const hasClockOrColloquial = /\b(?:la|ora)\s+\d{1,2}\b/.test(n)
+  const hasClockOrColloquial = /\b(?:la|ora|at)\s+\d{1,2}\b/.test(n)
     || /\b\d{1,2}[:.,]\d{2}\b/.test(n)
     || /\b\d{1,2}\s*(?:si\s+)?(?:o\s+)?(?:jumatate|jumate|juma|sfer(?:t)?)\b/.test(n)
     || /\b\d{1,2}\s+fara\s+/.test(n)
@@ -832,7 +843,7 @@ export async function extractTurnIntent({
       });
     }
     const direct = new Set([
-      'hours', 'services', 'contact', 'menu', 'confirm', 'cancel', 'cancel_pending',
+      'hours', 'services', 'hours_and_services', 'contact', 'menu', 'confirm', 'cancel', 'cancel_pending',
       'reschedule', 'off_topic', 'missing_info',
     ]);
     if (direct.has(mapped.action)) return mapped;
@@ -866,6 +877,11 @@ export async function extractTurnIntent({
   else if (triage.intent === 'contact') extract.action = 'contact';
   else if (triage.intent === 'faq') extract.action = faqActionFromText(textBody);
   else if (triage.intent === 'menu') extract.action = 'menu';
+  else if (looksLikeBusinessFactQuestion(textBody) || triage.reason === 'business_fact') {
+    extract.action = 'missing_info';
+  } else if (looksLikeOffTopicChat(textBody) || triage.reason === 'off_topic_chat') {
+    extract.action = 'off_topic';
+  }
 
   extract = applyCatalogMatches(extract, textBody, services, employees, tz, { dayHours });
   if (extract.action === 'unknown' || extract.action === 'chat') {

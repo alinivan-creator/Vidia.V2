@@ -2,12 +2,19 @@ import { formatDateKey, localToUtc, getWeekdayInTimezone, addCalendarDays } from
 
 const WEEKDAY_MAP = {
   duminica: 0,
+  sunday: 0,
   luni: 1,
+  monday: 1,
   marti: 2,
+  tuesday: 2,
   miercuri: 3,
+  wednesday: 3,
   joi: 4,
+  thursday: 4,
   vineri: 5,
+  friday: 5,
   sambata: 6,
+  saturday: 6,
 };
 
 const MONTH_MAP = {
@@ -249,11 +256,39 @@ function extractCalendarDate(normalized, timezone, now) {
   return { dateKey: null, rest: normalized };
 }
 
+function parseDayOfMonth(normalized, timezone, now) {
+  const m = normalized.match(/\b(?:pe|data(?:\s+de)?|ziua(?:\s+de)?|on(?:\s+the)?)\s+(\d{1,2})(?:st|nd|rd|th)?\b/);
+  if (!m) return null;
+  const day = Number(m[1]);
+  if (day < 1 || day > 31) return null;
+  const today = formatDateKey(now, timezone);
+  const year = Number(today.slice(0, 4));
+  const month = Number(today.slice(5, 7));
+  if (!isValidYmd(year, month, day)) {
+    const nextMonth = month === 12 ? 1 : month + 1;
+    const nextYear = month === 12 ? year + 1 : year;
+    if (!isValidYmd(nextYear, nextMonth, day)) return null;
+    let key = toDateKey(nextYear, nextMonth, day);
+    if (key < today) return null;
+    return key;
+  }
+  let key = toDateKey(year, month, day);
+  if (key < today) {
+    const nextMonth = month === 12 ? 1 : month + 1;
+    const nextYear = month === 12 ? year + 1 : year;
+    if (!isValidYmd(nextYear, nextMonth, day)) return null;
+    key = toDateKey(nextYear, nextMonth, day);
+  }
+  return key;
+}
+
 function parseRelativeDate(normalized, timezone, now) {
   const today = formatDateKey(now, timezone);
-  if (/\bpoimaine\b/.test(normalized)) return addCalendarDays(today, 2);
-  if (/\bmaine\b/.test(normalized)) return addCalendarDays(today, 1);
-  if (/\bazi\b/.test(normalized)) return today;
+  if (/\bpoimaine\b/.test(normalized) || /\bday after tomorrow\b/.test(normalized)) {
+    return addCalendarDays(today, 2);
+  }
+  if (/\bmaine\b/.test(normalized) || /\btomorrow\b/.test(normalized)) return addCalendarDays(today, 1);
+  if (/\bazi\b/.test(normalized) || /\btoday\b/.test(normalized)) return today;
 
   const dayName = Object.keys(WEEKDAY_MAP)
     .sort((a, b) => b.length - a.length)
@@ -269,6 +304,12 @@ function parseRelativeDate(normalized, timezone, now) {
 }
 
 function parseTimeFromText(normalized, meridian, dayHours = null) {
+  const clockMeridian = normalized.match(/\b(\d{1,2})(?:[:.,](\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/);
+  if (clockMeridian) {
+    const mer = /p/.test(clockMeridian[3]) ? 'pm' : 'am';
+    return formatParsedClock(Number(clockMeridian[1]), Number(clockMeridian[2] || 0), mer, dayHours);
+  }
+
   const clock = normalized.match(/\b(\d{1,2})[:.,](\d{2})\b/);
   if (clock) {
     return formatParsedClock(Number(clock[1]), Number(clock[2]), meridian, dayHours);
@@ -306,7 +347,7 @@ function parseTimeFromText(normalized, meridian, dayHours = null) {
   const withMeridianWord = normalized.match(
     /\b(\d{1,2})\s*(?:dupa[\s-]*amiaza|dimineata|seara|\bpm\b|\bam\b|p\.m\.|a\.m\.)\b/,
   );
-  const laOra = normalized.match(/\b(?:la|ora)\s+(\d{1,2})\b/);
+  const laOra = normalized.match(/\b(?:la|ora|at)\s+(\d{1,2})\b/);
   const raw = withMeridianWord || laOra;
   if (!raw) return null;
 
@@ -337,7 +378,10 @@ export function parseRomanianDateTimeParts(text, timezone, now = new Date(), opt
 
   const meridian = detectMeridian(normalized);
   const calendar = extractCalendarDate(normalized, timezone, now);
-  const dateKey = calendar.dateKey || parseRelativeDate(normalized, timezone, now);
+  const dateKey = calendar.dateKey
+    || parseRelativeDate(normalized, timezone, now)
+    || parseDayOfMonth(calendar.rest, timezone, now)
+    || parseDayOfMonth(normalized, timezone, now);
   const dayHours = options.dayHours ?? null;
   const timeHHmm = parseTimeFromText(calendar.rest, meridian, dayHours)
     || parseTimeFromText(normalized, meridian, dayHours);

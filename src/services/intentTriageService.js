@@ -1,3 +1,5 @@
+import { looksLikeBusinessFactQuestion } from '../utils/businessInfoLookup.js';
+
 /**
  * @typedef {'cancel' | 'reschedule' | 'book' | 'list_appointments' | 'faq' | 'contact' | 'menu' | 'callback' | 'sms_opt_in' | 'sms_opt_out' | 'unknown'} TriageIntent
  *
@@ -54,6 +56,7 @@ export function detectModificationIntent(text) {
     'reprogramare',
     'reprogramari',
     'reprogram',
+    'reschedule',
     'schimb',
     'modific',
     'modificare',
@@ -61,11 +64,14 @@ export function detectModificationIntent(text) {
     'alta ora',
     'alta data',
     'alt slot',
+    'move my appointment',
+    'change my appointment',
   ];
   if (
     rescheduleHints.some((k) => n.includes(k))
     || /\bmut\b/.test(n)
     || /vreau sa (schimb|modific|mut)/.test(n)
+    || /\b(move|change)\b/.test(n) && /\b(appointment|booking|slot)\b/.test(n)
   ) {
     return 'reschedule';
   }
@@ -78,17 +84,27 @@ export function detectModificationIntent(text) {
  * @param {string} text
  * @returns {boolean}
  */
+export function looksLikeOffTopicChat(text) {
+  const n = normalize(text);
+  if (!n) return false;
+  if (/\b(vremea|vreme|weather|forecast|ploua|rain)\b/.test(n)) return true;
+  if (/\b(ai mancat|ce faci|cum te cheama)\b/.test(n)) return true;
+  return false;
+}
+
 export function looksLikeDatetimeOrSlot(text) {
   const n = normalize(text);
   if (!n) return false;
+  if (looksLikeOffTopicChat(n)) return false;
   const days = [
     'luni', 'marti', 'miercuri', 'joi', 'vineri', 'sambata', 'duminica',
     'maine', 'azi', 'poimaine', 'today', 'tomorrow',
+    'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
   ];
   if (days.some((d) => n.includes(d))) return true;
   if (/\b\d{1,2}\s*(ian|feb|mar|apr|mai|iun|iul|aug|sep|oct|nov|dec)/.test(n)) return true;
   if (/\b(dupa[\s-]*amiaza|dimineata|seara|amiaza)\b/.test(n) && /\d/.test(n)) return true;
-  if (/\b\d{1,2}([:.,]h?\d{2})?\b/.test(n) && /\b(la|ora|pe|am|pm)\b/.test(n)) return true;
+  if (/\b\d{1,2}([:.,]h?\d{2})?\b/.test(n) && /\b(la|ora|pe|at|am|pm)\b/.test(n)) return true;
   if (/\b\d{1,2}[:.,]\d{2}\b/.test(n)) return true;
   if (/\b(jumatate|jumate|juma|sfer(?:t)?|fara)\b/.test(n) && /\d/.test(n)) return true;
   return false;
@@ -195,6 +211,8 @@ export function looksLikeNewBookingRequest(text) {
   const n = normalize(text);
   if (!n) return false;
   if (looksLikeExistingAppointmentQuery(n)) return false;
+  if (looksLikeBusinessFactQuestion(n)) return false;
+  if (looksLikeOffTopicChat(n)) return false;
   if (
     n === 'programare'
     || n === 'rezervare'
@@ -205,20 +223,23 @@ export function looksLikeNewBookingRequest(text) {
     return true;
   }
   if (/\b(sa ma programez|programeaza-ma|programeaza ma|o programare noua)\b/.test(n)) return true;
+  if (/\b(i want to book|want to book|book a|book an)\b/.test(n)) return true;
+  if (/\b(haircut|appointment)\b/.test(n) && /\b(want|book|need|please)\b/.test(n)) return true;
   if (/\b(vreau|as vrea|doresc|hai|fac|face|faceti)\b/.test(n) && /\b(programar|rezervar)/.test(n)) {
     return true;
   }
   if (/\b(programez|programeaza)\b/.test(n) && !/\b(ce|care|am uitat)\b/.test(n)) return true;
   if (
-    /\b(tuns|tunde|tundeti|tunsoare|barba|aranjat|aranjati|aranjez)\b/.test(n)
-    && !/\b(pret|preturi|cost|cat costa|tarif|orar|orele|durata|cat dureaza)\b/.test(n)
+    /\b(tuns|tunde|tundeti|tunsoare|barba|aranjat|aranjati|aranjez|haircut)\b/.test(n)
+    && !/\b(pret|preturi|cost|cat costa|tarif|orar|orele|durata|cat dureaza|price|hours)\b/.test(n)
+    && !looksLikeBusinessFactQuestion(n)
     && !(/\bprogram\b/.test(n) && !/\bprogramar/.test(n))
   ) {
     return true;
   }
   if (
     looksLikeDatetimeOrSlot(n)
-    && /\b(la|ora|vreau|as vrea|doresc|hai|tuns|programar|rezervar)\b/.test(n)
+    && /\b(la|ora|at|vreau|as vrea|doresc|hai|tuns|programar|rezervar|want|book)\b/.test(n)
     && !(/\bprogram\b/.test(n) && !/\bprogramar/.test(n))
   ) {
     return true;
@@ -325,6 +346,8 @@ export function triageUserIntent(text, opts = {}) {
     'cost',
     'cat costa',
     'tarif',
+    'price',
+    'prices',
     'detalii',
     'info',
     'informatii',
@@ -334,6 +357,7 @@ export function triageUserIntent(text, opts = {}) {
     'program',
     'orar',
     'orele',
+    'hours',
     'deschid',
     'inchid',
     'cand sunteti',
@@ -354,6 +378,14 @@ export function triageUserIntent(text, opts = {}) {
 
   if (looksLikeGreeting(n)) {
     return { intent: 'menu', confidence: 'high', reason: 'greeting' };
+  }
+
+  if (looksLikeBusinessFactQuestion(n)) {
+    return { intent: 'unknown', confidence: 'medium', reason: 'business_fact' };
+  }
+
+  if (looksLikeOffTopicChat(n)) {
+    return { intent: 'unknown', confidence: 'high', reason: 'off_topic_chat' };
   }
 
   return { intent: 'unknown', confidence: 'low', reason: 'no_keyword_match' };

@@ -37,6 +37,16 @@ export const WEEKDAY_LABELS_RO = {
   '6': 'Sâmbătă',
 };
 
+export const WEEKDAY_LABELS_EN = {
+  '0': 'Sunday',
+  '1': 'Monday',
+  '2': 'Tuesday',
+  '3': 'Wednesday',
+  '4': 'Thursday',
+  '5': 'Friday',
+  '6': 'Saturday',
+};
+
 /**
  * Returns explicitly configured hours from Admin, or null if unset.
  * Do NOT use for AI when null — that would invent a schedule.

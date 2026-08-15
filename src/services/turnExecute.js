@@ -53,6 +53,12 @@ import {
   resolveServiceDurationMinutes,
   unknownInfoClientMessage,
 } from '../utils/workingHours.js';
+import {
+  lookupBusinessInfo,
+  formatBusinessInfoReply,
+  missingBusinessInfoMessage,
+} from '../utils/businessInfoLookup.js';
+import { detectClientLanguage } from '../utils/clientLanguage.js';
 import { getPendingTtlMinutes } from '../config/conversationConfig.js';
 import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
 import { getBusinessContactInfo } from './contactService.js';
@@ -1348,7 +1354,7 @@ async function executeCancel({ business, recipientPhone, extract, activeDraft, c
   });
 }
 
-async function executeHours(business) {
+async function executeHours(business, lang = 'ro') {
   const hours = getConfiguredBusinessHours(business);
   return handlerResult({
     status: 'SUCCESS',
@@ -1358,11 +1364,12 @@ async function executeHours(business) {
     data: {
       hours_text: hours ? formatBusinessHoursText(hours) : null,
       hours_configured: Boolean(hours),
+      client_language: lang,
     },
   });
 }
 
-async function executeServices(business) {
+async function executeServices(business, lang = 'ro') {
   const services = getBookingConfig(business).services;
   return handlerResult({
     status: 'SUCCESS',
@@ -1376,6 +1383,23 @@ async function executeServices(business) {
         duration_minutes: s.duration_minutes,
         price_ron: s.price_ron ?? null,
       })),
+      client_language: lang,
+    },
+  });
+}
+
+async function executeHoursAndServices(business, lang = 'ro') {
+  const hours = await executeHours(business, lang);
+  const services = await executeServices(business, lang);
+  return handlerResult({
+    status: 'SUCCESS',
+    action_performed: 'HOURS_AND_SERVICES_LOOKUP',
+    next_required_step: null,
+    user_message_template_key: 'HOURS_AND_SERVICES',
+    data: {
+      ...hours.data,
+      ...services.data,
+      client_language: lang,
     },
   });
 }
@@ -1518,13 +1542,6 @@ async function executeChat(business) {
   });
 }
 
-function normalizeFactText(text) {
-  return String(text ?? '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
-}
-
 /**
  * Answer only from Admin ai_facts lines. Never invent a yes/no.
  * @param {Business} business
@@ -1532,49 +1549,47 @@ function normalizeFactText(text) {
  * @returns {string | null}
  */
 export function lookupAdminFact(business, text) {
-  const facts = business?.booking_settings?.ai_facts;
-  if (typeof facts !== 'string' || !facts.trim()) return null;
-  const q = normalizeFactText(text);
-  const tokens = q.split(/[^a-z0-9]+/).filter((t) => t.length >= 4);
-  const stop = new Set([
-    'vreau', 'aveti', 'avem', 'este', 'sunt', 'pentru', 'aceasta', 'acesta',
-    'informatie', 'spune', 'puteti', 'poate', 'despre', 'care',
-  ]);
-  const keys = tokens.filter((t) => !stop.has(t));
-  if (!keys.length) return null;
-  const lines = facts.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-  const hit = lines.find((line) => {
-    const nl = normalizeFactText(line);
-    return keys.some((k) => nl.includes(k));
-  });
-  return hit || null;
+  const looked = lookupBusinessInfo(business, text);
+  return looked.found ? formatBusinessInfoReply(looked, 'ro') : null;
 }
 
-function executeOffTopic(business) {
+function executeOffTopic(business, lang = 'ro') {
   return handlerResult({
     status: 'CHAT',
     action_performed: null,
     next_required_step: null,
     user_message_template_key: 'OFF_TOPIC',
-    data: { business_name: business.name },
+    data: { business_name: business.name, client_language: lang },
   });
 }
 
-function executeMissingInfo(business, textBody = '') {
-  const fact = lookupAdminFact(business, textBody);
-  if (fact) {
+function executeMissingInfo(business, textBody = '', lang = 'ro') {
+  const looked = lookupBusinessInfo(business, textBody);
+  if (looked.found) {
     return handlerResult({
       status: 'SUCCESS',
       action_performed: 'FACT_LOOKUP',
       user_message_template_key: 'ADMIN_FACT',
-      data: { fact, business_name: business.name },
+      data: {
+        fact: formatBusinessInfoReply(looked, lang),
+        business_name: business.name,
+        fact_topic: looked.topic,
+        client_language: lang,
+      },
     });
   }
+  const topicLabel = lang === 'en' ? looked.topicLabelEn : looked.topicLabelRo;
   return handlerResult({
     status: 'CHAT',
     action_performed: null,
     user_message_template_key: 'MISSING_INFO',
-    data: { business_name: business.name },
+    data: {
+      business_name: business.name,
+      fact_topic: looked.topic,
+      topic_label: topicLabel,
+      client_message: missingBusinessInfoMessage(topicLabel, lang),
+      client_language: lang,
+    },
   });
 }
 
@@ -1707,6 +1722,7 @@ async function dispatchExecute({
 
   const action = extract.action;
   const intent = convState.context_data?.intent;
+  const lang = detectClientLanguage(textBody, convState?.context_data?.client_language);
 
   if (action === 'clarify_needed') {
     return executeClarifyNeeded({ business, recipientPhone, extract, convState, requestId });
@@ -1886,8 +1902,9 @@ async function dispatchExecute({
   if (action === 'cancel') {
     return executeCancel({ business, recipientPhone, extract, activeDraft: draft, convState, requestId });
   }
-  if (action === 'hours') return executeHours(business);
-  if (action === 'services') return executeServices(business);
+  if (action === 'hours') return executeHours(business, lang);
+  if (action === 'services') return executeServices(business, lang);
+  if (action === 'hours_and_services') return executeHoursAndServices(business, lang);
   if (action === 'contact') return executeContact(business);
   if (action === 'menu') return executeMenu(business, recipientPhone, requestId);
   if (action === 'callback') {
@@ -1896,8 +1913,8 @@ async function dispatchExecute({
   if (action === 'set_name') {
     return executeSetName({ business, recipientPhone, extract, activeDraft: draft, requestId });
   }
-  if (action === 'off_topic') return executeOffTopic(business);
-  if (action === 'missing_info') return executeMissingInfo(business, textBody);
+  if (action === 'off_topic') return executeOffTopic(business, lang);
+  if (action === 'missing_info') return executeMissingInfo(business, textBody, lang);
 
   return executeChat(business);
 }

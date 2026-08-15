@@ -100,7 +100,7 @@ function normalizeText(text) {
 export function parseInFlightCorrection(text) {
   const n = normalizeText(text);
   const nuThen = n.match(
-    /\bnu(?:\s+(?:pe|la|ora|data|ziua))?\s+(\d{1,2})\s*(?:,|;|ci)\s*(?:(?:pe|la|ora|data(?:\s+de)?)\s+)?(\d{1,2})\b/,
+    /\b(?:nu+|no|not)(?:\s+(?:pe|la|ora|data|ziua))?\s+(\d{1,2})\s*(?:,|;|ci)\s*(?:(?:pe|la|ora|data(?:\s+de)?|at)\s+)?(\d{1,2})\b/,
   );
   if (nuThen) return { rejected: Number(nuThen[1]), value: Number(nuThen[2]) };
   const valueThenNu = n.match(

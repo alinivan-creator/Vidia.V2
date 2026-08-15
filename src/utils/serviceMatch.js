@@ -5,7 +5,7 @@
  */
 
 const ALIAS_GROUPS = [
-  ['tuns', 'tunde', 'tundeti', 'tunsoare', 'tunsu'],
+  ['tuns', 'tunde', 'tundeti', 'tunsoare', 'tunsu', 'haircut'],
   ['barba', 'barbierit', 'barbier'],
   ['aranj', 'aranjat', 'aranjati', 'aranjez', 'aranjezi', 'aranjeaza'],
 ];

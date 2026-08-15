@@ -17,6 +17,7 @@ import {
 import { formatMachineAction, formatterSystemHint } from '../lib/ai/responseFormatter.js';
 import { MACHINE_ACTIONS } from '../lib/booking/stateMachine.js';
 import { unknownInfoClientMessage } from '../utils/workingHours.js';
+import { missingBusinessInfoMessage } from '../utils/businessInfoLookup.js';
 import { formatServiceAskMessage } from '../utils/serviceMatch.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
@@ -39,6 +40,7 @@ function formatServiceLine(s) {
 export function renderHandlerResult(business, result) {
   const d = result.data || {};
   const key = result.user_message_template_key;
+  const lang = d.client_language === 'en' ? 'en' : 'ro';
   const machineText = result.machine_action
     ? formatMachineAction({
       action: result.machine_action,
@@ -54,6 +56,7 @@ export function renderHandlerResult(business, result) {
       alternatives: d.alternatives || [],
       occupiedLabel: d.occupied_label || null,
       services: d.services || [],
+      lang,
     })
     : null;
   if (machineText) return machineText;
@@ -180,7 +183,24 @@ export function renderHandlerResult(business, result) {
       if (!d.hours_configured || !d.hours_text) {
         return unknownInfoClientMessage();
       }
-      return `🕐 *Program — ${business.name}*\n\n${d.hours_text}`;
+      return lang === 'en'
+        ? `🕐 *Hours — ${business.name}*\n\n${d.hours_text}`
+        : `🕐 *Program — ${business.name}*\n\n${d.hours_text}`;
+    case 'HOURS_AND_SERVICES': {
+      const hoursBlock = d.hours_configured && d.hours_text
+        ? (lang === 'en'
+          ? `🕐 *Hours — ${business.name}*\n\n${d.hours_text}`
+          : `🕐 *Program — ${business.name}*\n\n${d.hours_text}`)
+        : '';
+      const services = d.services || [];
+      const serviceLines = ['✂️ *Servicii*', ''];
+      services.forEach((s) => {
+        serviceLines.push(`*${s.name}*`);
+        serviceLines.push(formatServiceLine(s));
+        serviceLines.push('');
+      });
+      return [hoursBlock, serviceLines.join('\n')].filter(Boolean).join('\n\n');
+    }
     case 'CONTACT':
       return formatContactMessage(business);
     case 'MENU':
@@ -201,17 +221,29 @@ export function renderHandlerResult(business, result) {
       );
     }
     case 'CHAT_FALLBACK':
-      return (
-        `👋 Sunt asistentul de programări al *${d.business_name || business.name}*.\n` +
-        `Cu ce te pot ajuta?  ·  programare  ·  orar  ·  contact`
-      );
+      return lang === 'en'
+        ? (
+          `👋 I'm the booking assistant for *${d.business_name || business.name}*.\n` +
+          `How can I help?  ·  booking  ·  hours  ·  contact`
+        )
+        : (
+          `👋 Sunt asistentul de programări al *${d.business_name || business.name}*.\n` +
+          `Cu ce te pot ajuta?  ·  programare  ·  orar  ·  contact`
+        );
     case 'OFF_TOPIC':
-      return (
-        `👋 Sunt asistentul de programări al *${d.business_name || business.name}*.\n` +
-        `Nu pot discuta asta.\n\nPot: programare · orar · contact`
-      );
+      return lang === 'en'
+        ? (
+          `👋 I'm the booking assistant for *${d.business_name || business.name}*.\n` +
+          `I can't discuss that.\n\nI can help with: booking · hours · contact`
+        )
+        : (
+          `👋 Sunt asistentul de programări al *${d.business_name || business.name}*.\n` +
+          `Nu pot discuta asta.\n\nPot: programare · orar · contact`
+        );
     case 'MISSING_INFO':
-      return unknownInfoClientMessage();
+      return d.client_message
+        || missingBusinessInfoMessage(d.topic_label || null, lang)
+        || unknownInfoClientMessage();
     case 'ADMIN_FACT':
       return String(d.fact || unknownInfoClientMessage());
     default:

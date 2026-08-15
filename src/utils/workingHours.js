@@ -9,6 +9,7 @@ import {
   getWeekdayInTimezone,
   localToUtc,
   WEEKDAY_LABELS_RO,
+  WEEKDAY_LABELS_EN,
   getBookingConfig,
 } from './datetime.js';
 
@@ -60,30 +61,37 @@ export function getHoursForDate(business, date) {
  * @param {Date | string} end
  * @returns {{ ok: true, reason: null, message: null } | { ok: false, reason: string, message: string }}
  */
-export function assertWithinWorkingHours(business, start, end) {
+export function assertWithinWorkingHours(business, start, end, lang = 'ro') {
   const startDate = start instanceof Date ? start : new Date(start);
   const endDate = end instanceof Date ? end : new Date(end);
+  const en = lang === 'en';
   if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || endDate <= startDate) {
     return {
       ok: false,
       reason: 'invalid_range',
-      message: 'Intervalul de programare este invalid.',
+      message: en ? 'That time range is not valid.' : 'Intervalul de programare este invalid.',
     };
   }
 
   const info = getHoursForDate(business, startDate);
+  const weekdayKey = info.weekday != null ? String(info.weekday) : null;
+  const dayName = en && weekdayKey
+    ? (WEEKDAY_LABELS_EN[/** @type {keyof typeof WEEKDAY_LABELS_EN} */ (weekdayKey)] || info.dayName)
+    : info.dayName;
   if (!info.configured) {
     return {
       ok: false,
       reason: 'hours_unset',
-      message: 'Din păcate nu vă pot oferi ore de programare momentan.',
+      message: en
+        ? 'Unfortunately I cannot offer booking hours right now.'
+        : 'Din păcate nu vă pot oferi ore de programare momentan.',
     };
   }
   if (!info.open || !info.dayHours) {
     return {
       ok: false,
       reason: 'closed',
-      message: `*${info.dayName}* suntem *închiși*.`,
+      message: en ? `*${dayName}* we are *closed*.` : `*${dayName}* suntem *închiși*.`,
     };
   }
 
@@ -96,9 +104,9 @@ export function assertWithinWorkingHours(business, start, end) {
     return {
       ok: false,
       reason: 'outside_hours',
-      message:
-        `*${info.dayName}* lucrăm *${info.dayHours.open}–${info.dayHours.close}*. ` +
-        `Ora aleasă este în afara programului.`,
+      message: en
+        ? `*${dayName}* we are open *${info.dayHours.open}–${info.dayHours.close}*. That time is outside working hours.`
+        : `*${dayName}* lucrăm *${info.dayHours.open}–${info.dayHours.close}*. Ora aleasă este în afara programului.`,
     };
   }
 
