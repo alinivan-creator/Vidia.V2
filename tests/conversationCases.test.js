@@ -221,4 +221,23 @@ describe('inbound cases: greeting, menu, booking, off-topic', () => {
     assert.match(chat, /Cu ce te pot ajuta/);
     assert.doesNotMatch(reply('ASK_DATE'), /în afara programului/);
   });
+
+  it('confirmed booking includes a tappable add-to-calendar link', () => {
+    const text = renderHandlerResult(BUSINESS, {
+      status: 'SUCCESS',
+      user_message_template_key: 'CONFIRMATION_BOOKED',
+      calendar_cta: {
+        url: 'https://example.com/calendar/event.ics?title=Tuns',
+        title: 'Adaugă în calendar',
+      },
+      data: {
+        service_name: 'Tuns Clasic',
+        slot_label: 'Miercuri, 19 Aug. — Ora 16:00',
+        client_name: 'Alin Ivan',
+      },
+    });
+    assert.match(text, /Programare confirmată/);
+    assert.match(text, /\[📅 Adaugă în calendar\]\(https:\/\/example\.com\/calendar\/event\.ics/);
+    assert.doesNotMatch(text, /fișier \.ics/);
+  });
 });
