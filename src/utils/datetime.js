@@ -106,7 +106,9 @@ export function getWeekdayInTimezone(date, timezone) {
     .toLowerCase();
 
   const map = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
-  return map[/** @type {keyof typeof map} */ (weekday.slice(0, 3))] ?? 0;
+  const key = weekday.slice(0, 3);
+  if (map[/** @type {keyof typeof map} */ (key)] == null) return null;
+  return map[/** @type {keyof typeof map} */ (key)];
 }
 
 /**

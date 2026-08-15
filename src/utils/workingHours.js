@@ -38,6 +38,9 @@ export function hasConfiguredOpenDay(business) {
 export function getHoursForDate(business, date) {
   const hours = getAdminBusinessHours(business);
   const weekday = getWeekdayInTimezone(date, business.timezone);
+  if (weekday == null) {
+    return { configured: Boolean(hours), open: false, dayHours: null, weekday: null, dayName: 'ziua aleasă' };
+  }
   const dayName = WEEKDAY_LABELS_RO[/** @type {keyof typeof WEEKDAY_LABELS_RO} */ (String(weekday))]
     || 'ziua aleasă';
   if (!hours) {

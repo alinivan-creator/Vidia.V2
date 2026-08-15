@@ -207,6 +207,13 @@ export function looksLikeNewBookingRequest(text) {
     return true;
   }
   if (/\b(programez|programeaza)\b/.test(n) && !/\b(ce|care|am uitat)\b/.test(n)) return true;
+  if (
+    looksLikeDatetimeOrSlot(n)
+    && /\b(la|ora|vreau|as vrea|doresc|hai|tuns|programar|rezervar)\b/.test(n)
+    && !(/\bprogram\b/.test(n) && !/\bprogramar/.test(n))
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -350,7 +357,7 @@ export function triageUserIntent(text, opts = {}) {
 export function looksLikeGreeting(text) {
   const n = normalize(text);
   if (!n) return false;
-  return /^(salut|buna|buna ziua|buna seara|buna dimineata|hello|hi|hey|servus|ciao|noroc)[\s!.]*$/i.test(n);
+  return /^(salut|salutari|ceau|ciao|buna|buna ziua|buna seara|buna dimineata|hello|hi|hey|servus|noroc)[\s!.]*$/i.test(n);
 }
 
 /**

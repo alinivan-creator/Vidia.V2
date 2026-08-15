@@ -354,6 +354,7 @@ export async function getAvailableSlots({
   for (let dayOffset = 0; dayOffset < config.bookingHorizonDays && slots.length < limit; dayOffset++) {
     const day = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
     const weekday = getWeekdayInTimezone(day, timezone);
+    if (weekday == null) continue;
     const hours = config.businessHours[String(weekday)];
 
     if (!hours || !hours.open || !hours.close) continue;

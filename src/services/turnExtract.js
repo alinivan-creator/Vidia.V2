@@ -536,10 +536,40 @@ function applyCatalogMatches(extract, textBody, services, employees, timezone, o
  * @param {string} timezone
  * @param {{ freezeDate?: boolean, freezeTime?: boolean }} [opts]
  */
+function textHasExplicitDay(text) {
+  const n = normalize(text);
+  return /\b(luni|marti|miercuri|joi|vineri|sambata|duminica|maine|azi|poimaine)\b/.test(n)
+    || /\b\d{1,2}\s*(ian|feb|mar|apr|mai|iun|iul|aug|sep|oct|nov|dec)/.test(n);
+}
+
+/**
+ * Weekday + hour in the user text beat the LLM and leftover session dates.
+ * Time is coerced against that day's Admin hours ("marți la 3" → 15:00, not Sunday).
+ *
+ * @param {string} textBody
+ * @param {Business} business
+ * @param {Date} [now]
+ */
+export function resolveExplicitSlot(textBody, business, now = new Date()) {
+  const tz = business.timezone || 'Europe/Bucharest';
+  if (!textHasExplicitDay(textBody) && !/\b(?:la|ora)\s+\d{1,2}\b/.test(normalize(textBody))) {
+    return null;
+  }
+  const first = parseRomanianDateTimeParts(textBody, tz, now);
+  const when = first.dateKey ? localToUtc(first.dateKey, '12:00', tz) : now;
+  const dayHours = getHoursForDate(business, when).dayHours;
+  const parts = parseRomanianDateTimeParts(textBody, tz, now, { dayHours });
+  if (!parts.dateKey && !parts.timeHHmm) return null;
+  return parts;
+}
+
 function applyParsedDateTime(next, text, timezone, opts = {}) {
   const parts = parseRomanianDateTimeParts(text, timezone, new Date(), { dayHours: opts.dayHours ?? null });
-  const dateLocked = Boolean(opts.freezeDate || (next.date_text && /^\d{4}-\d{2}-\d{2}$/.test(next.date_text)));
-  const timeLocked = Boolean(opts.freezeTime || (next.time_text && /^\d{2}:\d{2}$/.test(next.time_text)));
+  const explicitDay = textHasExplicitDay(text);
+  const dateLocked = Boolean(opts.freezeDate)
+    || (!explicitDay && next.date_text && /^\d{4}-\d{2}-\d{2}$/.test(next.date_text));
+  const timeLocked = Boolean(opts.freezeTime)
+    || (!explicitDay && next.time_text && /^\d{2}:\d{2}$/.test(next.time_text));
   if (parts.dateKey && !dateLocked) next.date_text = parts.dateKey;
   if (parts.timeHHmm && !timeLocked) next.time_text = parts.timeHHmm;
 }
@@ -705,6 +735,20 @@ export async function extractTurnIntent({
   }
 
   const inModify = step === CONVERSATION_STEPS.RESCHEDULING || step === CONVERSATION_STEPS.MODIFYING;
+  const explicit = resolveExplicitSlot(textBody, business);
+  if (explicit?.dateKey && explicit?.timeHHmm && !looksLikeExistingAppointmentQuery(textBody)) {
+    const mod = triageUserIntent(textBody, { businessType: business.business_type });
+    if (mod.intent !== 'cancel') {
+      return emptyExtract({
+        action: inModify || mod.intent === 'reschedule' ? 'reschedule' : 'book',
+        date_text: explicit.dateKey,
+        time_text: explicit.timeHHmm,
+        datetime: explicit.datetime,
+        confidence: 'high',
+        source: 'parser',
+      });
+    }
+  }
   const nlu = await extractBookingEntities({
     business,
     textBody,

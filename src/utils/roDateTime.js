@@ -218,11 +218,14 @@ function parseRelativeDate(normalized, timezone, now) {
   if (/\bmaine\b/.test(normalized)) return addCalendarDays(today, 1);
   if (/\bazi\b/.test(normalized)) return today;
 
-  const dayName = Object.keys(WEEKDAY_MAP).find((d) => new RegExp(`\\b${d}\\b`).test(normalized));
+  const dayName = Object.keys(WEEKDAY_MAP)
+    .sort((a, b) => b.length - a.length)
+    .find((d) => new RegExp(`\\b${d}\\b`).test(normalized));
   if (!dayName) return null;
 
   const want = WEEKDAY_MAP[/** @type {keyof typeof WEEKDAY_MAP} */ (dayName)];
   const current = getWeekdayInTimezone(now, timezone);
+  if (current == null) return null;
   let add = (want - current + 7) % 7;
   if (add === 0 && !/\bazi\b/.test(normalized)) add = 7;
   return addCalendarDays(today, add);
