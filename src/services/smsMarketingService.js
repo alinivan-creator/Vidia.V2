@@ -204,6 +204,7 @@ export async function sendSmsMessage({ business, toPhone, body, requestId = null
 
 /**
  * Lists clients with validated SMS opt-in for a business.
+ * Dedupes by E.164 phone so the Admin list / campaigns never show the same number twice.
  * @param {string} businessId
  * @returns {Promise<{ id: string; phone_number: string; display_name: string | null; sms_opt_in: boolean }[]>}
  */
@@ -230,15 +231,26 @@ export async function listSmsOptedInClients(businessId) {
     return [];
   }
 
-  // Defense in depth: never trust a row without explicit true
-  return /** @type {{ id: string; phone_number: string; display_name: string | null; sms_opt_in: boolean }[]} */ (
-    (data ?? []).filter((row) => row.sms_opt_in === true)
-  );
+  /** @type {Map<string, { id: string; phone_number: string; display_name: string | null; sms_opt_in: boolean }>} */
+  const byPhone = new Map();
+  for (const row of data ?? []) {
+    if (row.sms_opt_in !== true) continue;
+    const key = toE164(row.phone_number);
+    if (!key || byPhone.has(key)) continue;
+    byPhone.set(key, {
+      id: row.id,
+      phone_number: key,
+      display_name: row.display_name ?? null,
+      sms_opt_in: true,
+    });
+  }
+  return [...byPhone.values()];
 }
 
 /**
  * Sets marketing SMS opt-in / opt-out for a client.
- * Creates the client row when opting in a phone that is not yet in the DB (Admin manual list).
+ * Idempotent per (business_id, phone): one client row (DB UNIQUE), second booking does not insert again.
+ * Creates the client row only when opting in a phone that is not yet in the DB (Admin manual list).
  * @param {Object} params
  * @param {string} params.businessId
  * @param {string} params.rawPhone
@@ -250,23 +262,66 @@ export async function setClientSmsOptIn({ businessId, rawPhone, optIn, source = 
   if (!phone || !businessId) return null;
 
   const now = new Date().toISOString();
-  const patch = optIn
-    ? { sms_opt_in: true, sms_opt_in_at: now, sms_opt_out_at: null }
-    : { sms_opt_in: false, sms_opt_out_at: now };
 
-  const { data: updated, error: updateError } = await supabase
+  const { data: existing, error: readError } = await supabase
     .from('clients')
-    .update(patch)
+    .select('id, phone_number, display_name, sms_opt_in, sms_opt_in_at')
     .eq('business_id', businessId)
     .eq('phone_number', phone)
-    .select('id, phone_number, display_name, sms_opt_in')
     .maybeSingle();
 
-  if (updateError) {
-    console.warn('[smsMarketing] setClientSmsOptIn update failed:', updateError.message);
+  if (readError) {
+    console.warn('[smsMarketing] setClientSmsOptIn read failed:', readError.message);
     return null;
   }
-  if (updated) return updated;
+
+  // Already opted in — keep the same row and original consent time (no duplicate on 2nd booking).
+  if (optIn && existing?.sms_opt_in === true) {
+    return {
+      id: existing.id,
+      phone_number: existing.phone_number,
+      display_name: existing.display_name ?? null,
+      sms_opt_in: true,
+    };
+  }
+
+  // Already opted out and request is opt-out — no-op.
+  if (!optIn && existing && existing.sms_opt_in !== true) {
+    return {
+      id: existing.id,
+      phone_number: existing.phone_number,
+      display_name: existing.display_name ?? null,
+      sms_opt_in: false,
+    };
+  }
+
+  const patch = optIn
+    ? {
+        sms_opt_in: true,
+        sms_opt_in_at: existing?.sms_opt_in_at || now,
+        sms_opt_out_at: null,
+        last_contact_at: now,
+      }
+    : {
+        sms_opt_in: false,
+        sms_opt_out_at: now,
+      };
+
+  if (existing) {
+    const { data: updated, error: updateError } = await supabase
+      .from('clients')
+      .update(patch)
+      .eq('id', existing.id)
+      .eq('business_id', businessId)
+      .select('id, phone_number, display_name, sms_opt_in')
+      .maybeSingle();
+
+    if (updateError) {
+      console.warn('[smsMarketing] setClientSmsOptIn update failed:', updateError.message);
+      return null;
+    }
+    return updated;
+  }
 
   if (!optIn) return null;
 
@@ -284,8 +339,8 @@ export async function setClientSmsOptIn({ businessId, rawPhone, optIn, source = 
     .single();
 
   if (insertError) {
-    // Race: row created between update and insert — retry update
-    if (/duplicate|unique/i.test(insertError.message ?? '')) {
+    // Race: row created between read and insert — retry as update (UNIQUE business_id+phone)
+    if (/duplicate|unique|23505/i.test(insertError.message ?? '') || insertError.code === '23505') {
       const { data: retry } = await supabase
         .from('clients')
         .update(patch)
