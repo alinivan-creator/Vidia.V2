@@ -441,9 +441,9 @@ describe('end-to-end conversations: start to confirm', () => {
 
     const book = chat.say('1');
     assert.equal(book.action, MACHINE_ACTIONS.ACTION_ASK_SERVICE);
-    assert.match(book.text, /1\. Tuns Clasic \(30 min\)/);
-    assert.match(book.text, /2\. Tuns \+ Barba \(45 min\)/);
-    assert.match(book.text, /3\. Aranjat Barba \(20 min\)/);
+    assert.match(book.text, /1\. Tuns Clasic · 30 min/);
+    assert.match(book.text, /2\. Tuns \+ Barba · 45 min/);
+    assert.match(book.text, /3\. Aranjat Barba · 20 min/);
 
     const service = chat.say('1');
     assert.equal(service.action, MACHINE_ACTIONS.ACTION_ASK_DATE_TIME, service.text);

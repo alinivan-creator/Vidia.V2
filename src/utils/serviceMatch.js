@@ -86,11 +86,11 @@ export function matchServiceMention(text, services) {
  */
 export function formatServiceAskMessage(services) {
   const list = (Array.isArray(services) ? services : []).filter((s) => s?.name);
-  if (!list.length) return 'Ce serviciu dorești? Scrie numele lui (ex: *tuns*).';
+  if (!list.length) return '✨ *Ce serviciu dorești?*\nScrie numele — ex: *tuns*.';
   const lines = list.map((s, i) => {
     const dur = Number(s.duration_minutes);
-    const extra = Number.isFinite(dur) && dur > 0 ? ` (${dur} min)` : '';
+    const extra = Number.isFinite(dur) && dur > 0 ? ` · ${dur} min` : '';
     return `${i + 1}. ${s.name}${extra}`;
   });
-  return `Ce serviciu dorești?\n${lines.join('\n')}\nRăspunde cu numărul sau numele.`;
+  return `✨ *Ce serviciu dorești?*\n\n${lines.join('\n')}\n\nScrie *numărul* sau *numele*.`;
 }

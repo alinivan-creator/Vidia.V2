@@ -297,5 +297,5 @@ export function interpretNumericFreeText({
 
 export function clarificationPrompt(value) {
   const n = String(value);
-  return `Scuze, nu am înțeles corect, te referi la data de ${n} sau la ora ${n}?`;
+  return `❓ *${n}* e data sau ora *${n}:00*?`;
 }

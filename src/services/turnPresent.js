@@ -65,16 +65,16 @@ export function renderHandlerResult(business, result) {
     case 'ASK_NAME':
       return (
         (typeof d.client_message === 'string' && d.client_message)
-        || 'Pentru rezervare am nevoie de *numele tău* (cum să te trecem în calendar).\nScrie prenumele și numele, ex: *Ana Popescu*.'
+        || '👤 *Cum te cheamă?*\nPrenume și nume — ex: *Ana Popescu*'
       );
     case 'ASK_CONFIRM': {
-      const emp = d.employee_name ? `💇 cu *${d.employee_name}*\n` : '';
+      const emp = d.employee_name ? `💇 *${d.employee_name}*\n` : '';
       const name = d.client_name ? `👤 *${d.client_name}*\n` : '';
       return (
-        `Confirmi programarea?\n\n` +
+        `✨ *Confirmi programarea?*\n\n` +
         name +
         emp +
-        `📋 *${d.service_name || 'Serviciu'}*\n` +
+        `✂️ *${d.service_name || 'Serviciu'}*\n` +
         `🕐 ${d.slot_label || ''}`
       );
     }
@@ -96,23 +96,23 @@ export function renderHandlerResult(business, result) {
         ? formatCalendarAnchorMarkdown(result.calendar_cta.url)
         : '';
       return (
-        `✅ *Programare actualizată!*\n\n` +
-        `📋 ${d.service_name || 'Serviciu'}\n` +
+        `✅ *Programare actualizată*\n\n` +
+        `✂️ ${d.service_name || 'Serviciu'}\n` +
         `🕐 ${d.slot_label || ''}` +
         (calendar ? `\n${calendar}` : '') +
         (maps ? `\n${maps}` : '') +
-        `\n\nTe așteptăm! Pentru anulare, scrie *anulează*.`
+        `\n\n🔁 *reprogramare*  ·  ❌ *anulează*`
       );
     }
     case 'CONFIRMATION_CANCELLED':
-      return 'Programarea ta a fost anulată cu succes. Te așteptăm cu drag altă dată!';
+      return '✅ Programarea a fost *anulată*.\nTe așteptăm oricând.';
     case 'CANCEL_PENDING':
-      return 'Programarea a fost anulată. Dacă dorești, poți începe o programare nouă oricând.';
+      return '✅ Am anulat.\nPentru una nouă, scrie *programare*.';
     case 'FLOW_ABORTED':
-      return 'Ok, am renunțat. Cu ce te mai pot ajuta?';
+      return '👌 Ok, m-am oprit.\nCu ce te mai pot ajuta?';
     case 'MISSING_EMPLOYEE': {
       const names = (d.services || []).map((e) => e.name).filter(Boolean);
-      const intro = d.client_message || 'Nu am găsit specialistul. Poți scrie alt nume din echipă:';
+      const intro = d.client_message || '💇 Nu am găsit specialistul. Alege din echipă:';
       return names.length ? `${intro} ${names.join(', ')}.` : intro;
     }
     case 'MISSING_SERVICE':
@@ -120,48 +120,48 @@ export function renderHandlerResult(business, result) {
     case 'ASK_DATE':
       return (
         (typeof d.client_message === 'string' && d.client_message)
-        || `Pe ce dată vrei${d.service_name ? ` *${d.service_name}*` : ''}? Scrie de exemplu *luni* sau *18 aug*.`
+        || `📅 *Pe ce dată*${d.service_name ? ` — *${d.service_name}*` : ''}?\nEx: *luni* sau *18 aug*`
       );
     case 'ASK_TIME': {
       const head = d.service_name
-        ? `La ce oră vrei *${d.service_name}*${d.date_label ? ` pe ${d.date_label}` : ''}?`
-        : 'La ce oră vrei programarea?';
+        ? `🕐 *La ce oră* — *${d.service_name}*${d.date_label ? `\n📅 ${d.date_label}` : ''}?`
+        : '🕐 *La ce oră?*';
       const alts = (d.alternatives || []).map((s) => s.time || s.label).filter(Boolean).slice(0, 6);
       if (alts.length) {
-        return `${head} Ore apropiate: ${alts.join(', ')}. Scrie ora (ex: *18* sau *18:00*).`;
+        return `${head}\n🕐 Liber: ${alts.join(' · ')}\nEx: *18* sau *18:00*`;
       }
-      return `${head} Scrie ora (ex: *10:30* sau *18*).`;
+      return `${head}\nEx: *10:30* sau *18*`;
     }
     case 'ASK_CLARIFY_DATE_OR_TIME':
       return (
         (typeof d.client_message === 'string' && d.client_message)
-        || `Scuze, ca să fiu sigur: te referi la data de ${d.date_label || d.value} sau la ora ${d.time_label || d.value}?`
+        || `❓ *${d.date_label || d.value}* e data sau ora *${d.time_label || d.value}*?`
       );
     case 'MISSING_SLOT': {
       const head = d.service_name
-        ? `La ce oră vrei *${d.service_name}*?`
-        : 'La ce oră vrei programarea?';
+        ? `🕐 *La ce oră* — *${d.service_name}*?`
+        : '🕐 *La ce oră?*';
       const alts = (d.alternatives || []).map((s) => s.time || s.label).filter(Boolean).slice(0, 6);
       return alts.length
-        ? `${head} Ore apropiate: ${alts.join(', ')}. Scrie ora (ex: *17:00*).`
-        : `${head} Scrie ora (ex: *17:00*).`;
+        ? `${head}\n🕐 Liber: ${alts.join(' · ')}\nEx: *17:00*`
+        : `${head}\nEx: *17:00*`;
     }
     case 'SLOT_UNAVAILABLE': {
       const occupied = d.occupied_label
-        ? `Intervalul *${d.occupied_label}* tocmai a fost ocupat.`
-        : (d.client_message || 'Intervalul nu e disponibil.');
+        ? `😔 *${d.occupied_label}* tocmai s-a ocupat.`
+        : (d.client_message || '😔 Intervalul nu e disponibil.');
       const alts = (d.alternatives || []).map((s) => s.time || s.label).filter(Boolean).slice(0, 6);
-      if (!alts.length) return `${occupied} Scrie altă oră.`;
-      return `${occupied} Ore apropiate libere: ${alts.join(', ')}. Scrie ora pe care o vrei.`;
+      if (!alts.length) return `${occupied}\nScrie altă oră.`;
+      return `${occupied}\n🕐 Liber: ${alts.join(' · ')}\nScrie ora pe care o vrei.`;
     }
     case 'MISSING_APPOINTMENT': {
       const intent = d.intent === 'cancel' ? 'anulezi' : 'reprogramezi';
-      return `Care programare vrei să ${intent}?${menuBlock}`;
+      return `📋 Care programare vrei să ${intent}?${menuBlock}`;
     }
     case 'CONFIRM_CANCEL':
       return (
-        `Confirmi anularea?\n\n` +
-        `📋 *${d.service_name || 'Programare'}*\n` +
+        `❌ *Confirmi anularea?*\n\n` +
+        `✂️ *${d.service_name || 'Programare'}*\n` +
         `🕐 ${d.slot_label || ''}`
       );
     case 'CLOSED_HOURS':
@@ -174,49 +174,48 @@ export function renderHandlerResult(business, result) {
     case 'SERVICES_LIST': {
       const services = d.services || [];
       if (!services.length) return unknownInfoClientMessage();
-      const lines = ['📋 *Servicii:*', ''];
+      const lines = ['✂️ *Servicii*', ''];
       services.forEach((s) => {
         lines.push(`*${s.name}*`);
         lines.push(formatServiceLine(s));
         lines.push('');
       });
-      lines.push('Pentru programare, scrie serviciul și ora (ex: *tuns mâine la 10*).');
+      lines.push('Pentru programare: *tuns mâine la 10*');
       return lines.join('\n');
     }
     case 'HOURS_LIST':
       if (!d.hours_configured || !d.hours_text) {
         return unknownInfoClientMessage();
       }
-      return `🕐 *Program ${business.name}*\n\n${d.hours_text}`;
+      return `🕐 *Program — ${business.name}*\n\n${d.hours_text}`;
     case 'CONTACT':
       return formatContactMessage(business);
     case 'MENU':
       return buildAiTransparencyWelcome(business);
     case 'CALLBACK_SENT':
       return (
-        `Am înregistrat cererea. Un coleg de la *${d.business_name || business.name}* ` +
-        `te va contacta în curând.`
+        `📞 Am notat.\nUn coleg de la *${d.business_name || business.name}* te sună în curând.`
       );
     case 'MY_APPOINTMENTS': {
       const rows = d.appointments || [];
       if (!rows.length) {
-        return 'Nu ai nicio programare confirmată. Dacă vrei una nouă, scrie de exemplu *luni la 17*.';
+        return '📋 Nicio programare activă.\nPentru una nouă: *luni la 17*';
       }
       const lines = rows.map((a) => `• *${a.service_name || 'Programare'}* — ${a.slot_label || ''}`);
       return (
-        `Programările tale:\n\n${lines.join('\n')}\n\n` +
-        `Ca să anulezi una, scrie *anulează*. Ca să o muți, scrie *reprogramare*.`
+        `📋 *Programările tale*\n\n${lines.join('\n')}\n\n` +
+        `❌ *anulează*  ·  🔁 *reprogramare*`
       );
     }
     case 'CHAT_FALLBACK':
       return (
-        `Sunt asistentul de programări al *${d.business_name || business.name}*. ` +
-        `Cu ce te pot ajuta? Pot să te ajut cu o programare, programul de lucru sau datele de contact.`
+        `👋 Sunt asistentul de programări al *${d.business_name || business.name}*.\n` +
+        `Cu ce te pot ajuta?  ·  programare  ·  orar  ·  contact`
       );
     case 'OFF_TOPIC':
       return (
-        `Sunt asistentul de programări al *${d.business_name || business.name}*. ` +
-        `Nu pot discuta asta. Te pot ajuta cu o programare, programul de lucru sau datele de contact.`
+        `👋 Sunt asistentul de programări al *${d.business_name || business.name}*.\n` +
+        `Nu pot discuta asta.\n\nPot: programare · orar · contact`
       );
     case 'MISSING_INFO':
       return unknownInfoClientMessage();
@@ -307,7 +306,7 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
       business,
       recipientPhone,
       requestId,
-      text: 'Adaugă programarea în calendar:',
+      text: '📅 Adaugă în calendar',
       buttonTitle: result.calendar_cta.title || 'Adaugă în calendar',
       buttonUrl: result.calendar_cta.url,
     });
@@ -358,7 +357,7 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
         business,
         recipientPhone,
         requestId,
-        bodyText: 'Cu ce te putem ajuta? Alege o opțiune:',
+        bodyText: '✨ Cu ce te putem ajuta?',
         buttons: result.menu.options,
         footerText: business.name,
         menuKind: 'entry',

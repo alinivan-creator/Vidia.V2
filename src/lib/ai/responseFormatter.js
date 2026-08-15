@@ -45,7 +45,7 @@ function nearbyHoursLine(alternatives) {
     .filter(Boolean)
     .slice(0, 6);
   if (!labels.length) return '';
-  return `Ore apropiate libere: ${labels.join(', ')}.`;
+  return `🕐 Liber: ${labels.join(' · ')}`;
 }
 
 /**
@@ -79,12 +79,12 @@ export function formatMachineAction({
   switch (action) {
     case MACHINE_ACTIONS.ACTION_SHOW_CONFIRMATION: {
       const nameLine = clientName ? `👤 *${clientName}*\n` : '';
-      const empLine = employeeName ? `💇 cu *${employeeName}*\n` : '';
+      const empLine = employeeName ? `💇 *${employeeName}*\n` : '';
       return (
-        `Confirmi programarea?\n\n` +
+        `✨ *Confirmi programarea?*\n\n` +
         nameLine +
         empLine +
-        `📋 *${service}*\n` +
+        `✂️ *${service}*\n` +
         `📅 ${dateLabel}\n` +
         `🕐 ${timeLabel}`
       );
@@ -92,32 +92,32 @@ export function formatMachineAction({
     case MACHINE_ACTIONS.ACTION_ASK_CLARIFICATION: {
       const n = clarifyValue != null ? String(clarifyValue) : '';
       if (n) {
-        return `Scuze, ca să fiu sigur: te referi la data de ${n} sau la ora ${n}:00?`;
+        return `❓ *${n}* e data sau ora *${n}:00*?`;
       }
-      return 'Scuze, ca să fiu sigur: te referi la o dată sau la o oră?';
+      return '❓ E vorba de o *dată* sau de o *oră*?';
     }
     case MACHINE_ACTIONS.ACTION_SLOT_UNAVAILABLE: {
       const occupied = occupiedLabel
-        ? `Intervalul *${occupiedLabel}* nu e disponibil.`
-        : `Ora *${timeLabel}* nu e disponibilă${dateLabel ? ` pe ${dateLabel}` : ''}.`;
+        ? `😔 *${occupiedLabel}* nu e disponibil.`
+        : `😔 *${timeLabel}* nu e disponibil${dateLabel ? ` — ${dateLabel}` : ''}.`;
       const nearby = nearbyHoursLine(alternatives);
       return nearby
-        ? `${occupied} ${nearby} Scrie ora pe care o vrei (ex: *18:00*).`
-        : `${occupied} Scrie altă oră (ex: *18:00*).`;
+        ? `${occupied}\n${nearby}\nScrie ora — ex: *18:00*.`
+        : `${occupied}\nScrie altă oră — ex: *18:00*.`;
     }
     case MACHINE_ACTIONS.ACTION_ASK_SERVICE:
       return formatServiceAskMessage(services);
     case MACHINE_ACTIONS.ACTION_ASK_DATE:
-      return `Pe ce dată vrei${draft.service_name ? ` *${draft.service_name}*` : ''}? Scrie de exemplu *luni* sau *18 aug*.`;
+      return `📅 *Pe ce dată*${draft.service_name ? ` vrei *${draft.service_name}*` : ''}?\nEx: *luni* sau *18 aug*`;
     case MACHINE_ACTIONS.ACTION_ASK_TIME: {
       const nearby = nearbyHoursLine(alternatives);
-      const head = `La ce oră vrei${draft.service_name ? ` *${draft.service_name}*` : ''}${dateLabel ? ` pe ${dateLabel}` : ''}?`;
+      const head = `🕐 *La ce oră*${draft.service_name ? ` — *${draft.service_name}*` : ''}${dateLabel ? `\n📅 ${dateLabel}` : ''}?`;
       return nearby
-        ? `${head} ${nearby} Poți scrie ora (ex: *17* sau *17:00*).`
-        : `${head} Scrie ora (ex: *17* sau *17:00*).`;
+        ? `${head}\n${nearby}\nEx: *17* sau *17:00*`
+        : `${head}\nEx: *17* sau *17:00*`;
     }
     case MACHINE_ACTIONS.ACTION_ASK_DATE_TIME:
-      return 'Când vrei programarea? Scrie ziua și ora (ex: *luni la 17*).';
+      return '📅 *Când vrei programarea?*\nZiua și ora — ex: *luni la 17*';
     default:
       return null;
   }

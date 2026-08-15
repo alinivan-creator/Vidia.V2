@@ -40,17 +40,17 @@ export function getBusinessContactInfo(business) {
  */
 export function formatContactMessage(business) {
   const info = getBusinessContactInfo(business);
-  const lines = [`📞 *Contact — ${business.name}*`, ''];
+  const lines = [`📞 *${business.name}*`, ''];
 
-  if (info.phone) lines.push(`Telefon: ${info.phone}`);
-  if (info.email) lines.push(`Email: ${info.email}`);
-  if (info.address) lines.push(`Adresă: ${info.address}`);
-  if (info.website) lines.push(`Website: ${info.website}`);
-  if (info.mapsUrl) lines.push(`Hartă: ${info.mapsUrl}`);
+  if (info.phone) lines.push(`📱 ${info.phone}`);
+  if (info.email) lines.push(`✉️ ${info.email}`);
+  if (info.address) lines.push(`📍 ${info.address}`);
+  if (info.website) lines.push(`🔗 ${info.website}`);
+  if (info.mapsUrl) lines.push(`🗺️ ${info.mapsUrl}`);
 
   const structuredHours = getConfiguredBusinessHours(business);
   if (structuredHours) {
-    lines.push('', '*Program:*');
+    lines.push('', '🕐 *Program*');
     lines.push(
       formatBusinessHoursText(structuredHours).replace(/^- /gm, ''),
     );
@@ -60,11 +60,11 @@ export function formatContactMessage(business) {
 
   if (lines.length <= 2) {
     return (
-      `📞 *Contact — ${business.name}*\n\n` +
+      `📞 *${business.name}*\n\n` +
       unknownInfoClientMessage()
     );
   }
 
-  lines.push('', 'Suntem aici să te ajutăm!');
+  lines.push('', 'Suntem aici 👋');
   return lines.join('\n');
 }

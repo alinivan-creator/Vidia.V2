@@ -65,17 +65,17 @@ export function buildAiTransparencyWelcome(business) {
 
   const disclosure = alreadyDisclosesAi(base)
     ? ''
-    : `👋 Sunt *asistentul virtual inteligent (AI)* al *${business.name}*.\n\n`;
+    : `👋 Sunt *asistentul virtual* al *${business.name}*.\n\n`;
 
   const { termsUrl, gdprUrl } = getMessagingSettings(business);
   const legalLink = gdprUrl || termsUrl;
   const legalLine = legalLink
-    ? `\n\n_Continuând conversația, ești de acord cu prelucrarea datelor pentru programări. Detalii: ${legalLink}_`
+    ? `\n\n_Continuând, ești de acord cu prelucrarea datelor pentru programări. ${legalLink}_`
     : '';
 
   return (
     `${disclosure}${base}` +
-    `\n\nTe pot ajuta cu programări, reprogramări, anulări și informații.` +
+    `\n\n📅 programări  ·  🕐 orar  ·  📞 contact` +
     legalLine
   );
 }
@@ -182,12 +182,12 @@ export function buildBookingConfirmationMessage({
       .replace(/\{\{datetime\}\}/gi, slotLabel)
       .replace(/\{\{name\}\}/gi, clientName || '')
       .replace(/\{\{business\}\}/gi, business.name)
-    : 'Ne vedem curând! Pentru modificare scrie *reprogramare*, pentru anulare *anulează*.';
+    : 'Ne vedem curând 👋\n🔁 *reprogramare*  ·  ❌ *anulează*';
 
   const parts = [
-    '✅ *Programare confirmată!*',
+    '✅ *Programare confirmată*',
     '',
-    nameLine + `📋 ${serviceName}`,
+    nameLine + `✂️ ${serviceName}`,
     `🕐 ${slotLabel}`,
   ];
 
