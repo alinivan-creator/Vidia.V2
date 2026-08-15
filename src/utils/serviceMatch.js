@@ -86,11 +86,17 @@ export function matchServiceMention(text, services) {
  */
 export function formatServiceAskMessage(services) {
   const list = (Array.isArray(services) ? services : []).filter((s) => s?.name);
-  if (!list.length) return '✨ *Ce serviciu dorești?*\nScrie numele — ex: *tuns*.';
+  const example = list[0]?.name || 'programare';
+  if (!list.length) return `✨ *Ce serviciu dorești?*\nScrie numele — ex: *${example}*.`;
   const lines = list.map((s, i) => {
     const dur = Number(s.duration_minutes);
     const extra = Number.isFinite(dur) && dur > 0 ? ` · ${dur} min` : '';
     return `${i + 1}. ${s.name}${extra}`;
   });
   return `✨ *Ce serviciu dorești?*\n\n${lines.join('\n')}\n\nScrie *numărul* sau *numele*.`;
+}
+
+export function bookingExamplePhrase(services) {
+  const first = (Array.isArray(services) ? services : []).find((s) => s?.name);
+  return first?.name ? `${first.name} luni la 10` : 'luni la 10';
 }

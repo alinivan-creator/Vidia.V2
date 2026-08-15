@@ -514,7 +514,10 @@ function createChat(business, occupied = []) {
     if (reduced.action === MACHINE_ACTIONS.ACTION_ASK_SERVICE) {
       lastMenu = {
         kind: 'service',
-        options: SERVICES.map((s) => ({ id: `${BOOKING_PREFIXES.SERVICE}${s.id}`, title: s.name })),
+        options: getBookingConfig(business).services.map((s) => ({
+          id: `${BOOKING_PREFIXES.SERVICE}${s.id}`,
+          title: s.name,
+        })),
       };
     } else if (reduced.action === MACHINE_ACTIONS.ACTION_SHOW_CONFIRMATION) lastMenu = CONFIRM_MENU;
     else lastMenu = conv.context_data.last_menu;

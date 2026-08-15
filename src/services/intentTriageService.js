@@ -89,6 +89,9 @@ export function looksLikeOffTopicChat(text) {
   if (!n) return false;
   if (/\b(vremea|vreme|weather|forecast|ploua|rain)\b/.test(n)) return true;
   if (/\b(ai mancat|ce faci|cum te cheama)\b/.test(n)) return true;
+  if (['bitcoin', 'crypto', 'fotbal', 'meciul', 'aleger', 'pizza', 'gluma'].some((k) => n.includes(k))) {
+    return true;
+  }
   return false;
 }
 

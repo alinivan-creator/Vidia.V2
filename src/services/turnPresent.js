@@ -18,7 +18,7 @@ import { formatMachineAction, formatterSystemHint } from '../lib/ai/responseForm
 import { MACHINE_ACTIONS } from '../lib/booking/stateMachine.js';
 import { unknownInfoClientMessage } from '../utils/workingHours.js';
 import { missingBusinessInfoMessage } from '../utils/businessInfoLookup.js';
-import { formatServiceAskMessage } from '../utils/serviceMatch.js';
+import { formatServiceAskMessage, bookingExamplePhrase } from '../utils/serviceMatch.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 /** @typedef {import('./handlerResult.js').HandlerResult} HandlerResult */
@@ -176,7 +176,7 @@ export function renderHandlerResult(business, result) {
         lines.push(formatServiceLine(s));
         lines.push('');
       });
-      lines.push('Pentru programare: *tuns mâine la 10*');
+      lines.push(`Pentru programare: *${bookingExamplePhrase(services)}*`);
       return lines.join('\n');
     }
     case 'HOURS_LIST':

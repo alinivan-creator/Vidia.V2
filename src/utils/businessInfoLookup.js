@@ -50,13 +50,21 @@ export function detectFactTopic(text) {
  */
 export function looksLikeBusinessFactQuestion(text) {
   const topic = detectFactTopic(text);
-  if (!topic) return false;
   const n = normalize(text);
-  if (/[?]/.test(String(text ?? ''))) return true;
-  if (/\b(aveti|avem|tundeti|primiti|acceptati|faceti|do you|have you|are there|is there)\b/.test(n)) {
+  if (topic) {
+    if (/[?]/.test(String(text ?? ''))) return true;
+    if (/\b(aveti|avem|tundeti|primiti|acceptati|faceti|do you|have you|are there|is there)\b/.test(n)) {
+      return true;
+    }
+    if (topic === 'parking') return true;
+  }
+  if (/\b(aveti|avem|acceptati|do you have)\b/.test(n)
+    && /\b(wifi|wi-fi|card|pos|numerar|cash|lift|rampa)\b/.test(n)
+    && !/\b(programar|rezervar|luni|marti|maine|azi|ora|la \d)\b/.test(n)
+  ) {
     return true;
   }
-  return topic === 'parking';
+  return false;
 }
 
 function readStructuredFlag(info, topic) {
