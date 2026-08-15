@@ -852,34 +852,6 @@ export async function startBookingFlow({
     });
   }
 
-  const { services } = getBookingConfig(business);
-  if (services.length === 1) {
-    const service = services[0];
-    const updated = await setSelectedService({
-      draftId: draft.id,
-      businessId: business.id,
-      service,
-      context: {
-        ...draft.conversation_context,
-        step: 'select_slot',
-        service_id: service.id,
-        booking_hint: hintText || '',
-      },
-      requestId,
-    });
-    if (updated) {
-      await continueAfterServiceSelected({
-        business,
-        recipientPhone,
-        draft: updated,
-        service,
-        hintText,
-        requestId,
-      });
-      return;
-    }
-  }
-
   await setConversationStep({
     businessId: business.id,
     rawPhone: recipientPhone,

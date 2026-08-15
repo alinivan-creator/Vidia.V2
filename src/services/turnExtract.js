@@ -739,11 +739,14 @@ export async function extractTurnIntent({
   if (explicit?.dateKey && explicit?.timeHHmm && !looksLikeExistingAppointmentQuery(textBody)) {
     const mod = triageUserIntent(textBody, { businessType: business.business_type });
     if (mod.intent !== 'cancel') {
+      const named = matchServiceMention(textBody, services);
       return emptyExtract({
         action: inModify || mod.intent === 'reschedule' ? 'reschedule' : 'book',
         date_text: explicit.dateKey,
         time_text: explicit.timeHHmm,
         datetime: explicit.datetime,
+        service_id: named?.id ?? null,
+        service_name: named?.name ?? null,
         confidence: 'high',
         source: 'parser',
       });

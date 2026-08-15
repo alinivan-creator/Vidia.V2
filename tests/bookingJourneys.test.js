@@ -19,6 +19,7 @@ import { hydrateExtract } from '../src/services/turnExecute.js';
 import {
   emptyDraft,
   reduceBookingTurn,
+  hydrateCatalogService,
   MACHINE_ACTIONS,
   SESSION_STATES,
   parseInFlightCorrection,
@@ -173,6 +174,59 @@ describe('real booking journeys', () => {
     assert.match(sun.message, /Duminică/);
     const tue = hoursCheck(TUESDAY, '15:00');
     assert.equal(tue.ok, true);
+  });
+
+  it('never auto-picks a service; date/time wait for the service duration', () => {
+    const oneService = {
+      ...BUSINESS,
+      booking_settings: {
+        ...BUSINESS.booking_settings,
+        services: [{ id: 'svc-barba', name: 'Tuns + Barba', duration_minutes: 60, price_ron: 100 }],
+      },
+    };
+    const auto = hydrateCatalogService(emptyDraft(), oneService);
+    assert.equal(auto.service_id, null);
+
+    const afterSlot = reduceBookingTurn({
+      state: SESSION_STATES.WAITING_FOR_DATE_TIME,
+      draft: emptyDraft(),
+      text: 'Miercuri la 2',
+      timezone: TZ,
+      extractDate: '2026-08-19',
+      extractTime: '14:00',
+    });
+    assert.equal(afterSlot.action, MACHINE_ACTIONS.ACTION_ASK_SERVICE);
+    assert.equal(afterSlot.draft.date, '2026-08-19');
+    assert.equal(afterSlot.draft.time, '14:00');
+    assert.equal(afterSlot.draft.service_id, null);
+
+    const afterService = reduceBookingTurn({
+      state: SESSION_STATES.WAITING_FOR_SERVICE,
+      draft: afterSlot.draft,
+      text: 'Tuns + Barba',
+      timezone: TZ,
+      extractServiceId: 'svc-barba',
+      extractServiceName: 'Tuns + Barba',
+    });
+    assert.equal(afterService.action, MACHINE_ACTIONS.ACTION_CHECK_SLOT);
+    assert.equal(afterService.draft.service_id, 'svc-barba');
+    assert.equal(afterService.draft.date, '2026-08-19');
+    assert.equal(afterService.draft.time, '14:00');
+  });
+
+  it('names the service in the same message and then checks that duration', () => {
+    const reduced = reduceBookingTurn({
+      state: SESSION_STATES.INIT,
+      draft: emptyDraft(),
+      text: 'tuns miercuri la 2',
+      timezone: TZ,
+      extractDate: '2026-08-19',
+      extractTime: '14:00',
+      extractServiceId: 'svc-tuns',
+      extractServiceName: 'Tuns',
+    });
+    assert.equal(reduced.action, MACHINE_ACTIONS.ACTION_CHECK_SLOT);
+    assert.equal(reduced.draft.service_id, 'svc-tuns');
   });
 
   it('client-facing copy stays human', () => {

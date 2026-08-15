@@ -483,11 +483,6 @@ export function hydrateCatalogService(draft, business) {
       return next;
     }
   }
-  if (services.length === 1) {
-    next.service_id = services[0].id;
-    next.service_name = services[0].name;
-    next.duration = resolveServiceDurationMinutes(business, services[0]);
-  }
   return next;
 }
 

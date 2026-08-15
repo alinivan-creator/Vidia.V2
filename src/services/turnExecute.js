@@ -158,6 +158,7 @@ async function persistPendingExtract({ business, recipientPhone, extract, reques
     context.pending_time_text = null;
     context.pending_datetime = null;
     context.pending_slot_id = null;
+    context.pending_service_id = null;
   }
   if (extract.date_text) context.pending_date_text = extract.date_text;
   if (extract.time_text) context.pending_time_text = extract.time_text;
@@ -180,7 +181,7 @@ async function persistPendingExtract({ business, recipientPhone, extract, reques
       ...(extract.service_name ? { service_name: extract.service_name } : {}),
       ...(extract.date_text ? { date: extract.date_text } : {}),
       ...(extract.time_text ? { time: extract.time_text } : {}),
-      ...(freshMenuStart ? { date: null, time: null } : {}),
+      ...(freshMenuStart ? { date: null, time: null, service_id: null, service_name: null, duration: null } : {}),
     };
   }
   if (!Object.keys(context).length) return;
@@ -644,9 +645,6 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
   if (!service && activeDraft?.selected_service) {
     service = /** @type {Record<string, unknown>} */ (activeDraft.selected_service);
   }
-  const catalog = getBookingConfig(business).services;
-  if (!service && catalog.length === 1) service = catalog[0];
-
   const draft = await ensureDraft({ business, recipientPhone, clientId, requestId, activeDraft });
   if (!draft) {
     return handlerResult({
@@ -1905,8 +1903,16 @@ async function runBookingMachine(params) {
     && !extract.date_text
     && !extract.time_text
     && !extract.slot_id
+    && !extract.service_id
   ) {
-    draft = { ...draft, date: null, time: null };
+    draft = {
+      ...draft,
+      date: null,
+      time: null,
+      service_id: null,
+      service_name: null,
+      duration: null,
+    };
   }
   if (extract.service_id) {
     draft.service_id = extract.service_id;
@@ -1978,6 +1984,25 @@ async function runBookingMachine(params) {
       },
       convState,
       requestId,
+    });
+  }
+
+  if (reduced.action === MACHINE_ACTIONS.ACTION_ASK_SERVICE) {
+    const services = getBookingConfig(business).services;
+    return handlerResult({
+      status: 'MISSING_INFO',
+      next_required_step: 'CHOOSE_SERVICE',
+      user_message_template_key: 'MISSING_SERVICE',
+      data: {
+        services: services.slice(0, 10).map((s) => ({
+          id: s.id,
+          name: s.name,
+          duration_minutes: s.duration_minutes,
+          price_ron: s.price_ron ?? null,
+        })),
+        service_name: reduced.draft.service_name,
+      },
+      machine_action: MACHINE_ACTIONS.ACTION_ASK_SERVICE,
     });
   }
 
