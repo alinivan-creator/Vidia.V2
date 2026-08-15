@@ -105,9 +105,21 @@ function catalogDuration(business, service) {
   return resolveServiceDurationMinutes(business, service);
 }
 
-function hydrateExtract(extract, convState, timezone) {
+export function hydrateExtract(extract, convState, timezone) {
   const ctx = convState?.context_data || {};
   const next = { ...extract };
+  const freshMenuStart = extract.source === 'menu'
+    && !extract.date_text
+    && !extract.time_text
+    && !extract.datetime
+    && !extract.slot_id;
+  if (freshMenuStart) {
+    next.date_text = null;
+    next.time_text = null;
+    next.datetime = null;
+    next.slot_id = null;
+    return next;
+  }
   const turnHasDate = Boolean(extract.date_text);
   const turnHasTime = Boolean(extract.time_text);
 
@@ -136,6 +148,17 @@ function hydrateExtract(extract, convState, timezone) {
 async function persistPendingExtract({ business, recipientPhone, extract, requestId }) {
   /** @type {Record<string, unknown>} */
   const context = {};
+  const freshMenuStart = extract.source === 'menu'
+    && !extract.date_text
+    && !extract.time_text
+    && !extract.datetime
+    && !extract.slot_id;
+  if (freshMenuStart) {
+    context.pending_date_text = null;
+    context.pending_time_text = null;
+    context.pending_datetime = null;
+    context.pending_slot_id = null;
+  }
   if (extract.date_text) context.pending_date_text = extract.date_text;
   if (extract.time_text) context.pending_time_text = extract.time_text;
   if (extract.service_id) context.pending_service_id = extract.service_id;
@@ -146,7 +169,7 @@ async function persistPendingExtract({ business, recipientPhone, extract, reques
   } else if (extract.date_text && !extract.time_text) {
     context.pending_datetime = null;
   }
-  if (extract.service_id || extract.service_name || extract.date_text || extract.time_text) {
+  if (freshMenuStart || extract.service_id || extract.service_name || extract.date_text || extract.time_text) {
     const latestDraft = await getOrCreateConversationState(business.id, recipientPhone);
     const prevDraft = latestDraft.context_data?.draft_booking && typeof latestDraft.context_data.draft_booking === 'object'
       ? /** @type {Record<string, unknown>} */ (latestDraft.context_data.draft_booking)
@@ -157,6 +180,7 @@ async function persistPendingExtract({ business, recipientPhone, extract, reques
       ...(extract.service_name ? { service_name: extract.service_name } : {}),
       ...(extract.date_text ? { date: extract.date_text } : {}),
       ...(extract.time_text ? { time: extract.time_text } : {}),
+      ...(freshMenuStart ? { date: null, time: null } : {}),
     };
   }
   if (!Object.keys(context).length) return;
@@ -1876,6 +1900,14 @@ function bookingMachineHandles(action) {
 async function runBookingMachine(params) {
   const { business, recipientPhone, extract, convState, activeDraft, requestId, textBody } = params;
   let draft = hydrateCatalogService(readDraftBooking(convState, activeDraft), business);
+  if (
+    extract.source === 'menu'
+    && !extract.date_text
+    && !extract.time_text
+    && !extract.slot_id
+  ) {
+    draft = { ...draft, date: null, time: null };
+  }
   if (extract.service_id) {
     draft.service_id = extract.service_id;
     draft.service_name = extract.service_name || draft.service_name;

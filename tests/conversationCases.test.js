@@ -12,6 +12,7 @@ import {
 } from '../src/services/turnExtract.js';
 import { BOOKING_WAIT, interpretNumericFreeText } from '../src/services/bookingWaitState.js';
 import { renderHandlerResult } from '../src/services/turnPresent.js';
+import { hydrateExtract } from '../src/services/turnExecute.js';
 import { unknownInfoClientMessage } from '../src/utils/workingHours.js';
 
 const TZ = 'Europe/Bucharest';
@@ -50,6 +51,45 @@ describe('inbound cases: greeting, menu, booking, off-topic', () => {
     const text = reply('MENU');
     assert.match(text, /asistentul virtual|Bun venit|programări/i);
     assert.doesNotMatch(text, /nu pot discuta|în afara programului/i);
+  });
+
+  it('menu 1 works even when last_menu is missing (stuck session)', () => {
+    const extracted = resolveDeterministicInbound({
+      textBody: '1',
+      lastMenu: null,
+      wait: BOOKING_WAIT.TIME,
+      timezone: TZ,
+      pendingDateKey: '2026-08-17',
+      business: BUSINESS,
+      dayHours: HOURS_09_18,
+    });
+    assert.equal(extracted.action, 'book');
+    assert.equal(extracted.source, 'menu');
+    assert.equal(extracted.time_text, null);
+    assert.equal(extracted.date_text, null);
+  });
+
+  it('does not glue leftover Monday + 01:00 onto a fresh menu booking', () => {
+    const extract = {
+      action: 'book',
+      source: 'menu',
+      date_text: null,
+      time_text: null,
+      datetime: null,
+      slot_id: null,
+    };
+    const convState = {
+      context_data: {
+        pending_date_text: '2026-08-17',
+        pending_time_text: '01:00',
+        pending_datetime: '2026-08-16T22:00:00.000Z',
+        draft_booking: { date: '2026-08-17', time: '01:00' },
+      },
+    };
+    const hydrated = hydrateExtract(extract, convState, TZ);
+    assert.equal(hydrated.date_text, null);
+    assert.equal(hydrated.time_text, null);
+    assert.equal(hydrated.datetime, null);
   });
 
   it('menu 1 starts a booking and is never 01:00', () => {
@@ -108,17 +148,16 @@ describe('inbound cases: greeting, menu, booking, off-topic', () => {
       dayHours: HOURS_09_18,
     });
     assert.equal(numeric.kind, 'none');
-    assert.equal(
-      resolveDeterministicInbound({
-        textBody: '1',
-        lastMenu: null,
-        wait: null,
-        timezone: TZ,
-        business: BUSINESS,
-        dayHours: HOURS_09_18,
-      }),
-      null,
-    );
+    const extracted = resolveDeterministicInbound({
+      textBody: '1',
+      lastMenu: null,
+      wait: null,
+      timezone: TZ,
+      business: BUSINESS,
+      dayHours: HOURS_09_18,
+    });
+    assert.equal(extracted.action, 'book');
+    assert.equal(extracted.time_text, null);
   });
 
   it('isolated 1 while waiting for time becomes 13:00 when 01:00 is closed', () => {

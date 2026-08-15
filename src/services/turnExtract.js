@@ -281,8 +281,15 @@ export function resolveDeterministicInbound({
   dayHours = null,
 }) {
   const loneNumber = /^\d{1,2}$/.test(String(textBody ?? '').trim());
-  if (lastMenu?.options?.length && loneNumber) {
-    const choiceId = resolveNumberedChoice(textBody, lastMenu.options);
+  const entryFallback = (business.menu_buttons || []).slice(0, 3).map((btn) => ({
+    id: btn.id,
+    title: String(btn.label || btn.title || ''),
+  }));
+  const choiceMenu = lastMenu?.options?.length
+    ? lastMenu
+    : (entryFallback.length ? { kind: 'entry', options: entryFallback } : null);
+  if (choiceMenu?.options?.length && loneNumber) {
+    const choiceId = resolveNumberedChoice(textBody, choiceMenu.options);
     if (choiceId) return extractFromChoiceId(choiceId, {}, business);
   }
 
