@@ -295,7 +295,21 @@ export function resolveDeterministicInbound({
   const choiceMenu = lastMenu?.options?.length
     ? lastMenu
     : (entryFallback.length ? { kind: 'entry', options: entryFallback } : null);
-  if (wait !== BOOKING_WAIT.SERVICE && choiceMenu?.options?.length && loneNumber) {
+  if (
+    wait === BOOKING_WAIT.CONFIRMATION
+    && lastMenu?.kind === 'confirm'
+    && lastMenu.options?.length
+    && loneNumber
+  ) {
+    const choiceId = resolveNumberedChoice(textBody, lastMenu.options);
+    if (choiceId) return extractFromChoiceId(choiceId, {}, business);
+  }
+  if (
+    wait !== BOOKING_WAIT.SERVICE
+    && wait !== BOOKING_WAIT.CONFIRMATION
+    && choiceMenu?.options?.length
+    && loneNumber
+  ) {
     const choiceId = resolveNumberedChoice(textBody, choiceMenu.options);
     if (choiceId) return extractFromChoiceId(choiceId, {}, business);
   }
@@ -663,6 +677,19 @@ export async function extractTurnIntent({
     });
   }
 
+  if (
+    (step === CONVERSATION_STEPS.CONFIRMING
+      || step === CONVERSATION_STEPS.WAITING_FOR_CONFIRMATION
+      || wait === BOOKING_WAIT.CONFIRMATION)
+    && isExplicitConfirmReply(textBody)
+    && !looksLikeDatetimeOrSlot(textBody)
+  ) {
+    return emptyExtract({ action: 'confirm', confidence: 'high', source: 'state' });
+  }
+  if (isPendingHold && isExplicitCancelReply(textBody) && !looksLikeDatetimeOrSlot(textBody)) {
+    return emptyExtract({ action: 'cancel_pending', confidence: 'high', source: 'state' });
+  }
+
   if (step === CONVERSATION_STEPS.ASKING_NAME) {
     const n = normalize(textBody);
     if (isExplicitCancelReply(textBody) || n === 'meniu' || n === 'menu' || n.includes('renunt')) {
@@ -699,16 +726,6 @@ export async function extractTurnIntent({
   }
   if (step === CONVERSATION_STEPS.CONFIRMING_CANCEL && isExplicitCancelReply(textBody)) {
     return emptyExtract({ action: 'abort', confidence: 'high', source: 'state' });
-  }
-
-  if (isPendingHold && isExplicitCancelReply(textBody)) {
-    return emptyExtract({ action: 'cancel_pending', confidence: 'high', source: 'state' });
-  }
-  if (
-    (step === CONVERSATION_STEPS.CONFIRMING || step === CONVERSATION_STEPS.WAITING_FOR_CONFIRMATION)
-    && isExplicitConfirmReply(textBody)
-  ) {
-    return emptyExtract({ action: 'confirm', confidence: 'high', source: 'state' });
   }
 
   if (isAffirmativeReply(textBody) && !looksLikeDatetimeOrSlot(textBody)) {

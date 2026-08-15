@@ -106,7 +106,7 @@ function catalogDuration(business, service) {
   return resolveServiceDurationMinutes(business, service);
 }
 
-function isFreshMenuStart(extract) {
+export function isFreshMenuStart(extract) {
   return extract?.source === 'menu'
     && !extract.date_text
     && !extract.time_text
@@ -530,6 +530,7 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
         slot_end: slotEnd.toISOString(),
         intent: 'book',
         booking_wait: BOOKING_WAIT.CONFIRMATION,
+        last_menu: confirmMenu(),
         draft_booking: {
           service_id: service.id || service.service_id || null,
           service_name: service.name,
@@ -1989,6 +1990,11 @@ async function runBookingMachine(params) {
         : {}),
       ...(reduced.action === MACHINE_ACTIONS.ACTION_ASK_SERVICE
         ? { last_menu: serviceMenu(business) }
+        : {}),
+      ...(reduced.action === MACHINE_ACTIONS.ACTION_ASK_DATE_TIME
+        || reduced.action === MACHINE_ACTIONS.ACTION_ASK_DATE
+        || reduced.action === MACHINE_ACTIONS.ACTION_ASK_TIME
+        ? { last_menu: null }
         : {}),
     },
     requestId,

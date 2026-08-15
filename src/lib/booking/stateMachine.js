@@ -233,6 +233,7 @@ export function readDraftBooking(convState, activeDraft = null) {
  * @returns {'time' | 'date' | null}
  */
 export function disambiguateByState(state, draft) {
+  if (state === SESSION_STATES.WAITING_FOR_SERVICE) return null;
   if (TIME_CONTEXT_STATES.has(state)) return 'time';
   if (DATE_CONTEXT_STATES.has(state)) return 'date';
   if (state === SESSION_STATES.WAITING_FOR_DATE_TIME) {
@@ -335,22 +336,30 @@ export function reduceBookingTurn({
   extractServiceName = null,
 }) {
   let nextDraft = emptyDraft(draft);
+  if (extractServiceId) {
+    nextDraft.service_id = extractServiceId;
+    if (extractServiceName) nextDraft.service_name = extractServiceName;
+  } else if (extraction?.extracted_service) {
+    nextDraft.service_name = extraction.extracted_service;
+  }
+
   const correction = parseInFlightCorrection(text);
   const field = disambiguateByState(state, nextDraft);
+  const choseServiceThisTurn = Boolean(extractServiceId);
 
-  if (correction && field) {
+  if (correction && field && !choseServiceThisTurn) {
     nextDraft = applyNumberToDraft(nextDraft, field, correction.value, timezone);
     return nextFromDraft(nextDraft);
   }
 
-  if (!correction && field === 'time') {
+  if (!correction && field === 'time' && !choseServiceThisTurn) {
     const hour = isolatedHour(text);
     if (hour != null) {
       nextDraft = applyNumberToDraft(nextDraft, 'time', hour, timezone);
       return nextFromDraft(nextDraft);
     }
   }
-  if (!correction && field === 'date') {
+  if (!correction && field === 'date' && !choseServiceThisTurn) {
     const n = normalizeText(text);
     const lone = n.match(/^(\d{1,2})$/);
     if (lone) {
@@ -383,13 +392,6 @@ export function reduceBookingTurn({
   if (ambiguous && field && correction) {
     nextDraft = applyNumberToDraft(nextDraft, field, correction.value, timezone);
     return nextFromDraft(nextDraft);
-  }
-
-  if (extractServiceId) {
-    nextDraft.service_id = extractServiceId;
-    if (extractServiceName) nextDraft.service_name = extractServiceName;
-  } else if (extraction?.extracted_service) {
-    nextDraft.service_name = extraction.extracted_service;
   }
 
   const intent = extraction?.intent;
