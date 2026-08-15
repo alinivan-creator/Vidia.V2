@@ -254,12 +254,40 @@ export function decodeSlotId(slotId, timezone) {
   return localToUtc(dateKey, time, timezone);
 }
 
+/** Overlap of this many minutes or less still counts as an available slot. */
+export const SLOT_OVERLAP_GRACE_MINUTES = 5;
+
 /**
  * @param {Date} aStart
  * @param {Date} aEnd
  * @param {Date} bStart
  * @param {Date} bEnd
+ * @returns {number}
  */
-export function intervalsOverlap(aStart, aEnd, bStart, bEnd) {
-  return aStart < bEnd && aEnd > bStart;
+export function intervalOverlapMinutes(aStart, aEnd, bStart, bEnd) {
+  const start = Math.max(new Date(aStart).getTime(), new Date(bStart).getTime());
+  const end = Math.min(new Date(aEnd).getTime(), new Date(bEnd).getTime());
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
+  return (end - start) / 60_000;
+}
+
+/**
+ * True when two intervals conflict. Touching endpoints and overlaps of
+ * `graceMinutes` or less are allowed (client can book 11:20 / 11:40).
+ *
+ * @param {Date} aStart
+ * @param {Date} aEnd
+ * @param {Date} bStart
+ * @param {Date} bEnd
+ * @param {number} [graceMinutes]
+ */
+export function intervalsOverlap(
+  aStart,
+  aEnd,
+  bStart,
+  bEnd,
+  graceMinutes = SLOT_OVERLAP_GRACE_MINUTES,
+) {
+  const grace = Number.isFinite(Number(graceMinutes)) ? Number(graceMinutes) : SLOT_OVERLAP_GRACE_MINUTES;
+  return intervalOverlapMinutes(aStart, aEnd, bStart, bEnd) > grace;
 }

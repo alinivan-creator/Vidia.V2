@@ -153,13 +153,50 @@ export function coerceHHmmToOpenHours(hhmm, dayHours = null) {
  * @param {number} hour
  * @param {string | null} meridian
  * @param {{ open?: string, close?: string } | null} [dayHours]
+ * @param {number} [minute]
  */
-function applyMeridian(hour, meridian, dayHours = null) {
+function applyMeridian(hour, meridian, dayHours = null, minute = 0) {
   if (meridian === 'pm' && hour > 0 && hour < 12) return hour + 12;
   if (meridian === 'am' && hour === 12) return 0;
   if (meridian === 'am') return hour;
   if (meridian === 'pm' && hour === 12) return 12;
-  return coerceHourToOpenHours(hour, 0, dayHours).hour;
+  return coerceHourToOpenHours(hour, minute, dayHours).hour;
+}
+
+/**
+ * @param {number} hour
+ * @param {number} minute
+ * @param {string | null} meridian
+ * @param {{ open?: string, close?: string } | null} [dayHours]
+ * @returns {string | null}
+ */
+function formatParsedClock(hour, minute, meridian, dayHours = null) {
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return null;
+  if (!Number.isInteger(minute) || minute < 0 || minute > 59) return null;
+  const meridiated = applyMeridian(hour, meridian, dayHours, minute);
+  if (meridiated > 23) return null;
+  const coerced = coerceHourToOpenHours(meridiated, minute, meridian ? null : dayHours);
+  return `${pad2(coerced.hour)}:${pad2(coerced.minute)}`;
+}
+
+/**
+ * "la 11 fara 20" → 10:40; "la 11 fara un sfert" → 10:45.
+ * @param {number} hour
+ * @param {number} minusMinutes
+ * @param {string | null} meridian
+ * @param {{ open?: string, close?: string } | null} [dayHours]
+ * @returns {string | null}
+ */
+function clockFromHourMinus(hour, minusMinutes, meridian, dayHours = null) {
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return null;
+  if (!Number.isInteger(minusMinutes) || minusMinutes <= 0 || minusMinutes >= 60) return null;
+  const named = applyMeridian(hour, meridian, dayHours, 0);
+  let total = named * 60 - minusMinutes;
+  if (total < 0) total += 24 * 60;
+  const h = Math.floor(total / 60) % 24;
+  const m = total % 60;
+  const coerced = coerceHourToOpenHours(h, m, meridian ? null : dayHours);
+  return `${pad2(coerced.hour)}:${pad2(coerced.minute)}`;
 }
 
 /**
@@ -232,15 +269,38 @@ function parseRelativeDate(normalized, timezone, now) {
 }
 
 function parseTimeFromText(normalized, meridian, dayHours = null) {
-  const clock = normalized.match(/\b(\d{1,2})[:\.](\d{2})\b/);
+  const clock = normalized.match(/\b(\d{1,2})[:.,](\d{2})\b/);
   if (clock) {
-    let hour = Number(clock[1]);
-    const minute = Number(clock[2]);
-    if (hour > 23 || minute > 59) return null;
-    hour = applyMeridian(hour, meridian, dayHours);
-    if (hour > 23) return null;
-    const coerced = coerceHourToOpenHours(hour, minute, meridian ? null : dayHours);
-    return `${pad2(coerced.hour)}:${pad2(coerced.minute)}`;
+    return formatParsedClock(Number(clock[1]), Number(clock[2]), meridian, dayHours);
+  }
+
+  const faraSfert = normalized.match(/\b(?:la|ora)?\s*(\d{1,2})\s+fara\s+(?:un\s+)?sfert\b/);
+  if (faraSfert) {
+    return clockFromHourMinus(Number(faraSfert[1]), 15, meridian, dayHours);
+  }
+
+  const faraMin = normalized.match(/\b(?:la|ora)?\s*(\d{1,2})\s+fara\s+(\d{1,2})\b/);
+  if (faraMin) {
+    return clockFromHourMinus(Number(faraMin[1]), Number(faraMin[2]), meridian, dayHours);
+  }
+
+  const half = normalized.match(
+    /\b(?:la|ora)?\s*(\d{1,2})\s*(?:si\s+)?(?:o\s+)?(?:jumatate|jumate|juma)\b/,
+  );
+  if (half) {
+    return formatParsedClock(Number(half[1]), 30, meridian, dayHours);
+  }
+
+  const quarter = normalized.match(
+    /\b(?:la|ora)?\s*(\d{1,2})\s*(?:si\s+)?(?:un\s+)?sfer(?:t)?\b/,
+  );
+  if (quarter) {
+    return formatParsedClock(Number(quarter[1]), 15, meridian, dayHours);
+  }
+
+  const andMinutes = normalized.match(/\b(?:la|ora)?\s*(\d{1,2})\s+si\s+(\d{1,2})\b/);
+  if (andMinutes) {
+    return formatParsedClock(Number(andMinutes[1]), Number(andMinutes[2]), meridian, dayHours);
   }
 
   const withMeridianWord = normalized.match(
@@ -256,9 +316,7 @@ function parseTimeFromText(normalized, meridian, dayHours = null) {
   let mer = meridian;
   if (/dupa[\s-]*amiaza|\bseara\b|\bpm\b|p\.m\./.test(token)) mer = 'pm';
   else if (/\bdimineata\b|\bam\b|a\.m\./.test(token)) mer = 'am';
-  hour = applyMeridian(hour, mer, dayHours);
-  if (hour > 23) return null;
-  return `${pad2(hour)}:00`;
+  return formatParsedClock(hour, 0, mer, dayHours);
 }
 
 /**

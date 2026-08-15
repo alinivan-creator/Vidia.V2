@@ -4,7 +4,6 @@
  */
 
 import { buildAiTransparencyWelcome, buildBookingConfirmationMessage, buildGdprNote, buildMapsInviteLine } from '../utils/businessMessages.js';
-import { formatCalendarAnchorMarkdown } from '../utils/calendarLink.js';
 import { formatContactMessage } from './contactService.js';
 import { completeTenantChat } from './aiContextLoader.js';
 import {
@@ -84,22 +83,16 @@ export function renderHandlerResult(business, result) {
         serviceName: String(d.service_name || 'Serviciu'),
         slotLabel: String(d.slot_label || ''),
         clientName: String(d.client_name || ''),
-        calendarLine: result.calendar_cta?.url
-          ? formatCalendarAnchorMarkdown(result.calendar_cta.url)
-          : '',
+        calendarLine: '',
         mapsLine: buildMapsInviteLine(business)?.messageLine || '',
         includeGdpr: false,
       });
     case 'CONFIRMATION_RESCHEDULE': {
       const maps = buildMapsInviteLine(business)?.messageLine;
-      const calendar = result.calendar_cta?.url
-        ? formatCalendarAnchorMarkdown(result.calendar_cta.url)
-        : '';
       return (
         `✅ *Programare actualizată*\n\n` +
         `✂️ ${d.service_name || 'Serviciu'}\n` +
         `🕐 ${d.slot_label || ''}` +
-        (calendar ? `\n${calendar}` : '') +
         (maps ? `\n${maps}` : '') +
         `\n\n🔁 *reprogramare*  ·  ❌ *anulează*`
       );

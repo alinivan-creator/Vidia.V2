@@ -10,13 +10,15 @@ import {
 } from '../src/lib/booking/stateMachine.js';
 import { formatMachineAction, formatRomanianDate } from '../src/lib/ai/responseFormatter.js';
 import { coerceHourToOpenHours, parseRomanianDateTimeParts } from '../src/utils/roDateTime.js';
+import { intervalsOverlap, intervalOverlapMinutes } from '../src/utils/datetime.js';
 import {
   looksLikeExistingAppointmentQuery,
   looksLikeGreeting,
   looksLikeNewBookingRequest,
   triageUserIntent,
 } from '../src/services/intentTriageService.js';
-import { looksLikePersonName, recoverSoftParserIntent } from '../src/services/turnExtract.js';
+import { looksLikePersonName, recoverSoftParserIntent, resolveExplicitSlot } from '../src/services/turnExtract.js';
+import { BOOKING_WAIT, interpretNumericFreeText } from '../src/services/bookingWaitState.js';
 
 const TZ = 'Europe/Bucharest';
 const HOURS_09_18 = { open: '09:00', close: '18:00' };
@@ -239,5 +241,80 @@ describe('off-topic vs client name', () => {
       recoverSoftParserIntent(stolen, 'ai mancat azi?', { intent: 'unknown', confidence: 'low', reason: 'x' }).action,
       'off_topic',
     );
+  });
+});
+
+describe('Romanian clock and colloquial times', () => {
+  const hours = { dayHours: HOURS_09_18 };
+
+  it('parses luni la 11 jumate as 11:30, not 11:00', () => {
+    const parsed = parseRomanianDateTimeParts('Luni la 11 jumate', TZ, SATURDAY, hours);
+    assert.equal(parsed.dateKey, MONDAY);
+    assert.equal(parsed.timeHHmm, '11:30');
+  });
+
+  it('parses clock times with colon, dot, and comma', () => {
+    assert.equal(parseRomanianDateTimeParts('11:30', TZ, SATURDAY, hours).timeHHmm, '11:30');
+    assert.equal(parseRomanianDateTimeParts('11.30', TZ, SATURDAY, hours).timeHHmm, '11:30');
+    assert.equal(parseRomanianDateTimeParts('11,20', TZ, SATURDAY, hours).timeHHmm, '11:20');
+    assert.equal(parseRomanianDateTimeParts('11:40', TZ, SATURDAY, hours).timeHHmm, '11:40');
+  });
+
+  it('parses jumătate, sfert, and fără', () => {
+    assert.equal(parseRomanianDateTimeParts('la 11 si jumatate', TZ, SATURDAY, hours).timeHHmm, '11:30');
+    assert.equal(parseRomanianDateTimeParts('la 11 si un sfer', TZ, SATURDAY, hours).timeHHmm, '11:15');
+    assert.equal(parseRomanianDateTimeParts('la 11 fara 20', TZ, SATURDAY, hours).timeHHmm, '10:40');
+    assert.equal(parseRomanianDateTimeParts('la 11 fara un sfert', TZ, SATURDAY, hours).timeHHmm, '10:45');
+  });
+
+  it('does not collapse la 11 jumate to 11:00 while waiting for time', () => {
+    const numeric = interpretNumericFreeText({
+      text: 'la 11 jumate',
+      wait: BOOKING_WAIT.TIME,
+      timezone: TZ,
+      pendingDateKey: MONDAY,
+      dayHours: HOURS_09_18,
+    });
+    assert.equal(numeric.kind, 'time');
+    assert.equal(numeric.timeHHmm, '11:30');
+  });
+
+  it('keeps weekday + half-hour together as an explicit slot', () => {
+    const business = {
+      timezone: TZ,
+      booking_settings: {
+        business_hours: {
+          '0': null,
+          '1': HOURS_09_18,
+          '2': HOURS_09_18,
+          '3': HOURS_09_18,
+          '4': HOURS_09_18,
+          '5': HOURS_09_18,
+          '6': { open: '10:00', close: '14:00' },
+        },
+      },
+    };
+    const slot = resolveExplicitSlot('Luni la 11 jumate', business, SATURDAY);
+    assert.equal(slot?.dateKey, MONDAY);
+    assert.equal(slot?.timeHHmm, '11:30');
+  });
+});
+
+describe('slot overlap grace (5 minutes)', () => {
+  const existingStart = new Date('2026-08-17T08:00:00.000Z');
+  const existingEnd = new Date('2026-08-17T08:45:00.000Z');
+
+  it('allows a new booking that overlaps by 5 minutes', () => {
+    const start = new Date('2026-08-17T08:40:00.000Z');
+    const end = new Date('2026-08-17T09:25:00.000Z');
+    assert.equal(intervalOverlapMinutes(start, end, existingStart, existingEnd), 5);
+    assert.equal(intervalsOverlap(start, end, existingStart, existingEnd), false);
+  });
+
+  it('blocks a new booking that overlaps by more than 5 minutes', () => {
+    const start = new Date('2026-08-17T08:30:00.000Z');
+    const end = new Date('2026-08-17T09:15:00.000Z');
+    assert.equal(intervalOverlapMinutes(start, end, existingStart, existingEnd), 15);
+    assert.equal(intervalsOverlap(start, end, existingStart, existingEnd), true);
   });
 });

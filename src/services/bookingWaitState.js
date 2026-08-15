@@ -6,7 +6,7 @@
 
 import { CONVERSATION_STEPS } from '../db/conversationStateService.js';
 import { formatDateKey } from '../utils/datetime.js';
-import { coerceHourToOpenHours } from '../utils/roDateTime.js';
+import { coerceHourToOpenHours, parseRomanianDateTimeParts } from '../utils/roDateTime.js';
 
 export const BOOKING_WAIT = {
   SERVICE: 'waiting_for_service',
@@ -152,8 +152,8 @@ function parseCorrection(normalized) {
 }
 
 function explicitField(normalized) {
-  const timeHit = normalized.match(/\b(?:la|ora)\s+(\d{1,2})(?:[:\.](\d{2}))?\b/)
-    || normalized.match(/\b(\d{1,2})[:\.](\d{2})\b/);
+  const timeHit = normalized.match(/\b(?:la|ora)\s+(\d{1,2})(?:[:.,](\d{2}))?\b/)
+    || normalized.match(/\b(\d{1,2})[:.,](\d{2})\b/);
   const dateHit = normalized.match(/\b(?:data(?:\s+de)?|ziua(?:\s+de)?|pe)\s+(\d{1,2})\b/);
   const hasTimeWords = /\b(ora|dimineata|dupa[\s-]*amiaza|seara)\b/.test(normalized);
   const hasDateWords = /\b(data|ziua|luni|marti|miercuri|joi|vineri|sambata|duminica|aug|ian|feb|mar|apr|mai|iun|iul|sep|oct|nov|dec)\b/.test(normalized);
@@ -164,7 +164,7 @@ function explicitField(normalized) {
   }
   if (/\b(?:la|ora)\s+\d{1,2}\b/.test(normalized) && !hasDateWords) return 'time';
   if (/\b(?:data|ziua)\b/.test(normalized) && !hasTimeWords) return 'date';
-  if (/\b\d{1,2}[:\.]\d{2}\b/.test(normalized) && !hasDateWords) return 'time';
+  if (/\b\d{1,2}[:.,]\d{2}\b/.test(normalized) && !hasDateWords) return 'time';
   return null;
 }
 
@@ -193,7 +193,7 @@ function canBeDay(n) {
  * @param {string} params.timezone
  * @param {string | null} [params.pendingDateKey]
  * @returns {{
- *   kind: 'none' | 'date' | 'time' | 'ambiguous' | 'clarification_date' | 'clarification_time',
+ *   kind: 'none' | 'date' | 'time' | 'datetime' | 'ambiguous' | 'clarification_date' | 'clarification_time',
  *   value?: number,
  *   rejected?: number | null,
  *   dateKey?: string | null,
@@ -219,6 +219,17 @@ export function interpretNumericFreeText({
     if (/\b(data|ziua|zi)\b/.test(normalized) && !/\b(ora|timpul)\b/.test(normalized)) {
       return { kind: 'clarification_date' };
     }
+  }
+
+  const spoken = parseRomanianDateTimeParts(text, timezone, new Date(), { dayHours });
+  const hasClockMinutes = /\b\d{1,2}[:.,]\d{2}\b/.test(normalized);
+  const hasColloquial = /\b(jumatate|jumate|juma|sfer(?:t)?|fara)\b/.test(normalized)
+    || /\b\d{1,2}\s+si\s+\d{1,2}\b/.test(normalized);
+  if (spoken.timeHHmm && (hasClockMinutes || hasColloquial)) {
+    if (spoken.dateKey) {
+      return { kind: 'none' };
+    }
+    return { kind: 'time', timeHHmm: spoken.timeHHmm };
   }
 
   const field = explicitField(normalized);

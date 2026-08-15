@@ -337,11 +337,11 @@ export function resolveDeterministicInbound({
       },
     });
   }
-  if (numeric.kind === 'date' || numeric.kind === 'time') {
+  if (numeric.kind === 'date' || numeric.kind === 'time' || numeric.kind === 'datetime') {
     return emptyExtract({
       action: inModify ? 'reschedule' : 'book',
-      date_text: numeric.kind === 'date' ? numeric.dateKey : null,
-      time_text: numeric.kind === 'time' ? numeric.timeHHmm : null,
+      date_text: numeric.kind === 'time' ? null : numeric.dateKey,
+      time_text: numeric.kind === 'date' ? null : numeric.timeHHmm,
       confidence: 'high',
       source: 'state',
     });
@@ -441,7 +441,10 @@ function mapExtractionToTurnExtract(parsed, { textBody, isPendingHold, inModify,
   });
 
   if (parsed.is_ambiguous) {
-    if ((wait === BOOKING_WAIT.TIME || wait === BOOKING_WAIT.CONFIRMATION) && numeric.kind === 'time') {
+    if (
+      (wait === BOOKING_WAIT.TIME || wait === BOOKING_WAIT.CONFIRMATION)
+      && (numeric.kind === 'time' || numeric.kind === 'datetime')
+    ) {
       return emptyExtract({
         action: inModify ? 'reschedule' : 'book',
         time_text: numeric.timeHHmm,
@@ -573,7 +576,13 @@ function textHasExplicitDay(text) {
  */
 export function resolveExplicitSlot(textBody, business, now = new Date()) {
   const tz = business.timezone || 'Europe/Bucharest';
-  if (!textHasExplicitDay(textBody) && !/\b(?:la|ora)\s+\d{1,2}\b/.test(normalize(textBody))) {
+  const n = normalize(textBody);
+  const hasClockOrColloquial = /\b(?:la|ora)\s+\d{1,2}\b/.test(n)
+    || /\b\d{1,2}[:.,]\d{2}\b/.test(n)
+    || /\b\d{1,2}\s*(?:si\s+)?(?:o\s+)?(?:jumatate|jumate|juma|sfer(?:t)?)\b/.test(n)
+    || /\b\d{1,2}\s+fara\s+/.test(n)
+    || /\b\d{1,2}\s+si\s+\d{1,2}\b/.test(n);
+  if (!textHasExplicitDay(textBody) && !hasClockOrColloquial) {
     return null;
   }
   const first = parseRomanianDateTimeParts(textBody, tz, now);

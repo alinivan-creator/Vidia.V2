@@ -222,7 +222,7 @@ describe('inbound cases: greeting, menu, booking, off-topic', () => {
     assert.doesNotMatch(reply('ASK_DATE'), /în afara programului/);
   });
 
-  it('confirmed booking includes a tappable add-to-calendar link', () => {
+  it('confirmed booking keeps maps in-body and leaves calendar to the bottom CTA', () => {
     const text = renderHandlerResult(BUSINESS, {
       status: 'SUCCESS',
       user_message_template_key: 'CONFIRMATION_BOOKED',
@@ -237,7 +237,8 @@ describe('inbound cases: greeting, menu, booking, off-topic', () => {
       },
     });
     assert.match(text, /Programare confirmată/);
-    assert.match(text, /\[📅 Adaugă în calendar\]\(https:\/\/example\.com\/calendar\/event\.ics/);
+    assert.doesNotMatch(text, /\[📅 Adaugă în calendar\]/);
+    assert.doesNotMatch(text, /calendar\/event\.ics/);
     assert.doesNotMatch(text, /fișier \.ics/);
   });
 });

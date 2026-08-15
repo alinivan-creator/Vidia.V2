@@ -43,6 +43,8 @@ import {
   getConfiguredBusinessHours,
   formatBusinessHoursText,
   localToUtc,
+  intervalOverlapMinutes,
+  SLOT_OVERLAP_GRACE_MINUTES,
 } from '../src/utils/datetime.js';
 import { assertWithinWorkingHours, resolveServiceDurationMinutes } from '../src/utils/workingHours.js';
 import { BOOKING_PREFIXES } from '../src/services/flowIds.js';
@@ -209,7 +211,7 @@ function extractTurn(text, conv) {
 }
 
 function overlaps(occupied, start, end) {
-  return occupied.some((ev) => start < ev.end && end > ev.start);
+  return occupied.some((ev) => intervalOverlapMinutes(start, end, ev.start, ev.end) > SLOT_OVERLAP_GRACE_MINUTES);
 }
 
 function nearbyHours(dateKey, timeHHmm) {
@@ -523,6 +525,41 @@ describe('end-to-end conversations: start to confirm', () => {
     const vague = createChat().say('faceti si barba');
     assert.equal(vague.action, MACHINE_ACTIONS.ACTION_ASK_SERVICE, 'ambiguous beard must ask which service');
     assert.equal(vague.draft.service_id, null);
+  });
+
+  it('Luni la 11 jumate confirms 11:30, not 11:00', () => {
+    const chat = createChat();
+    chat.say('tuns + barba');
+    const slot = chat.say('Luni la 11 jumate');
+    assert.equal(slot.draft.date, '2026-08-17');
+    assert.equal(slot.draft.time, '11:30');
+    assert.equal(slot.action, MACHINE_ACTIONS.ACTION_SHOW_CONFIRMATION, slot.text);
+    assert.match(slot.text, /11:30/);
+    assert.doesNotMatch(slot.text, /11:00/);
+  });
+
+  it('11:20 and 11:40 stay exact and are bookable when overlap is at most 5 minutes', () => {
+    const occupied = [{
+      start: localToUtc('2026-08-17', '11:00', TZ),
+      end: localToUtc('2026-08-17', '11:45', TZ),
+    }];
+
+    const twenty = createChat();
+    twenty.say('tuns clasic');
+    const atTwenty = twenty.say('Luni la 11:20');
+    assert.equal(atTwenty.draft.time, '11:20');
+    assert.equal(atTwenty.action, MACHINE_ACTIONS.ACTION_SHOW_CONFIRMATION, atTwenty.text);
+
+    const forty = createChat(occupied);
+    forty.say('tuns clasic');
+    const atForty = forty.say('Luni la 11:40');
+    assert.equal(atForty.draft.time, '11:40');
+    assert.equal(atForty.action, MACHINE_ACTIONS.ACTION_SHOW_CONFIRMATION, atForty.text);
+
+    const clash = createChat(occupied);
+    clash.say('tuns + barba');
+    const blocked = clash.say('Luni la 11:20');
+    assert.equal(blocked.action, MACHINE_ACTIONS.ACTION_SLOT_UNAVAILABLE, blocked.text);
   });
 
   it('45 min Tuns + Barba overlaps a 14:00–15:00 booking; 30 min Tuns Clasic still fits at 14:30', () => {
