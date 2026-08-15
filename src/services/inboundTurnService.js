@@ -9,6 +9,7 @@ import { processTurnPipeline } from './turnPipeline.js';
 import { setClientSmsOptIn } from './smsMarketingService.js';
 import { sendTextMessage } from './whatsappService.js';
 import { triageUserIntent } from './intentTriageService.js';
+import { getBookingConfig } from '../utils/datetime.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -37,7 +38,10 @@ export async function routeInboundTurn({
   pendingDismissed = false,
   pendingExpired = false,
 }) {
-  const triage = triageUserIntent(textBody, { businessType: business.business_type });
+  const triage = triageUserIntent(textBody, {
+    businessType: business.business_type,
+    services: getBookingConfig(business).services,
+  });
 
   if (triage.intent === 'sms_opt_in') {
     await setClientSmsOptIn({ businessId: business.id, rawPhone: recipientPhone, optIn: true });

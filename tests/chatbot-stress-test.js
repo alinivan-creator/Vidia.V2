@@ -187,7 +187,7 @@ function extractTurn(text, conv, business) {
   });
   if (deterministic) return deterministic;
 
-  const triage = triageUserIntent(text, { businessType: 'salon' });
+  const triage = triageUserIntent(text, { businessType: 'salon', services });
   const explicit = resolveExplicitSlot(text, business, NOW);
   if (explicit?.dateKey && explicit?.timeHHmm && triage.intent !== 'cancel') {
     const named = matchServiceMention(text, services);
@@ -235,7 +235,7 @@ function extractTurn(text, conv, business) {
   if (triage.intent === 'contact') return emptyExtract({ action: 'contact', source: 'keyword' });
   if (triage.intent === 'cancel') return emptyExtract({ action: 'cancel', source: 'keyword' });
   if (triage.intent === 'reschedule') return emptyExtract({ action: 'reschedule', source: 'keyword' });
-  if (triage.intent === 'book' || looksLikeNewBookingRequest(text)) {
+  if (triage.intent === 'book' || looksLikeNewBookingRequest(text, { services })) {
     const parts = parseRomanianDateTimeParts(text, TZ, NOW, { dayHours });
     return emptyExtract({
       action: 'book',

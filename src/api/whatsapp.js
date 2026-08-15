@@ -10,6 +10,7 @@ import { logError } from '../db/loggerService.js';
 import { loadBusinessContext } from '../services/businessContext.js';
 import { routeInboundTurn } from '../services/inboundTurnService.js';
 import { triageUserIntent } from '../services/intentTriageService.js';
+import { getBookingConfig } from '../utils/datetime.js';
 import {
   ensureClient,
   sendAiTransparencyWelcome,
@@ -269,7 +270,10 @@ async function processTwilioWebhook(body, requestId) {
 
     if (isNew) {
       console.log('[webhook] New client — AI transparency welcome');
-      const earlyTriage = triageUserIntent(textBody, { businessType: business.business_type });
+      const earlyTriage = triageUserIntent(textBody, {
+        businessType: business.business_type,
+        services: getBookingConfig(business).services,
+      });
       const actionable = ['book', 'faq', 'contact', 'cancel', 'reschedule', 'callback', 'list_appointments'].includes(
         earlyTriage.intent,
       );

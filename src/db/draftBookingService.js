@@ -332,28 +332,40 @@ export async function startBrowsingFlow({
 /**
  * @param {Object} params
  * @param {string} params.draftId
+ * @param {string} params.businessId
  * @param {Record<string, unknown>} params.service
  * @param {Record<string, unknown>} params.context
  * @param {string | null} [params.requestId]
  */
 export async function setSelectedService({
   draftId,
-  businessId = null,
+  businessId,
   service,
   context,
   requestId = null,
 }) {
-  let query = supabase
+  if (!draftId || !businessId) {
+    await logError({
+      message: 'setSelectedService refused: draftId and businessId required',
+      source: 'database',
+      requestId,
+      draftBookingId: draftId || null,
+      businessId: businessId || null,
+    });
+    return null;
+  }
+
+  const { data, error } = await supabase
     .from('draft_bookings')
     .update({
       selected_service: service,
       conversation_context: context,
       expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     })
-    .eq('id', draftId);
-  if (businessId) query = query.eq('business_id', businessId);
-
-  const { data, error } = await query.select(await draftSelectColumns()).single();
+    .eq('id', draftId)
+    .eq('business_id', businessId)
+    .select(await draftSelectColumns())
+    .single();
 
   if (error) {
     await logError({
@@ -361,6 +373,7 @@ export async function setSelectedService({
       source: 'database',
       requestId,
       draftBookingId: draftId,
+      businessId,
       error,
     });
     return null;
@@ -377,7 +390,7 @@ export async function setSelectedService({
  */
 export async function setSelectedSlot({
   draftId,
-  businessId = null,
+  businessId,
   slotStart,
   slotEnd,
   context,
@@ -385,6 +398,16 @@ export async function setSelectedSlot({
   employeeId = null,
   requestId = null,
 }) {
+  if (!draftId || !businessId) {
+    await logError({
+      message: 'setSelectedSlot refused: draftId and businessId required',
+      source: 'database',
+      requestId,
+      draftBookingId: draftId || null,
+      businessId: businessId || null,
+    });
+    return null;
+  }
   const claimed = await claimSlotForDraft({
     draftId,
     businessId,
@@ -426,7 +449,7 @@ function isSlotTakenDbError(error) {
  */
 export async function claimSlotForDraft({
   draftId,
-  businessId = null,
+  businessId,
   slotStart,
   slotEnd,
   context = {},
@@ -435,6 +458,17 @@ export async function claimSlotForDraft({
   mode = 'hold',
   requestId = null,
 }) {
+  if (!draftId || !businessId) {
+    await logError({
+      message: 'claimSlotForDraft refused: draftId and businessId required',
+      source: 'database',
+      requestId,
+      draftBookingId: draftId || null,
+      businessId: businessId || null,
+    });
+    return { ok: false, draft: null, reason: 'error' };
+  }
+
   const minutes = Number.isFinite(Number(ttlMinutes))
     ? Math.min(60, Math.max(1, Math.round(Number(ttlMinutes))))
     : 5;
@@ -443,7 +477,7 @@ export async function claimSlotForDraft({
   const startIso = slotStart instanceof Date ? slotStart.toISOString() : String(slotStart);
   const endIso = slotEnd instanceof Date ? slotEnd.toISOString() : String(slotEnd);
 
-  if (claimRpcAvailable !== false && businessId) {
+  if (claimRpcAvailable !== false) {
     const { data, error } = await supabase.rpc('claim_booking_slot', {
       p_draft_id: draftId,
       p_business_id: businessId,
@@ -463,6 +497,7 @@ export async function claimSlotForDraft({
         source: 'database',
         requestId,
         draftBookingId: draftId,
+        businessId,
         error,
       });
       if (isSlotTakenDbError(error)) {
@@ -501,8 +536,11 @@ export async function claimSlotForDraft({
     payload.pending_expires_at = ttl;
   }
 
-  let query = supabase.from('draft_bookings').update(payload).eq('id', draftId);
-  if (businessId) query = query.eq('business_id', businessId);
+  let query = supabase
+    .from('draft_bookings')
+    .update(payload)
+    .eq('id', draftId)
+    .eq('business_id', businessId);
   if (mode === 'reschedule') query = query.eq('state', 'confirmed');
 
   let { data, error } = await query.select(await draftSelectColumns()).single();
@@ -510,8 +548,11 @@ export async function claimSlotForDraft({
   if (error && /pending_expires_at/i.test(error.message ?? '')) {
     pendingExpiresColumnAvailable = false;
     const { pending_expires_at: _p, ...without } = payload;
-    let retry = supabase.from('draft_bookings').update(without).eq('id', draftId);
-    if (businessId) retry = retry.eq('business_id', businessId);
+    let retry = supabase
+      .from('draft_bookings')
+      .update(without)
+      .eq('id', draftId)
+      .eq('business_id', businessId);
     if (mode === 'reschedule') retry = retry.eq('state', 'confirmed');
     ({ data, error } = await retry.select(DRAFT_COLUMNS_NO_PENDING_EXPIRES).single());
   }
@@ -522,6 +563,7 @@ export async function claimSlotForDraft({
       source: 'database',
       requestId,
       draftBookingId: draftId,
+      businessId,
       error,
     });
     if (isSlotTakenDbError(error)) {
@@ -536,6 +578,7 @@ export async function claimSlotForDraft({
 /**
  * @param {Object} params
  * @param {string} params.draftId
+ * @param {string} params.businessId
  * @param {string} params.googleEventId
  * @param {string | null} params.googleEventLink
  * @param {Record<string, unknown>} params.context
@@ -543,12 +586,23 @@ export async function claimSlotForDraft({
  */
 export async function confirmDraftBooking({
   draftId,
-  businessId = null,
+  businessId,
   googleEventId,
   googleEventLink,
   context,
   requestId = null,
 }) {
+  if (!draftId || !businessId) {
+    await logError({
+      message: 'confirmDraftBooking refused: draftId and businessId required',
+      source: 'database',
+      requestId,
+      draftBookingId: draftId || null,
+      businessId: businessId || null,
+    });
+    return null;
+  }
+
   /** @type {Record<string, unknown>} */
   const updates = {
     state: 'confirmed',
@@ -562,17 +616,24 @@ export async function confirmDraftBooking({
     updates.pending_expires_at = null;
   }
 
-  let query = supabase.from('draft_bookings').update(updates).eq('id', draftId);
-  if (businessId) query = query.eq('business_id', businessId);
-
-  let { data, error } = await query.select(await draftSelectColumns()).single();
+  let { data, error } = await supabase
+    .from('draft_bookings')
+    .update(updates)
+    .eq('id', draftId)
+    .eq('business_id', businessId)
+    .select(await draftSelectColumns())
+    .single();
 
   if (error && /pending_expires_at/i.test(error.message ?? '')) {
     pendingExpiresColumnAvailable = false;
     const { pending_expires_at: _p, ...without } = updates;
-    let retry = supabase.from('draft_bookings').update(without).eq('id', draftId);
-    if (businessId) retry = retry.eq('business_id', businessId);
-    ({ data, error } = await retry.select(DRAFT_COLUMNS_NO_PENDING_EXPIRES).single());
+    ({ data, error } = await supabase
+      .from('draft_bookings')
+      .update(without)
+      .eq('id', draftId)
+      .eq('business_id', businessId)
+      .select(DRAFT_COLUMNS_NO_PENDING_EXPIRES)
+      .single());
   }
 
   if (error) {
@@ -581,6 +642,7 @@ export async function confirmDraftBooking({
       source: 'database',
       requestId,
       draftBookingId: draftId,
+      businessId,
       error,
     });
     return null;
@@ -592,17 +654,29 @@ export async function confirmDraftBooking({
 /**
  * @param {Object} params
  * @param {string} params.draftId
+ * @param {string} params.businessId
  * @param {'cancelled' | 'browsing'} params.state
  * @param {Record<string, unknown>} params.context
  * @param {string | null} [params.requestId]
  */
 export async function cancelOrResetDraft({
   draftId,
-  businessId = null,
+  businessId,
   state,
   context,
   requestId = null,
 }) {
+  if (!draftId || !businessId) {
+    await logError({
+      message: 'cancelOrResetDraft refused: draftId and businessId required',
+      source: 'database',
+      requestId,
+      draftBookingId: draftId || null,
+      businessId: businessId || null,
+    });
+    return null;
+  }
+
   /** @type {Record<string, unknown>} */
   const updates = {
     state,
@@ -619,17 +693,24 @@ export async function cancelOrResetDraft({
     updates.selected_slot_end = null;
   }
 
-  let query = supabase.from('draft_bookings').update(updates).eq('id', draftId);
-  if (businessId) query = query.eq('business_id', businessId);
-
-  let { data, error } = await query.select(await draftSelectColumns()).single();
+  let { data, error } = await supabase
+    .from('draft_bookings')
+    .update(updates)
+    .eq('id', draftId)
+    .eq('business_id', businessId)
+    .select(await draftSelectColumns())
+    .single();
 
   if (error && /pending_expires_at/i.test(error.message ?? '')) {
     pendingExpiresColumnAvailable = false;
     const { pending_expires_at: _p, ...without } = updates;
-    let retry = supabase.from('draft_bookings').update(without).eq('id', draftId);
-    if (businessId) retry = retry.eq('business_id', businessId);
-    ({ data, error } = await retry.select(DRAFT_COLUMNS_NO_PENDING_EXPIRES).single());
+    ({ data, error } = await supabase
+      .from('draft_bookings')
+      .update(without)
+      .eq('id', draftId)
+      .eq('business_id', businessId)
+      .select(DRAFT_COLUMNS_NO_PENDING_EXPIRES)
+      .single());
   }
 
   if (error) {
@@ -638,6 +719,7 @@ export async function cancelOrResetDraft({
       source: 'database',
       requestId,
       draftBookingId: draftId,
+      businessId,
       error,
     });
     return null;
@@ -711,11 +793,23 @@ export async function cancelActiveDraftsForPhone({
   return /** @type {DraftBooking[]} */ (data ?? []);
 }
 
-export async function updateDraftContext({ draftId, context, requestId = null }) {
+export async function updateDraftContext({ draftId, businessId, context, requestId = null }) {
+  if (!draftId || !businessId) {
+    await logError({
+      message: 'updateDraftContext refused: draftId and businessId required',
+      source: 'database',
+      requestId,
+      draftBookingId: draftId || null,
+      businessId: businessId || null,
+    });
+    return;
+  }
+
   const { error } = await supabase
     .from('draft_bookings')
     .update({ conversation_context: context })
-    .eq('id', draftId);
+    .eq('id', draftId)
+    .eq('business_id', businessId);
 
   if (error) {
     await logError({
@@ -723,6 +817,7 @@ export async function updateDraftContext({ draftId, context, requestId = null })
       source: 'database',
       requestId,
       draftBookingId: draftId,
+      businessId,
       error,
     });
   }
@@ -765,6 +860,7 @@ export async function listUpcomingConfirmedBookings(businessId, rawPhone) {
  * Updates a confirmed booking's slot (reschedule) — keeps same google_event_id.
  * @param {Object} params
  * @param {string} params.draftId
+ * @param {string} params.businessId
  * @param {Date | string} params.slotStart
  * @param {Date | string} params.slotEnd
  * @param {Record<string, unknown>} [params.context]
@@ -772,13 +868,24 @@ export async function listUpcomingConfirmedBookings(businessId, rawPhone) {
  */
 export async function updateConfirmedBookingSlot({
   draftId,
-  businessId = null,
+  businessId,
   slotStart,
   slotEnd,
   context = {},
   googleEventId = undefined,
   requestId = null,
 }) {
+  if (!draftId || !businessId) {
+    await logError({
+      message: 'updateConfirmedBookingSlot refused: draftId and businessId required',
+      source: 'database',
+      requestId,
+      draftBookingId: draftId || null,
+      businessId: businessId || null,
+    });
+    return null;
+  }
+
   /** @type {Record<string, unknown>} */
   const updates = {
     selected_slot_start: new Date(slotStart).toISOString(),
@@ -790,14 +897,14 @@ export async function updateConfirmedBookingSlot({
     updates.google_event_id = googleEventId;
   }
 
-  let query = supabase
+  const { data, error } = await supabase
     .from('draft_bookings')
     .update(updates)
     .eq('id', draftId)
-    .eq('state', 'confirmed');
-  if (businessId) query = query.eq('business_id', businessId);
-
-  const { data, error } = await query.select(await draftSelectColumns()).single();
+    .eq('business_id', businessId)
+    .eq('state', 'confirmed')
+    .select(await draftSelectColumns())
+    .single();
 
   if (error) {
     await logError({
@@ -805,6 +912,7 @@ export async function updateConfirmedBookingSlot({
       source: 'database',
       requestId,
       draftBookingId: draftId,
+      businessId,
       error,
     });
     return null;

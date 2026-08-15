@@ -373,7 +373,7 @@ export function resolveDeterministicInbound({
 export function looksLikePersonName(text) {
   const n = normalize(text);
   if (!n || n.length > 60 || /\d/.test(n) || /[?]/.test(String(text ?? ''))) return false;
-  if (looksLikeExistingAppointmentQuery(n) || looksLikeNewBookingRequest(n) || looksLikeDatetimeOrSlot(n)) {
+  if (looksLikeExistingAppointmentQuery(n) || looksLikeNewBookingRequest(n, { services: getBookingConfig(business).services }) || looksLikeDatetimeOrSlot(n)) {
     return false;
   }
   if (/\b(cum|ce|cine|unde|cand|de ce|ai|esti|sunt|fac|faci|cheama|numele|parcare|mancat|prost|pula|fut|idiot)\b/.test(n)) {
@@ -401,7 +401,7 @@ function faqActionFromText(text) {
  * @param {boolean} inModify
  * @returns {TurnExtract}
  */
-export function recoverSoftParserIntent(mapped, textBody, triage, inModify = false) {
+export function recoverSoftParserIntent(mapped, textBody, triage, inModify = false, services = null) {
   const soft = new Set(['off_topic', 'missing_info', 'unknown', 'chat']);
   if (!soft.has(mapped.action)) return mapped;
 
@@ -415,7 +415,7 @@ export function recoverSoftParserIntent(mapped, textBody, triage, inModify = fal
     return { ...mapped, action: 'off_topic', confidence: 'high', source: 'keyword' };
   }
   if (
-    looksLikeNewBookingRequest(textBody)
+    looksLikeNewBookingRequest(textBody, services?.length ? { services } : {})
     || triage.intent === 'book'
     || (looksLikeDatetimeOrSlot(textBody) && /\d/.test(String(textBody)))
   ) {
@@ -793,7 +793,7 @@ export async function extractTurnIntent({
 
   if (
     step === CONVERSATION_STEPS.OFFERING_RESUME
-    && (isExplicitConfirmReply(textBody) || wantsSameExpiredBooking(textBody, triageUserIntent(textBody)))
+    && (isExplicitConfirmReply(textBody) || wantsSameExpiredBooking(textBody, triageUserIntent(textBody, { businessType: business.business_type, services })))
   ) {
     return emptyExtract({ action: 'resume_yes', confidence: 'high', source: 'state' });
   }
@@ -801,7 +801,7 @@ export async function extractTurnIntent({
     return emptyExtract({ action: 'resume_no', confidence: 'high', source: 'state' });
   }
 
-  const triage = triageUserIntent(textBody, { businessType: business.business_type });
+  const triage = triageUserIntent(textBody, { businessType: business.business_type, services });
   if (triage.intent === 'sms_opt_in' || triage.intent === 'sms_opt_out') {
     return emptyExtract({ action: triage.intent, confidence: 'high', source: 'keyword' });
   }
@@ -809,7 +809,7 @@ export async function extractTurnIntent({
   const inModify = step === CONVERSATION_STEPS.RESCHEDULING || step === CONVERSATION_STEPS.MODIFYING;
   const explicit = resolveExplicitSlot(textBody, business, now);
   if (explicit?.dateKey && explicit?.timeHHmm && !looksLikeExistingAppointmentQuery(textBody)) {
-    const mod = triageUserIntent(textBody, { businessType: business.business_type });
+    const mod = triageUserIntent(textBody, { businessType: business.business_type, services });
     if (mod.intent !== 'cancel') {
       const named = matchServiceMention(textBody, services);
       return emptyExtract({
@@ -860,6 +860,7 @@ export async function extractTurnIntent({
       textBody,
       triage,
       inModify,
+      services,
     );
     if (mapped.action === 'clarify_needed') return mapped;
     if (mapped.action === 'list_appointments' || looksLikeExistingAppointmentQuery(textBody)) {
@@ -924,7 +925,7 @@ export async function extractTurnIntent({
   extract = applyCatalogMatches(extract, textBody, services, employees, tz, { dayHours });
   if (extract.action === 'unknown' || extract.action === 'chat') {
     if (
-      looksLikeNewBookingRequest(textBody)
+      looksLikeNewBookingRequest(textBody, { services })
       || extract.datetime
       || extract.date_text
       || extract.time_text

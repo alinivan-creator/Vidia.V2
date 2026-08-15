@@ -180,6 +180,24 @@ describe('real booking journeys', () => {
     assert.equal(triageUserIntent('unde sunteti').intent, 'contact');
     assert.equal(looksLikeExistingAppointmentQuery('ce programari am'), true);
     assert.equal(looksLikeNewBookingRequest('vreau tuns luni la 10'), true);
+    assert.equal(
+      looksLikeNewBookingRequest('tuns', {
+        services: [{ id: 'svc-tuns', name: 'Tuns Clasic' }],
+      }),
+      true,
+    );
+    assert.equal(
+      looksLikeNewBookingRequest('tuns', {
+        services: [{ id: 'svc-det', name: 'Detartraj' }],
+      }),
+      false,
+    );
+    assert.equal(
+      triageUserIntent('tuns', {
+        services: [{ id: 'svc-det', name: 'Detartraj' }],
+      }).intent !== 'book',
+      true,
+    );
     assert.equal(detectModificationIntent('anuleaza'), 'cancel');
     assert.equal(detectModificationIntent('reprogramare'), 'reschedule');
     assert.equal(detectModificationIntent('muta programarea'), 'reschedule');

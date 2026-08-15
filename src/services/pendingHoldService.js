@@ -1,6 +1,6 @@
 import { CONVERSATION_STEPS, readLastMenu } from '../db/conversationStateService.js';
 import { listEmployees, matchEmployeeMention } from '../db/employeeService.js';
-import { formatSlotLabel } from '../utils/datetime.js';
+import { formatSlotLabel, getBookingConfig } from '../utils/datetime.js';
 import {
   buildConversationTurnContext,
   isOpenAiTemporarilyDown,
@@ -249,7 +249,10 @@ async function fallbackPendingHoldTurn({
     if (handled) return true;
   }
 
-  const triage = triageUserIntent(textBody, { businessType: business.business_type });
+  const triage = triageUserIntent(textBody, {
+    businessType: business.business_type,
+    services: getBookingConfig(business).services,
+  });
   if (triage.intent === 'contact') {
     await handleContactAction({ business, recipientPhone, requestId });
     return true;

@@ -1,4 +1,5 @@
 import { looksLikeBusinessFactQuestion } from '../utils/businessInfoLookup.js';
+import { mentionsCatalogVocabulary } from '../utils/serviceMatch.js';
 
 /**
  * @typedef {'cancel' | 'reschedule' | 'book' | 'list_appointments' | 'faq' | 'contact' | 'menu' | 'callback' | 'sms_opt_in' | 'sms_opt_out' | 'unknown'} TriageIntent
@@ -210,7 +211,14 @@ export function looksLikeExistingAppointmentQuery(text) {
  * Client wants to CREATE a booking. Bare "programare" inside "ce programări am" is not this.
  * @param {string} text
  */
-export function looksLikeNewBookingRequest(text) {
+/**
+ * Client wants to CREATE a booking.
+ * @param {string} text
+ * @param {{ services?: { id?: string, name?: string }[] }} [opts]
+ *   When `services` is provided, a catalog service mention also counts as booking intent
+ *   (tenant-aware — no global barber keyword list).
+ */
+export function looksLikeNewBookingRequest(text, opts = {}) {
   const n = normalize(text);
   if (!n) return false;
   if (looksLikeExistingAppointmentQuery(n)) return false;
@@ -227,22 +235,22 @@ export function looksLikeNewBookingRequest(text) {
   }
   if (/\b(sa ma programez|programeaza-ma|programeaza ma|o programare noua)\b/.test(n)) return true;
   if (/\b(i want to book|want to book|book a|book an)\b/.test(n)) return true;
-  if (/\b(haircut|appointment)\b/.test(n) && /\b(want|book|need|please)\b/.test(n)) return true;
+  if (/\b(appointment)\b/.test(n) && /\b(want|book|need|please)\b/.test(n)) return true;
   if (/\b(vreau|as vrea|doresc|hai|fac|face|faceti)\b/.test(n) && /\b(programar|rezervar)/.test(n)) {
     return true;
   }
   if (/\b(programez|programeaza)\b/.test(n) && !/\b(ce|care|am uitat)\b/.test(n)) return true;
   if (
-    /\b(tuns|tunde|tundeti|tunsoare|barba|aranjat|aranjati|aranjez|haircut)\b/.test(n)
+    Array.isArray(opts.services)
+    && opts.services.length
     && !/\b(pret|preturi|cost|cat costa|tarif|orar|orele|durata|cat dureaza|price|hours)\b/.test(n)
-    && !looksLikeBusinessFactQuestion(n)
     && !(/\bprogram\b/.test(n) && !/\bprogramar/.test(n))
   ) {
-    return true;
+    if (mentionsCatalogVocabulary(n, opts.services)) return true;
   }
   if (
     looksLikeDatetimeOrSlot(n)
-    && /\b(la|ora|at|vreau|as vrea|doresc|hai|tuns|programar|rezervar|want|book)\b/.test(n)
+    && /\b(la|ora|at|vreau|as vrea|doresc|hai|programar|rezervar|want|book)\b/.test(n)
     && !(/\bprogram\b/.test(n) && !/\bprogramar/.test(n))
   ) {
     return true;
@@ -255,7 +263,7 @@ export function looksLikeNewBookingRequest(text) {
  * Order: modify → list existing → callback → book → contact → faq → menu → unknown.
  *
  * @param {string} text
- * @param {{ businessType?: string }} [opts]
+ * @param {{ businessType?: string, services?: { id?: string, name?: string }[] }} [opts]
  * @returns {TriageResult}
  */
 export function triageUserIntent(text, opts = {}) {
@@ -321,7 +329,7 @@ export function triageUserIntent(text, opts = {}) {
     return { intent: 'list_appointments', confidence: 'high', reason: 'list_existing_bookings' };
   }
 
-  if (looksLikeNewBookingRequest(n)) {
+  if (looksLikeNewBookingRequest(n, opts)) {
     if (opts.businessType === 'consulting') {
       return { intent: 'callback', confidence: 'high', reason: 'consulting_booking_interest' };
     }

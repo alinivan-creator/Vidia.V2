@@ -738,7 +738,10 @@ export async function handleClientNameReply({
 
   const name = parseClientNameReply(textBody);
   if (!name) {
-    const triage = triageUserIntent(textBody, { businessType: business.business_type });
+    const triage = triageUserIntent(textBody, {
+      businessType: business.business_type,
+      services: getBookingConfig(business).services,
+    });
     if (triage.intent !== 'unknown' || looksLikeDatetimeOrSlot(textBody)) {
       return false;
     }

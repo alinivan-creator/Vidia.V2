@@ -153,7 +153,7 @@ function extractTurn(text, conv, business, now) {
     return emptyExtract({ action: 'off_topic', source: 'keyword' });
   }
 
-  const triageEarly = triageUserIntent(text, { businessType: business.business_type });
+  const triageEarly = triageUserIntent(text, { businessType: business.business_type, services });
   if (
     looksLikeOutOfScopeRequest(text)
     && triageEarly.intent !== 'faq'
@@ -188,7 +188,7 @@ function extractTurn(text, conv, business, now) {
   });
   if (deterministic) return deterministic;
 
-  const triage = triageUserIntent(text, { businessType: business.business_type });
+  const triage = triageUserIntent(text, { businessType: business.business_type, services });
   const explicit = resolveExplicitSlot(text, business, now);
   if (explicit?.dateKey && explicit?.timeHHmm && triage.intent !== 'cancel') {
     const named = matchServiceMention(text, services);
@@ -242,7 +242,7 @@ function extractTurn(text, conv, business, now) {
   if (triage.intent === 'contact') return emptyExtract({ action: 'contact', source: 'keyword' });
   if (triage.intent === 'cancel') return emptyExtract({ action: 'cancel', source: 'keyword' });
   if (triage.intent === 'reschedule') return emptyExtract({ action: 'reschedule', source: 'keyword' });
-  if (triage.intent === 'book' || looksLikeNewBookingRequest(text)) {
+  if (triage.intent === 'book' || looksLikeNewBookingRequest(text, { services })) {
     return emptyExtract({ action: 'book', source: 'keyword' });
   }
 

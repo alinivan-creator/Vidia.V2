@@ -157,7 +157,7 @@ function extractTurn(text, conv) {
   });
   if (deterministic) return deterministic;
 
-  const triage = triageUserIntent(text, { businessType: 'salon' });
+  const triage = triageUserIntent(text, { businessType: 'salon', services });
   const explicit = resolveExplicitSlot(text, BUSINESS, NOW);
   if (explicit?.dateKey && explicit?.timeHHmm && triage.intent !== 'cancel') {
     const named = matchServiceMention(text, services);
@@ -203,7 +203,7 @@ function extractTurn(text, conv) {
   if (triage.intent === 'contact') return emptyExtract({ action: 'contact', source: 'keyword' });
   if (triage.intent === 'cancel') return emptyExtract({ action: 'cancel', source: 'keyword' });
   if (triage.intent === 'reschedule') return emptyExtract({ action: 'reschedule', source: 'keyword' });
-  if (triage.intent === 'book' || looksLikeNewBookingRequest(text)) {
+  if (triage.intent === 'book' || looksLikeNewBookingRequest(text, { services })) {
     return emptyExtract({ action: 'book', source: 'keyword' });
   }
 

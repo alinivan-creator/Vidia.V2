@@ -283,11 +283,13 @@ function updateLogsFilter() {
   sel.value = current;
 }
 
-// Modal
-const defaultServices = [
-  { id: 'tuns-clasic', name: 'Tuns Clasic', price_ron: 50, duration_minutes: 30 },
-  { id: 'tuns-barba', name: 'Tuns + Barba', price_ron: 80, duration_minutes: 45 },
-  { id: 'aranjat-barba', name: 'Aranjat Barba', price_ron: 30, duration_minutes: 20 },
+// Modal — empty catalog for new businesses (salon / dental / etc. fill their own)
+const defaultServices = [];
+
+const defaultMenuButtons = [
+  { id: 'book', label: '📅 Programare', action: 'start_booking' },
+  { id: 'info', label: 'ℹ️ Detalii & Prețuri', action: 'show_info' },
+  { id: 'contact', label: '📞 Contact & Locație', action: 'show_contact' },
 ];
 
 const defaultSettings = {
@@ -303,9 +305,10 @@ const defaultSettings = {
     '5': { open: '09:00', close: '18:00' },
     '6': { open: '10:00', close: '14:00' },
   },
-  services: defaultServices,
+  services: [],
   contact: { phone: '', email: '', address: '', website: '', maps_url: '' },
   ai_facts: '',
+  business_info: {},
 };
 
 const WEEKDAY_ROWS = [
@@ -422,16 +425,92 @@ function renderServicesRows(services) {
 
 function collectServicesFromTable() {
   return [...$('#bf-services-body').querySelectorAll('tr')].map((tr, idx) => {
-    const name = tr.querySelector('[data-field="name"]')?.value?.trim() || `Serviciu ${idx + 1}`;
+    const name = tr.querySelector('[data-field="name"]')?.value?.trim() || '';
+    if (!name) return null;
     const price = Number(tr.querySelector('[data-field="price_ron"]')?.value);
     const duration = Number(tr.querySelector('[data-field="duration_minutes"]')?.value) || 30;
     return {
-      id: tr.dataset.id || slugifyService(name),
+      id: tr.dataset.id || slugifyService(name) || `svc-${idx + 1}`,
       name,
       price_ron: Number.isFinite(price) ? price : null,
       duration_minutes: duration,
     };
-  });
+  }).filter(Boolean);
+}
+
+function flagSelectValue(info, topic) {
+  if (!info || typeof info !== 'object') return '';
+  const raw = info[topic];
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const enabled = raw.enabled ?? raw.value ?? raw.has;
+    if (enabled === true || enabled === 'true') return 'yes';
+    if (enabled === false || enabled === 'false') return 'no';
+    return '';
+  }
+  if (raw === true || raw === 'true' || raw === 1) return 'yes';
+  if (raw === false || raw === 'false' || raw === 0) return 'no';
+  if (typeof raw === 'string' && raw.trim()) return 'yes';
+  return '';
+}
+
+function flagNoteValue(info, topic) {
+  if (!info || typeof info !== 'object') return '';
+  const nested = info[topic];
+  if (nested && typeof nested === 'object' && typeof nested.note === 'string') return nested.note;
+  if (typeof info[`${topic}_note`] === 'string') return info[`${topic}_note`];
+  if (typeof nested === 'string') return nested;
+  return '';
+}
+
+function fillBusinessInfoFields(info) {
+  const src = info && typeof info === 'object' ? info : {};
+  for (const topic of ['parking', 'women', 'children']) {
+    const sel = $(`#bf-info-${topic}`);
+    const note = $(`#bf-info-${topic}-note`);
+    if (sel) sel.value = flagSelectValue(src, topic);
+    if (note) note.value = flagNoteValue(src, topic);
+  }
+}
+
+function collectBusinessInfoFromForm() {
+  /** @type {Record<string, unknown>} */
+  const info = {};
+  for (const topic of ['parking', 'women', 'children']) {
+    const val = $(`#bf-info-${topic}`)?.value || '';
+    const note = ($(`#bf-info-${topic}-note`)?.value || '').trim();
+    if (val === 'yes') info[topic] = true;
+    else if (val === 'no') info[topic] = false;
+    if (note) info[`${topic}_note`] = note;
+  }
+  return info;
+}
+
+function fillMenuButtonFields(buttons) {
+  const list = Array.isArray(buttons) && buttons.length ? buttons : defaultMenuButtons;
+  const byId = Object.fromEntries(list.map((b) => [b.id, b]));
+  $('#bf-menu-book').value = byId.book?.label || defaultMenuButtons[0].label;
+  $('#bf-menu-info').value = byId.info?.label || defaultMenuButtons[1].label;
+  $('#bf-menu-contact').value = byId.contact?.label || defaultMenuButtons[2].label;
+}
+
+function collectMenuButtonsFromForm() {
+  return [
+    {
+      id: 'book',
+      label: ($('#bf-menu-book')?.value || '').trim() || defaultMenuButtons[0].label,
+      action: 'start_booking',
+    },
+    {
+      id: 'info',
+      label: ($('#bf-menu-info')?.value || '').trim() || defaultMenuButtons[1].label,
+      action: 'show_info',
+    },
+    {
+      id: 'contact',
+      label: ($('#bf-menu-contact')?.value || '').trim() || defaultMenuButtons[2].label,
+      action: 'show_contact',
+    },
+  ];
 }
 
 $('#bf-add-service')?.addEventListener('click', () => {
@@ -636,6 +715,7 @@ function openBusinessModal(id = null, opts = {}) {
     delete advanced.buffer_minutes;
     delete advanced.pending_ttl_minutes;
     delete advanced.conversation_logic;
+    delete advanced.business_info;
     $('#bf-settings').value = Object.keys(advanced).length ? JSON.stringify(advanced, null, 2) : '{}';
     $('#bf-ai-facts').value = typeof settings.ai_facts === 'string' ? settings.ai_facts : '';
     if ($('#bf-conversation-logic')) {
@@ -646,7 +726,9 @@ function openBusinessModal(id = null, opts = {}) {
     }
     renderHoursEditor(settings.business_hours || defaultSettings.business_hours);
     fillContactFields(settings.contact || {});
-    renderServicesRows(b.services || settings.services || defaultServices);
+    fillBusinessInfoFields(settings.business_info || {});
+    fillMenuButtonFields(b.menu_buttons);
+    renderServicesRows(b.services || settings.services || []);
     $('#bf-sms-from').value = typeof settings.sms_from_number === 'string' ? settings.sms_from_number : '';
     $('#bf-sms-recipients').value = '';
     $('#bf-sms-body').value = '';
@@ -695,7 +777,9 @@ function openBusinessModal(id = null, opts = {}) {
     $('#bf-journal-stats').innerHTML = '';
     renderHoursEditor(defaultSettings.business_hours);
     fillContactFields(defaultSettings.contact);
-    renderServicesRows(defaultServices);
+    fillBusinessInfoFields({});
+    fillMenuButtonFields(defaultMenuButtons);
+    renderServicesRows([]);
     renderEmployeesRows([]);
     setPreview('booking');
   }
@@ -977,6 +1061,7 @@ $('#business-form').addEventListener('submit', async (e) => {
   booking_settings.services = collectServicesFromTable();
   booking_settings.business_hours = collectHoursFromEditor();
   booking_settings.contact = collectContactFromForm();
+  booking_settings.business_info = collectBusinessInfoFromForm();
   booking_settings.ai_facts = ($('#bf-ai-facts').value || '').trim();
   booking_settings.confirmation_message = ($('#bf-confirmation').value || '').trim();
   booking_settings.terms_url = ($('#bf-terms-url').value || '').trim();
@@ -1004,6 +1089,7 @@ $('#business-form').addEventListener('submit', async (e) => {
     ai_system_prompt: ($('#bf-prompt').value || '').trim(),
     ai_model: $('#bf-ai-model').value || 'gpt-4o-mini',
     ai_temperature: Number($('#bf-ai-temperature').value ?? 0.3),
+    menu_buttons: collectMenuButtonsFromForm(),
     booking_settings,
     services: booking_settings.services,
   };
