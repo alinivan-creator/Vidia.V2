@@ -45,9 +45,9 @@ function nearbyHoursLine(alternatives, en = false) {
   const labels = (alternatives || [])
     .map((a) => a.label || a.time || a.id)
     .filter(Boolean)
-    .slice(0, 6);
+    .slice(0, 8);
   if (!labels.length) return '';
-  return waField(en ? 'Available' : 'Disponibil', labels.join(' · '));
+  return waField(en ? 'Available' : 'Disponibil', labels.join('\n'));
 }
 
 /**
@@ -116,7 +116,7 @@ export function formatMachineAction({
         nearby ? '' : null,
         nearby || null,
         '',
-        en ? 'Send a time — e.g. *18:00*.' : 'Scrie ora — ex: *18:00*.',
+        en ? 'Send the time that works — e.g. *18:00*.' : 'Scrie ora care ți se potrivește — ex: *18:00*.',
       );
     }
     case MACHINE_ACTIONS.ACTION_ASK_SERVICE:

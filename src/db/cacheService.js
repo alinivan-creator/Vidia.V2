@@ -10,6 +10,7 @@ import {
   encodeSlotId,
 } from '../utils/datetime.js';
 import { assertWithinWorkingHours, hasConfiguredOpenDay } from '../utils/workingHours.js';
+import { slotMatchesTimeWindow } from '../utils/timeWindow.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -323,6 +324,8 @@ export async function getAvailableSlots({
   limit = 10,
   excludeDraftId = null,
   employeeId = null,
+  dateKey = null,
+  timeWindow = null,
 }) {
   const duration = Number(durationMinutes);
   if (!Number.isFinite(duration) || duration <= 0) return [];
@@ -359,15 +362,17 @@ export async function getAvailableSlots({
 
     if (!hours || !hours.open || !hours.close) continue;
 
-    const dateKey = new Intl.DateTimeFormat('en-CA', {
+    const dayKey = new Intl.DateTimeFormat('en-CA', {
       timeZone: timezone,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
     }).format(day);
 
-    let cursor = localToUtc(dateKey, hours.open, timezone);
-    const dayClose = localToUtc(dateKey, hours.close, timezone);
+    if (dateKey && dayKey !== dateKey) continue;
+
+    let cursor = localToUtc(dayKey, hours.open, timezone);
+    const dayClose = localToUtc(dayKey, hours.close, timezone);
 
     while (cursor.getTime() + duration * 60_000 <= dayClose.getTime() && slots.length < limit) {
       const slotEnd = new Date(cursor.getTime() + duration * 60_000);
@@ -375,8 +380,9 @@ export async function getAvailableSlots({
       if (cursor > now) {
         const hoursOk = assertWithinWorkingHours(business, cursor, slotEnd);
         const overlaps = blocked.some((b) => intervalsOverlap(cursor, slotEnd, b.start, b.end));
+        const windowOk = slotMatchesTimeWindow(cursor, timezone, timeWindow);
 
-        if (hoursOk.ok && !overlaps) {
+        if (hoursOk.ok && !overlaps && windowOk) {
           slots.push({
             start: new Date(cursor),
             end: slotEnd,

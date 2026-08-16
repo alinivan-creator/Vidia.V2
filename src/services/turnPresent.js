@@ -5,6 +5,7 @@
 
 import { buildAiTransparencyWelcome, buildBookingConfirmationMessage, buildGdprNote, buildMapsInviteLine } from '../utils/businessMessages.js';
 import { WA_DIVIDER, waField, waFooter, waJoin, waServiceMeta, waTitle } from '../utils/waCopy.js';
+import { timeWindowBounds } from '../utils/timeWindow.js';
 import { formatContactMessage } from './contactService.js';
 import { completeTenantChat } from './aiContextLoader.js';
 import {
@@ -132,17 +133,27 @@ export function renderHandlerResult(business, result) {
         )
       );
     case 'ASK_TIME': {
+      const bounds = timeWindowBounds(d.time_window);
+      const windowHint = bounds ? ` (${bounds.labelRo})` : '';
       const head = d.service_name
         ? waJoin(
-          waTitle(`Ora — ${d.service_name}`),
+          waTitle(`Ore libere — ${d.service_name}${windowHint}`),
           d.date_label ? `*Data*\n${d.date_label}` : null,
         )
-        : waTitle('La ce oră?');
-      const alts = (d.alternatives || []).map((s) => s.time || s.label).filter(Boolean).slice(0, 6);
+        : waTitle(`La ce oră?${windowHint}`);
+      const alts = (d.alternatives || []).map((s) => s.label || s.time).filter(Boolean).slice(0, 8);
       if (alts.length) {
-        return waJoin(head, '', `*Disponibil*\n${alts.join(' · ')}`, '', 'Ex: *18* sau *18:00*');
+        return waJoin(
+          head,
+          '',
+          `*Disponibil*\n${alts.join('\n')}`,
+          '',
+          WA_DIVIDER,
+          '',
+          'Scrie ora care ți se potrivește — ex: *18:00*.',
+        );
       }
-      return waJoin(head, '', 'Ex: *10:30* sau *18*');
+      return waJoin(head, '', 'Ex: *10:30* sau *18:00*');
     }
     case 'ASK_CLARIFY_DATE_OR_TIME':
       return (
@@ -153,27 +164,37 @@ export function renderHandlerResult(business, result) {
         )
       );
     case 'MISSING_SLOT': {
+      const bounds = timeWindowBounds(d.time_window);
+      const windowHint = bounds ? ` (${bounds.labelRo})` : '';
       const head = d.service_name
-        ? waTitle(`Ora — ${d.service_name}`)
-        : waTitle('La ce oră?');
-      const alts = (d.alternatives || []).map((s) => s.time || s.label).filter(Boolean).slice(0, 6);
+        ? waTitle(`Ore libere — ${d.service_name}${windowHint}`)
+        : waTitle(`La ce oră?${windowHint}`);
+      const alts = (d.alternatives || []).map((s) => s.label || s.time).filter(Boolean).slice(0, 8);
       return alts.length
-        ? waJoin(head, '', `*Disponibil*\n${alts.join(' · ')}`, '', 'Ex: *17:00*')
+        ? waJoin(
+          head,
+          '',
+          `*Disponibil*\n${alts.join('\n')}`,
+          '',
+          WA_DIVIDER,
+          '',
+          'Scrie ora pe care o vrei.',
+        )
         : waJoin(head, '', 'Ex: *17:00*');
     }
     case 'SLOT_UNAVAILABLE': {
       const occupied = d.occupied_label
         ? `*${d.occupied_label}* tocmai s-a ocupat.`
         : (d.client_message || 'Intervalul nu e disponibil.');
-      const alts = (d.alternatives || []).map((s) => s.time || s.label).filter(Boolean).slice(0, 6);
+      const alts = (d.alternatives || []).map((s) => s.label || s.time).filter(Boolean).slice(0, 8);
       if (!alts.length) {
-        return waJoin(waTitle('Indisponibil'), occupied, '', 'Scrie altă oră.');
+        return waJoin(waTitle('Indisponibil'), occupied, '', 'Scrie altă oră sau altă zi.');
       }
       return waJoin(
         waTitle('Indisponibil'),
         occupied,
         '',
-        `*Disponibil*\n${alts.join(' · ')}`,
+        `*Disponibil*\n${alts.join('\n')}`,
         '',
         'Scrie ora pe care o vrei.',
       );

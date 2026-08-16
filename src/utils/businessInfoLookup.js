@@ -51,6 +51,13 @@ export function detectFactTopic(text) {
 export function looksLikeBusinessFactQuestion(text) {
   const topic = detectFactTopic(text);
   const n = normalize(text);
+  // Availability / soft booking questions are not amenity FAQ.
+  if (
+    /\b(liber|libere|disponibil|disponibile|loc liber|ore libere)\b/.test(n)
+    || /\b(seara|dimineata|dupa[\s-]*amiaza|amiaza)\b/.test(n)
+  ) {
+    if (!topic) return false;
+  }
   if (topic) {
     if (/[?]/.test(String(text ?? ''))) return true;
     if (/\b(aveti|avem|tundeti|primiti|acceptati|faceti|do you|have you|are there|is there)\b/.test(n)) {
@@ -60,16 +67,17 @@ export function looksLikeBusinessFactQuestion(text) {
   }
   if (/\b(aveti|avem|acceptati|do you have)\b/.test(n)
     && /\b(wifi|wi-fi|card|pos|numerar|cash|lift|rampa)\b/.test(n)
-    && !/\b(programar|rezervar|luni|marti|maine|azi|ora|la \d)\b/.test(n)
+    && !/\b(programar|rezervar|luni|marti|maine|azi|ora|la \d|liber|disponibil|seara|dimineata)\b/.test(n)
   ) {
     return true;
   }
   // Policy / amenity questions Admin may answer via ai_facts — never invent.
   // Do not steal price/hours FAQ ("ce program aveți?", "care sunt prețurile?").
+  // Do not steal soft availability ("mai pe seară aveți liber?").
   if (
     /\b(aveti|avem|primiti|acceptati|lucrati|do you|have you|are there)\b/.test(n)
     && /[?]/.test(String(text ?? ''))
-    && !/\b(programar|rezervar|maine|azi|luni|marti|miercuri|joi|vineri|ora|la \d)\b/.test(n)
+    && !/\b(programar|rezervar|maine|azi|luni|marti|miercuri|joi|vineri|ora|la \d|liber|libere|disponibil|disponibile|seara|dimineata|dupa[\s-]*amiaza)\b/.test(n)
     && !/\b(pret|preturi|price|prices|cost|tarif|program|orar|orele|hours|servici|detalii)\b/.test(n)
   ) {
     return true;

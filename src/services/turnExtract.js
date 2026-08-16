@@ -7,19 +7,6 @@ import { getBookingConfig, localToUtc } from '../utils/datetime.js';
 import { getHoursForDate } from '../utils/workingHours.js';
 import { listEmployees, matchEmployeeMention } from '../db/employeeService.js';
 import { CONVERSATION_STEPS, readLastMenu } from '../db/conversationStateService.js';
-import {
-  triageUserIntent,
-  looksLikeDatetimeOrSlot,
-  isExplicitConfirmReply,
-  isExplicitCancelReply,
-  isAffirmativeReply,
-  looksLikeOutOfScopeRequest,
-  wantsSameExpiredBooking,
-  looksLikeExistingAppointmentQuery,
-  looksLikeNewBookingRequest,
-  looksLikeGreeting,
-  looksLikeOffTopicChat,
-} from './intentTriageService.js';
 import { looksLikeBusinessFactQuestion } from '../utils/businessInfoLookup.js';
 import { resolveAcceptedOffer } from './pendingOfferService.js';
 import { resolveNumberedChoice } from './whatsappService.js';
@@ -33,6 +20,24 @@ import {
 } from './bookingWaitState.js';
 import { extractBookingEntities } from '../lib/ai/extractor.js';
 import { matchServiceMention } from '../utils/serviceMatch.js';
+import {
+  detectTimeWindowFromText,
+  looksLikeAvailabilityQuestion,
+  normalizeTimeWindow,
+} from '../utils/timeWindow.js';
+import {
+  looksLikeDatetimeOrSlot,
+  isExplicitConfirmReply,
+  isExplicitCancelReply,
+  isAffirmativeReply,
+  looksLikeOutOfScopeRequest,
+  wantsSameExpiredBooking,
+  looksLikeExistingAppointmentQuery,
+  looksLikeNewBookingRequest,
+  looksLikeGreeting,
+  looksLikeOffTopicChat,
+  triageUserIntent,
+} from './intentTriageService.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -48,6 +53,7 @@ const PREFIX = BOOKING_PREFIXES;
  * @property {Date | null} datetime
  * @property {string | null} date_text
  * @property {string | null} time_text
+ * @property {'morning' | 'afternoon' | 'evening' | null} [time_window]
  * @property {string | null} appointment_id
  * @property {string | null} slot_id
  * @property {string | null} choice_id
@@ -77,6 +83,7 @@ function emptyExtract(overrides = {}) {
     datetime: null,
     date_text: null,
     time_text: null,
+    time_window: null,
     appointment_id: null,
     slot_id: null,
     choice_id: null,
@@ -417,9 +424,16 @@ export function recoverSoftParserIntent(mapped, textBody, triage, inModify = fal
   if (
     looksLikeNewBookingRequest(textBody, services?.length ? { services } : {})
     || triage.intent === 'book'
-    || (looksLikeDatetimeOrSlot(textBody) && /\d/.test(String(textBody)))
+    || looksLikeAvailabilityQuestion(textBody)
+    || (looksLikeDatetimeOrSlot(textBody) && (/\d/.test(String(textBody)) || detectTimeWindowFromText(textBody)))
   ) {
-    return { ...mapped, action: inModify ? 'reschedule' : 'book', confidence: 'high', source: 'keyword' };
+    return {
+      ...mapped,
+      action: inModify ? 'reschedule' : 'book',
+      confidence: 'high',
+      source: 'keyword',
+      time_window: mapped.time_window || detectTimeWindowFromText(textBody),
+    };
   }
   if (triage.intent === 'contact') {
     return { ...mapped, action: 'contact', confidence: 'high', source: 'keyword' };
@@ -539,6 +553,9 @@ function mapExtractionToTurnExtract(parsed, { textBody, isPendingHold, inModify,
     service_name: parsed.extracted_service,
     date_text: parsed.intent === 'change_time' ? null : parsed.extracted_date,
     time_text: parsed.intent === 'change_date' ? null : parsed.extracted_time,
+    time_window: parsed.extracted_time
+      ? null
+      : (normalizeTimeWindow(parsed.time_window) || detectTimeWindowFromText(textBody)),
     confidence: confidenceBand(parsed.confidence),
     source: 'nlu',
     extraction: parsed,
@@ -567,6 +584,10 @@ function applyCatalogMatches(extract, textBody, services, employees, timezone, o
   }
 
   applyParsedDateTime(next, textBody, timezone, opts);
+  if (!next.time_text && !next.time_window) {
+    next.time_window = detectTimeWindowFromText(textBody);
+  }
+  if (next.time_text) next.time_window = null;
   if (next.date_text && !/^\d{4}-\d{2}-\d{2}$/.test(next.date_text)) {
     const asDate = parseRomanianDateTimeParts(next.date_text, timezone, new Date(), { dayHours: opts.dayHours });
     if (asDate.dateKey) next.date_text = asDate.dateKey;
@@ -675,6 +696,19 @@ export async function extractTurnIntent({
   }
   if (looksLikeOffTopicChat(textBody)) {
     return emptyExtract({ action: 'off_topic', confidence: 'high', source: 'keyword' });
+  }
+  // Soft availability must not be stolen as amenity FAQ.
+  if (looksLikeAvailabilityQuestion(textBody) || detectTimeWindowFromText(textBody)) {
+    const named = matchServiceMention(textBody, services);
+    return emptyExtract({
+      action: 'book',
+      service_id: named?.id ?? null,
+      service_name: named?.name ?? null,
+      time_window: detectTimeWindowFromText(textBody),
+      date_text: extractDateKey(textBody, tz),
+      confidence: 'high',
+      source: 'keyword',
+    });
   }
   if (looksLikeBusinessFactQuestion(textBody)) {
     return emptyExtract({ action: 'missing_info', confidence: 'high', source: 'keyword' });
@@ -923,12 +957,17 @@ export async function extractTurnIntent({
   }
 
   extract = applyCatalogMatches(extract, textBody, services, employees, tz, { dayHours });
+  if (!extract.time_window && !extract.time_text) {
+    extract.time_window = detectTimeWindowFromText(textBody);
+  }
   if (extract.action === 'unknown' || extract.action === 'chat') {
     if (
       looksLikeNewBookingRequest(textBody, { services })
+      || looksLikeAvailabilityQuestion(textBody)
       || extract.datetime
       || extract.date_text
       || extract.time_text
+      || extract.time_window
       || extract.service_id
       || looksLikeDatetimeOrSlot(textBody)
     ) {

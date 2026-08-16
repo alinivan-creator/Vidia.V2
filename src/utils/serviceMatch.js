@@ -147,10 +147,10 @@ export function formatServiceAskMessage(services) {
   if (!list.length) {
     return waJoin(waTitle('Ce serviciu dorești?'), '', `Scrie numele — ex: *${example}*.`);
   }
-  const lines = list.flatMap((s, i) => {
+  const lines = list.flatMap((s) => {
     const dur = Number(s.duration_minutes);
     const extra = Number.isFinite(dur) && dur > 0 ? `   ${dur} min` : '';
-    return [`*${i + 1}. ${s.name}*`, extra || null, ''];
+    return [`*${s.name}*`, extra || null, ''];
   });
   return waJoin(
     waTitle('Ce serviciu dorești?'),
@@ -158,7 +158,7 @@ export function formatServiceAskMessage(services) {
     ...lines,
     WA_DIVIDER,
     '',
-    'Scrie *numărul* sau *numele*.',
+    `Scrie *numele* — ex: *${example}*.`,
   );
 }
 

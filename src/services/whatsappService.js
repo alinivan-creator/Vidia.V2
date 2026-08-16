@@ -100,7 +100,7 @@ export function formatNumberedMenu(bodyText, options, footerText = null) {
     lines.push(`${n}. ${opt.title}${desc}`);
   });
 
-  lines.push('', 'Răspunde cu numărul opțiunii (ex: 1).');
+  lines.push('', 'Poți răspunde cu *numele* sau cu numărul opțiunii.');
 
   if (footerText) {
     lines.push('', footerText);

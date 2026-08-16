@@ -130,6 +130,7 @@ export function hydrateExtract(extract, convState, timezone) {
   if (freshMenuStart) {
     next.date_text = null;
     next.time_text = null;
+    next.time_window = null;
     next.datetime = null;
     next.slot_id = null;
     next.service_id = null;
@@ -138,6 +139,7 @@ export function hydrateExtract(extract, convState, timezone) {
   }
   const turnHasDate = Boolean(extract.date_text);
   const turnHasTime = Boolean(extract.time_text);
+  const turnHasWindow = Boolean(extract.time_window);
   const keepService = sessionKeepsChosenService(mapSessionState(convState?.current_step));
 
   if (!turnHasDate && typeof ctx.pending_date_text === 'string' && ctx.pending_date_text) {
@@ -146,6 +148,10 @@ export function hydrateExtract(extract, convState, timezone) {
   if (!turnHasTime && typeof ctx.pending_time_text === 'string' && ctx.pending_time_text) {
     next.time_text = ctx.pending_time_text;
   }
+  if (!turnHasWindow && !next.time_text && typeof ctx.pending_time_window === 'string') {
+    next.time_window = ctx.pending_time_window;
+  }
+  if (next.time_text) next.time_window = null;
   if (!next.service_id && keepService && typeof ctx.pending_service_id === 'string') {
     next.service_id = ctx.pending_service_id;
   }
@@ -171,12 +177,19 @@ async function persistPendingExtract({ business, recipientPhone, extract, reques
   if (freshMenuStart) {
     context.pending_date_text = null;
     context.pending_time_text = null;
+    context.pending_time_window = null;
     context.pending_datetime = null;
     context.pending_slot_id = null;
     context.pending_service_id = null;
   }
   if (extract.date_text) context.pending_date_text = extract.date_text;
-  if (extract.time_text) context.pending_time_text = extract.time_text;
+  if (extract.time_text) {
+    context.pending_time_text = extract.time_text;
+    context.pending_time_window = null;
+  }
+  if (extract.time_window && !extract.time_text) {
+    context.pending_time_window = extract.time_window;
+  }
   if (extract.service_id) context.pending_service_id = extract.service_id;
   if (extract.employee_id) context.pending_employee_id = extract.employee_id;
   if (extract.slot_id) context.pending_slot_id = extract.slot_id;
@@ -337,7 +350,16 @@ async function ensureDraft({ business, recipientPhone, clientId, requestId, acti
   });
 }
 
-async function listSlotsForService({ business, service, draftId, employeeId, requestId, dateKey = null }) {
+async function listSlotsForService({
+  business,
+  service,
+  draftId,
+  employeeId,
+  requestId,
+  dateKey = null,
+  timeWindow = null,
+  limit = 8,
+}) {
   if (!hasConfiguredOpenDay(business)) return { error: hoursUnsetClientMessage(), slots: [] };
   const duration = catalogDuration(business, service);
   if (!duration) return { error: durationMissingClientMessage(service?.name), slots: [] };
@@ -349,17 +371,16 @@ async function listSlotsForService({ business, service, draftId, employeeId, req
     calendarId: resolveEmployeeCalendarId(business, employee),
     employeeId,
   });
-  let slots = await getAvailableSlots({
+  const slots = await getAvailableSlots({
     business,
     durationMinutes: duration,
-    limit: 10,
+    limit: dateKey ? limit : Math.max(limit, 12),
     excludeDraftId: draftId,
     employeeId,
+    dateKey: dateKey || null,
+    timeWindow: timeWindow || null,
   });
-  if (dateKey) {
-    slots = slots.filter((s) => formatDateKey(s.start, business.timezone) === dateKey);
-  }
-  return { error: null, slots, duration };
+  return { error: null, slots: slots.slice(0, limit), duration };
 }
 
 async function missingService(business, recipientPhone, draft, requestId) {
@@ -379,6 +400,7 @@ async function missingService(business, recipientPhone, draft, requestId) {
       draft_id: draft?.id,
       intent: 'book',
       booking_wait: BOOKING_WAIT.SERVICE,
+      // Free-text is primary; numbered options remain as silent fallback if the client still types 1/2/3.
       last_menu: serviceMenu(business),
     },
     requestId,
@@ -412,6 +434,7 @@ async function missingSlotsResult({
   occupiedLabel = null,
   conversationStep = CONVERSATION_STEPS.WAITING_FOR_TIME,
   extraContext = {},
+  timeWindow = null,
 }) {
   const listed = await listSlotsForService({
     business,
@@ -420,6 +443,7 @@ async function missingSlotsResult({
     employeeId,
     requestId,
     dateKey,
+    timeWindow,
   });
   if (listed.error) {
     return handlerResult({
@@ -436,7 +460,9 @@ async function missingSlotsResult({
       draft_id: draft?.id,
       intent: extraContext.intent || 'book',
       service,
-      booking_wait: dateKey ? BOOKING_WAIT.TIME : BOOKING_WAIT.DATE,
+      booking_wait: dateKey || timeWindow ? BOOKING_WAIT.TIME : BOOKING_WAIT.DATE,
+      pending_time_window: timeWindow || null,
+      last_menu: null,
       ...extraContext,
     },
     requestId,
@@ -449,10 +475,12 @@ async function missingSlotsResult({
       data: {
         service_name: service?.name,
         occupied_label: occupiedLabel,
+        time_window: timeWindow,
         alternatives: [],
         client_message:
           `Nu am găsit ore libere pentru *${service?.name || 'serviciu'}*` +
           (dateKey ? ` pe ${dateKey}` : '') +
+          (timeWindow ? ` (${timeWindow})` : '') +
           '.',
       },
       machine_action: MACHINE_ACTIONS.ACTION_SLOT_UNAVAILABLE,
@@ -466,6 +494,7 @@ async function missingSlotsResult({
       service_name: service?.name,
       occupied_label: occupiedLabel,
       date_label: dateKey,
+      time_window: timeWindow,
       alternatives: listed.slots.map((s) => ({
         id: s.id,
         label: formatSlotLabel(s.start, business.timezone),
@@ -751,6 +780,22 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
   }
 
   if (!extract.date_text) {
+    // Soft window without a day: list real free slots in that window (validated from cache).
+    if (extract.time_window) {
+      return missingSlotsResult({
+        business,
+        recipientPhone,
+        draft: working,
+        service,
+        employeeId: draftEmployeeId(working),
+        dateKey: null,
+        timeWindow: extract.time_window,
+        requestId,
+        reasonKey: 'ASK_TIME',
+        conversationStep: CONVERSATION_STEPS.WAITING_FOR_TIME,
+        extraContext: { pending_time_window: extract.time_window },
+      });
+    }
     await setConversationStep({
       businessId: business.id,
       rawPhone: recipientPhone,
@@ -760,6 +805,7 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
         intent: 'book',
         service,
         booking_wait: BOOKING_WAIT.DATE,
+        pending_time_window: extract.time_window || null,
       },
       requestId,
     });
@@ -782,6 +828,7 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
     service,
     employeeId: draftEmployeeId(working),
     dateKey: extract.date_text,
+    timeWindow: extract.time_window || null,
     requestId,
     reasonKey: 'ASK_TIME',
     conversationStep: CONVERSATION_STEPS.WAITING_FOR_TIME,

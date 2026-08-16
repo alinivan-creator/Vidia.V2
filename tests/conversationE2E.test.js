@@ -448,12 +448,13 @@ describe('end-to-end conversations: start to confirm', () => {
 
     const book = chat.say('1');
     assert.equal(book.action, MACHINE_ACTIONS.ACTION_ASK_SERVICE);
-    assert.match(book.text, /\*1\. Tuns Clasic\*/);
+    assert.match(book.text, /\*Tuns Clasic\*/);
     assert.match(book.text, /30 min/);
-    assert.match(book.text, /\*2\. Tuns \+ Barba\*/);
+    assert.match(book.text, /\*Tuns \+ Barba\*/);
     assert.match(book.text, /45 min/);
-    assert.match(book.text, /\*3\. Aranjat Barba\*/);
+    assert.match(book.text, /\*Aranjat Barba\*/);
     assert.match(book.text, /20 min/);
+    assert.doesNotMatch(book.text, /numărul/);
 
     const service = chat.say('1');
     assert.equal(service.action, MACHINE_ACTIONS.ACTION_ASK_DATE_TIME, service.text);
