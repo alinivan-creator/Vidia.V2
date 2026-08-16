@@ -25,16 +25,24 @@ const CLIENT_COLUMNS =
 /**
  * Creates or updates a client record and refreshes last_contact_at.
  * Phone is captured automatically from WhatsApp (E.164).
+ * Optional displayName (Twilio ProfileName) fills empty names only.
  *
  * @param {Object} params
  * @param {string} params.businessId
  * @param {string} params.rawPhone Meta `from` field (digits)
+ * @param {string | null} [params.displayName]
  * @param {string | null} [params.requestId]
  * @returns {Promise<UpsertClientResult>}
  */
-export async function upsertClient({ businessId, rawPhone, requestId = null }) {
+export async function upsertClient({
+  businessId,
+  rawPhone,
+  displayName = null,
+  requestId = null,
+}) {
   const phoneNumber = toE164(rawPhone);
   const now = new Date().toISOString();
+  const cleanedName = sanitizeDisplayName(displayName);
 
   if (!phoneNumber) {
     return { client: null, isNew: false };
@@ -60,9 +68,16 @@ export async function upsertClient({ businessId, rawPhone, requestId = null }) {
   }
 
   if (existing) {
+    /** @type {Record<string, unknown>} */
+    const updates = { last_contact_at: now };
+    const hasName = typeof existing.display_name === 'string' && existing.display_name.trim();
+    if (!hasName && cleanedName) {
+      updates.display_name = cleanedName;
+    }
+
     const { data, error } = await supabase
       .from('clients')
-      .update({ last_contact_at: now })
+      .update(updates)
       .eq('id', existing.id)
       .select(CLIENT_COLUMNS)
       .single();
@@ -82,14 +97,18 @@ export async function upsertClient({ businessId, rawPhone, requestId = null }) {
     return { client: /** @type {Client} */ (data), isNew: false };
   }
 
+  /** @type {Record<string, unknown>} */
+  const insertRow = {
+    business_id: businessId,
+    phone_number: phoneNumber,
+    last_contact_at: now,
+    first_contact_at: now,
+  };
+  if (cleanedName) insertRow.display_name = cleanedName;
+
   const { data, error } = await supabase
     .from('clients')
-    .insert({
-      business_id: businessId,
-      phone_number: phoneNumber,
-      last_contact_at: now,
-      first_contact_at: now,
-    })
+    .insert(insertRow)
     .select(CLIENT_COLUMNS)
     .single();
 
@@ -106,6 +125,23 @@ export async function upsertClient({ businessId, rawPhone, requestId = null }) {
   }
 
   return { client: /** @type {Client} */ (data), isNew: true };
+}
+
+/**
+ * @param {string | null | undefined} raw
+ * @returns {string | null}
+ */
+function sanitizeDisplayName(raw) {
+  const cleaned = String(raw ?? '')
+    .replace(/[\u0000-\u001f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+  if (!cleaned || cleaned.length < 2) return null;
+  // Ignore phone-like / placeholder WhatsApp names
+  if (/^\+?\d[\d\s-]{5,}$/.test(cleaned)) return null;
+  if (/^(whatsapp|user|client|unknown)$/i.test(cleaned)) return null;
+  return cleaned;
 }
 
 /**

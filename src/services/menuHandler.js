@@ -355,17 +355,25 @@ export async function handleMenuButtonPress({
 /**
  * Ensures client exists in CRM before handling any message.
  * Phone number is captured automatically from WhatsApp.
+ * Twilio ProfileName fills display_name when missing.
  *
  * @param {Object} params
  * @param {Business} params.business
  * @param {string} params.recipientPhone
+ * @param {string | null} [params.displayName]
  * @param {string | null} [params.requestId]
  * @returns {Promise<{ clientId: string | null; client: import('../db/clientService.js').Client | null; isNew: boolean }>}
  */
-export async function ensureClient({ business, recipientPhone, requestId = null }) {
+export async function ensureClient({
+  business,
+  recipientPhone,
+  displayName = null,
+  requestId = null,
+}) {
   const { client, isNew } = await upsertClient({
     businessId: business.id,
     rawPhone: recipientPhone,
+    displayName,
     requestId,
   });
   return {

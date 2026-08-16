@@ -29,6 +29,7 @@ import {
   sweepStalePendingForPhone,
   resolveLastBookingIntent,
 } from '../services/pendingExpiryService.js';
+import { resetExpiredSessionForRestart } from '../services/pendingExpiryCron.js';
 
 /**
  * Twilio WhatsApp inbound webhook.
@@ -138,6 +139,7 @@ function sanitizeTwilioBody(body) {
     Body: body?.Body,
     MessageSid: body?.MessageSid,
     AccountSid: body?.AccountSid,
+    ProfileName: body?.ProfileName,
   };
 }
 
@@ -149,6 +151,7 @@ async function processTwilioWebhook(body, requestId) {
   const fromRaw = String(body?.From ?? '');
   const toRaw = String(body?.To ?? '');
   const textBody = String(body?.Body ?? '').trim();
+  const profileName = String(body?.ProfileName ?? '').trim() || null;
 
   const toClean = toE164(toRaw);
   const fromClean = toE164(fromRaw);
@@ -239,7 +242,12 @@ async function processTwilioWebhook(body, requestId) {
       requestId,
     });
 
-    const { clientId, isNew } = await ensureClient({ business, recipientPhone, requestId });
+    const { clientId, isNew } = await ensureClient({
+      business,
+      recipientPhone,
+      displayName: profileName,
+      requestId,
+    });
 
     const swept = await sweepStalePendingForPhone({
       business,
@@ -250,18 +258,22 @@ async function processTwilioWebhook(body, requestId) {
     let activeDraft = swept.draft;
     const expiry = { expired: swept.expired, lastIntent: swept.lastIntent };
 
-    if (swept.idleExpired) {
+    if (swept.idleExpired || swept.expired) {
       clearRememberedMenuOptions(business.id, recipientPhone);
-      const ttlMin = Number(business?.booking_settings?.pending_ttl_minutes) || 5;
+      const restarted = await resetExpiredSessionForRestart({
+        business,
+        rawPhone: recipientPhone,
+        clientId,
+        requestId,
+      });
       await sendTextMessage({
         business,
         recipientPhone,
         requestId,
-        text:
-          `*Sesiune expirată*\n` +
-          `Nu am primit răspuns în ${ttlMin} min — programarea în curs a fost anulată.\n\n` +
-          `Scrie *programare* sau *1* ca să începi din nou.`,
+        text: restarted.message,
       });
+      // Fresh session started — wait for the next client reply (service name).
+      return;
     }
 
     console.log('[webhook] Conversation state:', {

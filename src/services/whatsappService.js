@@ -91,7 +91,7 @@ function createTwilioClient(business) {
  * @param {string | null} [footerText]
  * @returns {string}
  */
-export function formatNumberedMenu(bodyText, options, footerText = null) {
+export function formatNumberedMenu(bodyText, options, footerText = null, menuKind = 'generic') {
   const lines = [bodyText.trim(), ''];
 
   options.forEach((opt, index) => {
@@ -100,7 +100,16 @@ export function formatNumberedMenu(bodyText, options, footerText = null) {
     lines.push(`${n}. ${opt.title}${desc}`);
   });
 
-  lines.push('', 'Poți răspunde cu *numele* sau cu numărul opțiunii.');
+  const kind = String(menuKind || 'generic');
+  if (kind === 'confirm') {
+    lines.push('', 'Răspunde cu *Confirmă* sau *Anulează* (sau folosește *1* / *2*).');
+  } else if (kind === 'clarify') {
+    lines.push('', 'Răspunde cu *1* sau *2*.');
+  } else if (kind === 'resume') {
+    lines.push('', 'Răspunde cu *Da, reia* sau *Alte ore* (sau *1* / *2*).');
+  } else {
+    lines.push('', 'Poți răspunde cu *numele* sau cu numărul opțiunii.');
+  }
 
   if (footerText) {
     lines.push('', footerText);
@@ -701,7 +710,7 @@ export async function sendInteractiveButtons({
   await rememberMenuOptions(business.id, recipientPhone, options, menuKind);
 
   const header = headerText ? `${headerText}\n\n` : '';
-  const body = formatNumberedMenu(`${header}${bodyText}`, options, footerText);
+  const body = formatNumberedMenu(`${header}${bodyText}`, options, footerText, menuKind);
 
   return sendTwilioMessage({ business, recipientPhone, body, requestId });
 }

@@ -373,3 +373,19 @@ adminRouter.post('/schema/refresh', async (_req, res) => {
     res.status(500).json({ ok: false, message: 'Reîmprospătarea schemei a eșuat' });
   }
 });
+
+adminRouter.post('/cron/expire-pending', async (_req, res) => {
+  try {
+    const { runPendingExpiryCron } = await import('../services/pendingExpiryCron.js');
+    const summary = await runPendingExpiryCron({ requestId: `admin-${Date.now()}` });
+    res.json({ ok: true, ...summary });
+  } catch (error) {
+    await logError({
+      message: 'POST /admin/cron/expire-pending failed',
+      source: 'cron',
+      severity: 'error',
+      error,
+    });
+    res.status(500).json({ ok: false, error: 'Expirarea pending a eșuat' });
+  }
+});

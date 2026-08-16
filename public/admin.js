@@ -954,7 +954,7 @@ function ttlLine(d) {
   const exp = d.pending_expires_at || d.locked_until;
   if (d.state !== 'pending_confirmation' || !exp) return '';
   const ms = new Date(exp).getTime() - Date.now();
-  if (ms <= 0) return '<p class="text-[10px] text-amber-700 mt-0.5">TTL expirat — se eliberează la următorul mesaj / check disponibilitate</p>';
+  if (ms <= 0) return '<p class="text-[10px] text-amber-700 mt-0.5">TTL expirat — eliberat de cron (1 min) sau la următorul mesaj</p>';
   const mins = Math.ceil(ms / 60000);
   return `<p class="text-[10px] text-amber-700 mt-0.5">TTL: ~${mins} min rămase (până la ${new Date(exp).toLocaleTimeString('ro-RO')})</p>`;
 }

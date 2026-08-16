@@ -4,6 +4,7 @@ import path from 'node:path';
 import { env } from './config/env.js';
 import { whatsappRouter } from './api/whatsapp.js';
 import { googleWebhookRouter } from './api/googleWebhook.js';
+import { cronRouter } from './api/cron.js';
 import { adminRouter } from './api/admin.js';
 import { calendarRouter } from './api/calendar.js';
 import { logError, registerProcessErrorHandlers } from './db/loggerService.js';
@@ -31,6 +32,8 @@ export const ROUTE_MAP = [
   { method: 'POST', path: '/webhook/whatsapp', description: 'Twilio WhatsApp inbound (form-urlencoded)' },
   { method: 'POST', path: '/webhook/google/calendar', description: 'Google Calendar push notifications' },
   { method: 'GET', path: '/calendar/event.ics', description: 'Add-to-calendar .ics download (client phones)' },
+  { method: 'GET', path: '/cron/expire-pending', description: 'Background: expire pending booking holds (CRON_SECRET)' },
+  { method: 'POST', path: '/cron/expire-pending', description: 'Background: expire pending booking holds (CRON_SECRET)' },
   { method: 'GET', path: '/', description: 'Admin dashboard (HTML)' },
   { method: 'POST', path: '/admin/login', description: 'Admin authentication' },
   { method: 'GET', path: '/admin/ai-defaults', description: 'Default AI system prompt for Admin' },
@@ -108,6 +111,7 @@ app.get('/test/db', async (_req, res) => {
 app.use('/webhook/whatsapp', whatsappWebhookRateLimiter, whatsappRouter);
 app.use('/webhook/google', googleWebhookRateLimiter, googleWebhookRouter);
 app.use('/calendar', calendarRouter);
+app.use('/cron', cronRouter);
 app.use('/admin/login', adminLoginRateLimiter);
 app.use('/admin', adminApiRateLimiter, adminRouter);
 
