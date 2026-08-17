@@ -45,7 +45,6 @@ import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
 import {
   buildBookingConfirmationMessage,
   buildGdprNote,
-  buildMapsInviteLine,
 } from '../utils/businessMessages.js';
 import { optInClientAfterBooking } from './smsMarketingService.js';
 import {
@@ -1264,9 +1263,8 @@ async function handleConfirmBooking({ business, recipientPhone, draft, requestId
     startIso: startDate.toISOString(),
     endIso: endDate.toISOString(),
   });
-  const mapsInvite = buildMapsInviteLine(business);
 
-  // Order: 1) GDPR note, 2) confirmation (maps + calendar CTA)
+  // Order: 1) GDPR note, 2) confirmation + calendar CTA (location card is separate / native)
   await sendTextMessage({
     business,
     recipientPhone,
@@ -1280,7 +1278,7 @@ async function handleConfirmBooking({ business, recipientPhone, draft, requestId
     slotLabel: formatSlotLabel(new Date(slotStart), business.timezone),
     clientName,
     calendarLine: '',
-    mapsLine: mapsInvite?.messageLine || '',
+    mapsLine: '',
     includeGdpr: false,
   });
 

@@ -23,7 +23,7 @@ import {
   resolveServiceDurationMinutes,
 } from '../utils/workingHours.js';
 import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
-import { buildGdprNote, buildMapsInviteLine } from '../utils/businessMessages.js';
+import { buildGdprNote } from '../utils/businessMessages.js';
 import { WA_DIVIDER, waField, waJoin, waTitle } from '../utils/waCopy.js';
 import {
   lazySyncCalendar,
@@ -851,9 +851,8 @@ export async function applyRescheduleSlot({
     startIso: slotStart,
     endIso: slotEnd,
   });
-  const mapsInvite = buildMapsInviteLine(business);
 
-  // Order: 1) GDPR note, 2) updated booking confirmation
+  // Order: 1) GDPR note, 2) updated booking confirmation (no duplicate maps markdown)
   await sendTextMessage({
     business,
     recipientPhone,
@@ -866,8 +865,6 @@ export async function applyRescheduleSlot({
     '',
     waField('Serviciu', service.name || 'Serviciu'),
     waField('Când', formatSlotLabel(slotStart, business.timezone)),
-    mapsInvite?.messageLine ? '' : null,
-    mapsInvite?.messageLine || null,
     '',
     WA_DIVIDER,
     '',

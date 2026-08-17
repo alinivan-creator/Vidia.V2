@@ -336,7 +336,8 @@ export async function getAvailableSlots({
   const config = getBookingConfig(business);
   const timezone = business.timezone;
   const now = new Date();
-  const horizonEnd = new Date(now.getTime() + config.bookingHorizonDays * 24 * 60 * 60 * 1000);
+  const horizonDays = Math.max(14, Number(config.bookingHorizonDays) || 14);
+  const horizonEnd = new Date(now.getTime() + horizonDays * 24 * 60 * 60 * 1000);
 
   const busy = await getBusyIntervalsFromCache({
     businessId: business.id,
@@ -359,7 +360,7 @@ export async function getAvailableSlots({
   if (dateKey && /^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
     dayKeys.push(dateKey);
   } else {
-    for (let dayOffset = 0; dayOffset < config.bookingHorizonDays; dayOffset++) {
+    for (let dayOffset = 0; dayOffset < horizonDays; dayOffset++) {
       const day = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
       const dayKey = new Intl.DateTimeFormat('en-CA', {
         timeZone: timezone,

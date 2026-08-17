@@ -16,14 +16,14 @@
  *     → expire pending_confirmation past Admin pending_ttl_minutes (default 5)
  *
  * Date/time UX:
- *   Default: Twilio list-picker for days ("Luni, 17 Aug") and times;
- *   quick-reply buttons when ≤3 free slots. No ASCII calendars.
- *   Optional: WhatsApp Flows (Meta DatePicker) when booking_settings.whatsapp_flow_id is set.
- *     Publish docs/flows/vidia-booking-flow.json in Meta, point endpoint to /webhook/whatsapp-flows.
- *   Occupied slots omitted. Free-text ignored while waiting for day/time.
+ *   Default: Twilio list-picker for days ("Luni, 17 Aug") over 14 days with free slots;
+ *   fully booked days omitted. Times: all free slots for the day (list or ≤3 quick-replies).
+ *   Free-text NLP still works during date/time wait (e.g. "mâine la 10").
+ *   Optional: WhatsApp Flows when booking_settings.whatsapp_flow_id is set.
+ *   Occupied slots omitted from menus.
  *
  * Confirm UX:
- *   Quick-reply Confirmă / Anulează.
+ *   Confirmation + Adaugă în calendar URL button; no duplicate Maps markdown line.
  *   Name is never asked when Twilio ProfileName / display_name exists.
  */
-export const BOOKING_ARCHITECTURE_VERSION = 'list-picker-v3';
+export const BOOKING_ARCHITECTURE_VERSION = 'list-picker-v4';

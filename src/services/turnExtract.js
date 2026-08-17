@@ -740,14 +740,9 @@ export async function extractTurnIntent({
     if (fromPayload.action !== 'unknown') return fromPayload;
   }
 
-  // Date/time selection is click-only — free text re-opens the grid.
-  if (gridWait) {
-    return emptyExtract({
-      action: 'reprompt_grid',
-      confidence: 'high',
-      source: 'state',
-    });
-  }
+  // Interactive list/button taps always win (handled above).
+  // Free-text NLP still runs during date/time wait (e.g. "mâine la 10").
+  // Soft fallback to the picker only when nothing temporal was understood — see end of this function.
 
   if (looksLikeExistingAppointmentQuery(textBody)) {
     return emptyExtract({ action: 'list_appointments', confidence: 'high', source: 'keyword' });
@@ -1035,5 +1030,38 @@ export async function extractTurnIntent({
     }
   }
   if (extract.action === 'unknown') extract.action = 'chat';
+
+  // While waiting on the day/time picker: if free text did not yield a temporal choice,
+  // gently re-show the list (list taps + NLP like "mâine la 10" already returned above).
+  if (gridWait) {
+    const hasTemporal = Boolean(
+      extract.datetime
+      || extract.date_text
+      || extract.time_text
+      || extract.slot_id
+      || extract.time_window
+    );
+    const leavePicker = new Set([
+      'select_slot', 'grid_nav', 'reprompt_grid', 'confirm', 'cancel', 'cancel_pending',
+      'menu', 'contact', 'list_appointments', 'callback', 'hours', 'services', 'hours_and_services',
+      'missing_info', 'resolve_clarification', 'clarify_needed', 'abort', 'set_name',
+      'select_service', 'select_employee', 'accept_offer', 'resume_yes', 'resume_no',
+    ]);
+    if (hasTemporal || leavePicker.has(extract.action)) {
+      return extract;
+    }
+    if (extract.action === 'book' || extract.action === 'reschedule') {
+      // Free-text booking/reschedule without a parsed day/time — keep going (execute re-asks).
+      return extract;
+    }
+    if (extract.action === 'chat' || extract.action === 'off_topic' || extract.action === 'unknown') {
+      return emptyExtract({
+        action: 'reprompt_grid',
+        confidence: 'medium',
+        source: 'state',
+      });
+    }
+  }
+
   return extract;
 }

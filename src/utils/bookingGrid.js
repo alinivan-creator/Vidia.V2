@@ -49,12 +49,14 @@ export function listOpenDayWindows(business, opts = {}) {
   const now = opts.now || new Date();
   const config = getBookingConfig(business);
   const tz = business.timezone || 'Europe/Bucharest';
-  const limit = Math.min(Number(opts.limit) || 14, config.bookingHorizonDays || 14);
+  // Product: always offer up to 14 open days (2 weeks), even if Admin horizon was left at 7.
+  const horizonDays = Math.max(14, Number(config.bookingHorizonDays) || 14);
+  const limit = Math.min(Number(opts.limit) || 14, horizonDays);
   const today = formatDateKey(now, tz);
   /** @type {{ dateKey: string, id: string, title: string, description: string, weekdayShort: string }[]} */
   const days = [];
 
-  for (let i = 0; i < config.bookingHorizonDays && days.length < limit; i++) {
+  for (let i = 0; i < horizonDays && days.length < limit; i++) {
     const dateKey = addCalendarDays(today, i);
     const probe = localToUtc(dateKey, '12:00', tz);
     const weekday = getWeekdayInTimezone(probe, tz);
@@ -173,7 +175,7 @@ export function formatDayGridMessage(_days, _timezone, serviceName = null) {
   const head = serviceName
     ? `*Alege ziua — ${serviceName}*`
     : '*Alege ziua*';
-  return `${head}\n\nApasă *Zile disponibile* și selectează data.`;
+  return `${head}\n\nApasă *Zile disponibile* (următoarele 14 zile cu locuri libere) sau scrie, ex: *mâine la 10*.`;
 }
 
 /**

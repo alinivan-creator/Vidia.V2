@@ -402,6 +402,7 @@ async function listSlotsForService({
   requestId,
   dateKey = null,
   timeWindow = null,
+  /** Per-day: fetch the full free day (not a short preview). */
   limit = 8,
 }) {
   if (!hasConfiguredOpenDay(business)) return { error: hoursUnsetClientMessage(), slots: [] };
@@ -415,16 +416,56 @@ async function listSlotsForService({
     calendarId: resolveEmployeeCalendarId(business, employee),
     employeeId,
   });
+  // A full open day at 15-min steps can exceed 30 slots — never truncate early.
+  const fetchLimit = dateKey ? Math.max(Number(limit) || 0, 64) : Math.max(Number(limit) || 8, 12);
   const slots = await getAvailableSlots({
     business,
     durationMinutes: duration,
-    limit: dateKey ? limit : Math.max(limit, 12),
+    limit: fetchLimit,
     excludeDraftId: draftId,
     employeeId,
     dateKey: dateKey || null,
     timeWindow: timeWindow || null,
   });
-  return { error: null, slots: slots.slice(0, limit), duration };
+  return { error: null, slots: slots.slice(0, fetchLimit), duration };
+}
+
+/**
+ * Open days in the 14-day horizon that still have ≥1 free slot for this service.
+ * Fully booked (or closed) days are omitted from the picker.
+ */
+async function listBookableDayWindows({
+  business,
+  service,
+  draftId = null,
+  employeeId = null,
+  requestId = null,
+}) {
+  const openDays = listOpenDayWindows(business, { limit: 14 });
+  if (!openDays.length) return [];
+  const duration = catalogDuration(business, service);
+  if (!duration) return openDays;
+
+  const employee = employeeId ? await getEmployeeById(employeeId, business.id) : null;
+  await lazySyncCalendar({
+    business,
+    requestId,
+    calendarId: resolveEmployeeCalendarId(business, employee),
+    employeeId,
+  });
+
+  const checks = await Promise.all(openDays.map(async (day) => {
+    const slots = await getAvailableSlots({
+      business,
+      durationMinutes: duration,
+      limit: 1,
+      excludeDraftId: draftId,
+      employeeId,
+      dateKey: day.dateKey,
+    });
+    return slots.length > 0 ? day : null;
+  }));
+  return checks.filter(Boolean);
 }
 
 async function missingService(business, recipientPhone, draft, requestId) {
@@ -511,7 +552,13 @@ async function askDateGridResult({
     });
   }
 
-  const days = listOpenDayWindows(business);
+  const days = await listBookableDayWindows({
+    business,
+    service,
+    draftId: draft?.id,
+    employeeId: draftEmployeeId(draft),
+    requestId,
+  });
   if (!days.length) {
     return handlerResult({
       status: 'MISSING_INFO',
@@ -519,7 +566,7 @@ async function askDateGridResult({
       user_message_template_key: 'ASK_DATE',
       data: {
         service_name: service?.name,
-        client_message: 'Nu am zile deschise în orizontul de programare. Contactează salonul.',
+        client_message: 'Nu am zile cu ore libere în următoarele 14 zile. Contactează salonul sau încearcă mai târziu.',
       },
       machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE,
     });
@@ -618,6 +665,7 @@ async function missingSlotsResult({
         options: times.map((t) => ({ id: t.id, title: t.title })),
       },
       ...extraContext,
+      pending_date_text: dateKey || extraContext.pending_date_text || null,
     },
     requestId,
   });
@@ -2063,7 +2111,7 @@ async function dispatchExecute({
       requestId,
       page,
       clientMessage: action === 'reprompt_grid'
-        ? `${formatDayGridMessage(listOpenDayWindows(business), business.timezone, service.name)}\n\n_Alege din listă — nu scrie text._`
+        ? `${formatDayGridMessage(listOpenDayWindows(business, { limit: 14 }), business.timezone, service.name)}\n\n_Poți alege din listă sau scrie, ex: *mâine la 10*._`
         : null,
     });
   }

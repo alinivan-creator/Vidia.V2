@@ -24,7 +24,7 @@ describe('booking grid list picker', () => {
   it('uses clean day/time body copy without ASCII art', () => {
     const dayMsg = formatDayGridMessage([], 'Europe/Bucharest', 'Tuns');
     assert.match(dayMsg, /Alege ziua/);
-    assert.match(dayMsg, /Zile disponibile/);
+    assert.match(dayMsg, /Zile disponibile|14 zile/);
     assert.doesNotMatch(dayMsg, /[┌└│▢·]/);
 
     const timeMsg = formatTimeGridMessage(
@@ -72,11 +72,11 @@ describe('booking grid list picker', () => {
     assert.ok(page1.actions.some((a) => a.id === GRID_PREFIX.PREV || a.id.startsWith('day_')));
   });
 
-  it('lists only open Admin days with list labels', () => {
+  it('lists open Admin days across a 14-day horizon with list labels', () => {
     const business = {
       timezone: 'Europe/Bucharest',
       booking_settings: {
-        booking_horizon_days: 10,
+        booking_horizon_days: 7, // legacy Admin value — picker still spans 14 calendar days
         slot_interval_minutes: 30,
         business_hours: {
           1: { open: '09:00', close: '18:00' },
@@ -90,8 +90,8 @@ describe('booking grid list picker', () => {
       },
     };
     // Monday 17 Aug 2026
-    const days = listOpenDayWindows(business, { now: new Date('2026-08-17T05:52:00.000Z'), limit: 7 });
-    assert.ok(days.length >= 5);
+    const days = listOpenDayWindows(business, { now: new Date('2026-08-17T05:52:00.000Z'), limit: 14 });
+    assert.ok(days.length >= 10, `expected ≥10 weekday opens in 14 days, got ${days.length}`);
     assert.ok(days.every((d) => d.id.startsWith('day_')));
     assert.ok(days[0].title.includes('Luni') || days[0].title.includes('Aug'));
     assert.ok(!days.some((d) => d.title.startsWith('Sâm') || d.title.startsWith('Dum')));

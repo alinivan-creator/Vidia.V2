@@ -95,7 +95,7 @@ export function getBookingConfig(business) {
 
   return {
     slotIntervalMinutes: Number(settings.slot_interval_minutes ?? 30),
-    bookingHorizonDays: Number(settings.booking_horizon_days ?? 7),
+    bookingHorizonDays: Number(settings.booking_horizon_days ?? 14),
     bufferMinutes: Number(settings.buffer_minutes ?? 0),
     hoursConfigured: Boolean(adminHours),
     businessHours: /** @type {Record<string, DayHours | null>} */ (adminHours ?? ALL_CLOSED_HOURS),

@@ -3,7 +3,7 @@
  * Must not decide availability, confirm bookings, or invent hours.
  */
 
-import { buildAiTransparencyWelcome, buildBookingConfirmationMessage, buildGdprNote, buildMapsInviteLine } from '../utils/businessMessages.js';
+import { buildAiTransparencyWelcome, buildBookingConfirmationMessage, buildGdprNote } from '../utils/businessMessages.js';
 import { WA_DIVIDER, waField, waFooter, waJoin, waServiceMeta, waTitle } from '../utils/waCopy.js';
 import { timeWindowBounds } from '../utils/timeWindow.js';
 import { formatContactMessage } from './contactService.js';
@@ -93,18 +93,16 @@ export function renderHandlerResult(business, result) {
         slotLabel: String(d.slot_label || ''),
         clientName: String(d.client_name || ''),
         calendarLine: '',
-        mapsLine: buildMapsInviteLine(business)?.messageLine || '',
+        // No markdown maps line — WhatsApp already shows the location card / Maps CTA.
+        mapsLine: '',
         includeGdpr: false,
       });
     case 'CONFIRMATION_RESCHEDULE': {
-      const maps = buildMapsInviteLine(business)?.messageLine;
       return waJoin(
         waTitle('Programare actualizată'),
         '',
         waField('Serviciu', d.service_name || 'Serviciu'),
         waField('Când', d.slot_label || ''),
-        maps ? '' : null,
-        maps || null,
         '',
         WA_DIVIDER,
         '',
@@ -387,17 +385,12 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
   }
 
   if (result.calendar_cta?.url) {
-    await sendTextMessage({
-      business,
-      recipientPhone,
-      requestId,
-      text,
-    });
+    // One message: confirmation body + calendar URL button (no trailing maps markdown).
     await sendMessageWithUrlButton({
       business,
       recipientPhone,
       requestId,
-      text: 'Adaugă în calendar',
+      text,
       buttonTitle: result.calendar_cta.title || 'Adaugă în calendar',
       buttonUrl: result.calendar_cta.url,
     });

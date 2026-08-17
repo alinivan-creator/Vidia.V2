@@ -176,11 +176,14 @@ export function buildBookingConfirmationMessage({
   slotLabel,
   clientName = '',
   calendarLine = '',
-  mapsLine = '',
+  mapsLine = undefined,
   includeGdpr = false,
 }) {
   const { confirmationMessage } = getMessagingSettings(business);
-  const resolvedMapsLine = mapsLine || buildMapsInviteLine(business)?.messageLine || '';
+  // Explicit mapsLine (including '') wins — do not auto-append a duplicate Maps markdown.
+  const resolvedMapsLine = mapsLine === undefined
+    ? (buildMapsInviteLine(business)?.messageLine || '')
+    : String(mapsLine || '');
 
   const custom = confirmationMessage
     ? confirmationMessage
