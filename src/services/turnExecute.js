@@ -72,6 +72,8 @@ import {
 import { detectClientLanguage } from '../utils/clientLanguage.js';
 import { getPendingTtlMinutes } from '../config/conversationConfig.js';
 import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
+import { buildBusinessMapsLink } from '../utils/businessMessages.js';
+import { waServiceMeta } from '../utils/waCopy.js';
 import { getBusinessContactInfo } from './contactService.js';
 import { createCallbackRequest } from '../db/callbackRequestService.js';
 import { optInClientAfterBooking } from './smsMarketingService.js';
@@ -245,10 +247,30 @@ async function persistPendingExtract({ business, recipientPhone, extract, reques
 function serviceMenu(business) {
   return {
     kind: 'service',
-    options: getBookingConfig(business).services.slice(0, 10).map((s) => ({
-      id: `${PREFIX.SERVICE}${s.id}`,
-      title: s.name,
-    })),
+    options: getBookingConfig(business).services.slice(0, 10).map((s) => {
+      const meta = waServiceMeta(s);
+      return {
+        id: `${PREFIX.SERVICE}${s.id}`,
+        title: String(s.name || 'Serviciu').slice(0, 24),
+        description: (meta || 'Disponibil').slice(0, 72),
+      };
+    }),
+  };
+}
+
+/** Quick-replies after an unknown service: catalog again + human callback. */
+function unknownServiceOfferMenu(business) {
+  return {
+    kind: 'unknown_service',
+    options: [
+      { id: 'show_services', title: 'Vezi servicii' },
+      { id: 'offer_callback', title: 'Contactează-mă' },
+    ],
+    catalog: [
+      ...serviceMenu(business).options,
+      { id: 'show_services', title: 'Vezi servicii' },
+      { id: 'offer_callback', title: 'Contactează-mă' },
+    ],
   };
 }
 
@@ -477,6 +499,7 @@ async function missingService(business, recipientPhone, draft, requestId) {
       data: { client_message: unknownInfoClientMessage() },
     });
   }
+  const menu = serviceMenu(business);
   await setConversationStep({
     businessId: business.id,
     rawPhone: recipientPhone,
@@ -485,8 +508,7 @@ async function missingService(business, recipientPhone, draft, requestId) {
       draft_id: draft?.id,
       intent: 'book',
       booking_wait: BOOKING_WAIT.SERVICE,
-      // Free-text is primary; numbered options remain as silent fallback if the client still types 1/2/3.
-      last_menu: serviceMenu(business),
+      last_menu: menu,
     },
     requestId,
   });
@@ -502,7 +524,10 @@ async function missingService(business, recipientPhone, draft, requestId) {
         duration_minutes: s.duration_minutes,
         price_ron: s.price_ron ?? null,
       })),
+      list_button: 'Servicii',
+      ui: 'list_picker',
     },
+    menu,
     machine_action: MACHINE_ACTIONS.ACTION_ASK_SERVICE,
   });
 }
@@ -1707,12 +1732,19 @@ async function executeHoursAndServices(business, lang = 'ro') {
 }
 
 async function executeContact(business) {
+  const maps = buildBusinessMapsLink(business);
   return handlerResult({
     status: 'SUCCESS',
     action_performed: 'CONTACT_LOOKUP',
     next_required_step: null,
     user_message_template_key: 'CONTACT',
-    data: { contact: getBusinessContactInfo(business), business_name: business.name },
+    data: {
+      contact: getBusinessContactInfo(business),
+      business_name: business.name,
+      maps_cta: maps?.url
+        ? { url: maps.url, title: 'Vezi locația' }
+        : null,
+    },
   });
 }
 
@@ -2282,9 +2314,25 @@ async function dispatchExecute({
   }
   if (action === 'off_topic') return executeOffTopic(business, lang);
   if (action === 'missing_info') return executeMissingInfo(business, textBody, lang);
+  if (action === 'show_services') {
+    return missingService(business, recipientPhone, draft, requestId);
+  }
   if (action === 'unknown_service') {
     const asked = String(extract.unknown_service_name || '').trim();
     const label = asked || 'acest serviciu';
+    const menu = unknownServiceOfferMenu(business);
+    await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: CONVERSATION_STEPS.WAITING_FOR_SERVICE,
+      context: {
+        booking_wait: BOOKING_WAIT.SERVICE,
+        last_menu: menu,
+        intent: 'book',
+      },
+      mergeContext: true,
+      requestId,
+    });
     return handlerResult({
       status: 'MISSING_INFO',
       action_performed: null,
@@ -2293,7 +2341,9 @@ async function dispatchExecute({
       data: {
         business_name: business.name,
         service_name: asked || null,
-        client_message: `Din păcate nu oferim *${label}*. Te rog alege un serviciu din listă sau reformulează.`,
+        client_message:
+          `Din păcate nu oferim *${label}*. ` +
+          'Poți alege din catalogul nostru sau te pot pune în legătură cu cineva de la locație.',
         services: getBookingConfig(business).services.slice(0, 10).map((s) => ({
           id: s.id,
           name: s.name,
@@ -2301,8 +2351,8 @@ async function dispatchExecute({
           price_ron: s.price_ron ?? null,
         })),
       },
-      menu: serviceMenu(business),
-      machine_action: MACHINE_ACTIONS.ACTION_ASK_SERVICE,
+      menu,
+      // No ACTION_ASK_SERVICE — keep UNKNOWN_SERVICE copy (anti-hallucination).
     });
   }
 
@@ -2429,6 +2479,7 @@ async function runBookingMachine(params) {
 
   if (reduced.action === MACHINE_ACTIONS.ACTION_ASK_SERVICE) {
     const services = getBookingConfig(business).services;
+    const menu = serviceMenu(business);
     return handlerResult({
       status: 'MISSING_INFO',
       next_required_step: 'CHOOSE_SERVICE',
@@ -2441,7 +2492,10 @@ async function runBookingMachine(params) {
           price_ron: s.price_ron ?? null,
         })),
         service_name: reduced.draft.service_name,
+        list_button: 'Servicii',
+        ui: 'list_picker',
       },
+      menu,
       machine_action: MACHINE_ACTIONS.ACTION_ASK_SERVICE,
     });
   }

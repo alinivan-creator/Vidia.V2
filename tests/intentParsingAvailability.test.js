@@ -75,13 +75,13 @@ describe('intent parsing: soft availability windows', () => {
     assert.equal(slotMatchesTimeWindow(morning, 'Europe/Bucharest', 'evening'), false);
   });
 
-  it('service ask is free-text, not numbered-menu CTA', () => {
+  it('service ask points to the interactive list, not a numbered-menu CTA', () => {
     const text = formatServiceAskMessage([
       { name: 'Tuns', duration_minutes: 30 },
       { name: 'Tuns + Barba', duration_minutes: 60 },
     ]);
-    assert.match(text, /\*Tuns\*/);
-    assert.match(text, /Scrie \*numele\*/);
+    assert.match(text, /Servicii/);
+    assert.match(text, /numele/);
     assert.doesNotMatch(text, /numărul/);
     assert.doesNotMatch(text, /\*1\. Tuns\*/);
   });

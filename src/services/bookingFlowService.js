@@ -58,6 +58,7 @@ import {
   sendTextMessage,
   sendMessageWithUrlButton,
   sendInteractiveButtons,
+  sendInteractiveList,
   simulateHumanDelay,
   rememberMenuOptions,
   clearRememberedMenuOptions,
@@ -240,26 +241,33 @@ export async function sendServicePicker({ business, recipientPhone, draft, reque
   await simulateHumanDelay({ business, recipientPhone, requestId });
 
   const listed = services.slice(0, 10);
-  const options = listed.map((s) => ({
-    id: `${PREFIX.SERVICE}${s.id}`,
-    title: s.name,
-  }));
+  const options = listed.map((s) => {
+    const meta = waServiceMeta(s);
+    return {
+      id: `${PREFIX.SERVICE}${s.id}`,
+      title: String(s.name || 'Serviciu').slice(0, 24),
+      description: (meta || 'Disponibil').slice(0, 72),
+    };
+  });
   await rememberMenuOptions(business.id, recipientPhone, options, 'service');
 
-  const blocks = [waTitle('Ce serviciu dorești?'), ''];
-  listed.forEach((s, i) => {
-    const meta = waServiceMeta(s);
-    blocks.push(`*${i + 1}. ${s.name}*`);
-    if (meta) blocks.push(`   ${meta}`);
-    blocks.push('');
-  });
-  blocks.push(WA_DIVIDER, '', 'Scrie *numele* serviciului (sau numărul, dacă preferi).');
-
-  await sendTextMessage({
+  await sendInteractiveList({
     business,
     recipientPhone,
     requestId,
-    text: waJoin(...blocks),
+    bodyText: waJoin(
+      waTitle('Ce serviciu dorești?'),
+      '',
+      'Apasă *Servicii* și alege din listă. Poți și scrie numele.',
+    ),
+    buttonText: 'Servicii',
+    sections: [{
+      title: 'Servicii',
+      rows: options,
+    }],
+    footerText: business.name,
+    menuKind: 'service',
+    rememberOptions: options,
   });
 }
 

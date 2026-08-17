@@ -49,10 +49,6 @@ export function formatContactMessage(business) {
     return waJoin(waTitle(business.name), '', unknownInfoClientMessage());
   }
 
-  const mapsLine = info.mapsUrl
-    ? `[Indicații către locație](${String(info.mapsUrl).trim().replace(/\s+/g, '')})`
-    : null;
-
   const parts = [
     waTitle(business.name),
     '',
@@ -60,7 +56,6 @@ export function formatContactMessage(business) {
     waField('Email', info.email),
     waField('Adresă', info.address),
     waField('Website', info.website),
-    mapsLine,
   ];
 
   if (structuredHours) {

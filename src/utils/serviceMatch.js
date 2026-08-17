@@ -136,7 +136,7 @@ export function matchServiceMention(text, services) {
   return null;
 }
 
-import { WA_DIVIDER, waJoin, waTitle } from './waCopy.js';
+import { waJoin, waTitle } from './waCopy.js';
 
 /**
  * @param {{ name?: string, duration_minutes?: number }[]} services
@@ -144,21 +144,11 @@ import { WA_DIVIDER, waJoin, waTitle } from './waCopy.js';
 export function formatServiceAskMessage(services) {
   const list = (Array.isArray(services) ? services : []).filter((s) => s?.name);
   const example = list[0]?.name || 'programare';
-  if (!list.length) {
-    return waJoin(waTitle('Ce serviciu dorești?'), '', `Scrie numele — ex: *${example}*.`);
-  }
-  const lines = list.flatMap((s) => {
-    const dur = Number(s.duration_minutes);
-    const extra = Number.isFinite(dur) && dur > 0 ? `   ${dur} min` : '';
-    return [`*${s.name}*`, extra || null, ''];
-  });
   return waJoin(
     waTitle('Ce serviciu dorești?'),
     '',
-    ...lines,
-    WA_DIVIDER,
-    '',
-    `Scrie *numele* — ex: *${example}*.`,
+    'Apasă *Servicii* și alege din listă (durată și preț apar la fiecare opțiune).',
+    `Poți și scrie numele — ex: *${example}*.`,
   );
 }
 

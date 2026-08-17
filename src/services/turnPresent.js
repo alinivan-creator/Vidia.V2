@@ -359,7 +359,7 @@ async function polishWithAi(business, result, rendered) {
  * @param {string | null} [params.requestId]
  */
 export async function presentTurn({ business, recipientPhone, result, requestId = null }) {
-  const gridKinds = new Set(['day_grid', 'time_grid', 'confirm', 'clarify', 'entry', 'resume']);
+  const gridKinds = new Set(['day_grid', 'time_grid', 'confirm', 'clarify', 'entry', 'resume', 'service', 'unknown_service']);
   if (result.menu?.options?.length && gridKinds.has(String(result.menu.kind || ''))) {
     // Remembered by sendInteractiveButtons (full catalog when provided).
   } else if (result.status === 'SUCCESS' && !result.next_required_step) {
@@ -370,9 +370,14 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
   // Do not polish grid layouts — AI would flatten the window framing.
   const skipPolish = result.menu?.kind === 'day_grid'
     || result.menu?.kind === 'time_grid'
+    || result.menu?.kind === 'service'
+    || result.menu?.kind === 'unknown_service'
     || result.user_message_template_key === 'ASK_DATE'
     || result.user_message_template_key === 'ASK_TIME'
-    || result.user_message_template_key === 'MISSING_SLOT';
+    || result.user_message_template_key === 'MISSING_SLOT'
+    || result.user_message_template_key === 'MISSING_SERVICE'
+    || result.user_message_template_key === 'UNKNOWN_SERVICE'
+    || result.user_message_template_key === 'CONTACT';
   const polished = skipPolish ? null : await polishWithAi(business, result, rendered);
   const text = polished || rendered;
   const d = result.data || {};
@@ -399,6 +404,18 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
       text,
       buttonTitle: result.calendar_cta.title || 'Adaugă în calendar',
       buttonUrl: result.calendar_cta.url,
+    });
+    return;
+  }
+
+  if (d.maps_cta?.url) {
+    await sendMessageWithUrlButton({
+      business,
+      recipientPhone,
+      requestId,
+      text,
+      buttonTitle: String(d.maps_cta.title || 'Vezi locația').slice(0, 20),
+      buttonUrl: d.maps_cta.url,
     });
     return;
   }
@@ -473,13 +490,14 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
 
     const kind = String(result.menu.kind || '');
     const wantsList = kind === 'day_grid'
+      || kind === 'service'
       || (kind === 'time_grid' && d.ui === 'list_picker')
       || (kind === 'time_grid' && result.menu.options.length > 3);
 
     if (wantsList) {
       const buttonLabel = typeof d.list_button === 'string' && d.list_button
         ? d.list_button
-        : (kind === 'day_grid' ? 'Zile disponibile' : 'Ore libere');
+        : (kind === 'day_grid' ? 'Zile disponibile' : kind === 'service' ? 'Servicii' : 'Ore libere');
       await sendInteractiveList({
         business,
         recipientPhone,
@@ -487,11 +505,11 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
         bodyText: text,
         buttonText: buttonLabel,
         sections: [{
-          title: kind === 'day_grid' ? 'Zile' : 'Ore',
+          title: kind === 'day_grid' ? 'Zile' : kind === 'service' ? 'Servicii' : 'Ore',
           rows: result.menu.options.map((opt) => ({
             id: opt.id,
             title: opt.title,
-            description: opt.description || (kind === 'day_grid' ? 'Disponibil' : 'Liber'),
+            description: opt.description || (kind === 'day_grid' ? 'Disponibil' : kind === 'service' ? 'Din catalog' : 'Liber'),
           })),
         }],
         footerText: business.name,

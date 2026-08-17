@@ -253,6 +253,25 @@ function extractFromChoiceId(choiceId, base, business) {
     });
   }
 
+  if (choiceId === 'offer_callback' || choiceId === 'callback_request') {
+    return emptyExtract({
+      ...base,
+      action: 'callback',
+      choice_id: choiceId,
+      confidence: 'high',
+      source: 'menu',
+    });
+  }
+  if (choiceId === 'show_services') {
+    return emptyExtract({
+      ...base,
+      action: 'show_services',
+      choice_id: choiceId,
+      confidence: 'high',
+      source: 'menu',
+    });
+  }
+
   if (choiceId === PREFIX.CLARIFY_DATE || choiceId === CLARIFY_IDS.DATE) {
     return emptyExtract({
       ...base,
@@ -1077,7 +1096,7 @@ export async function extractTurnIntent({
       'menu', 'contact', 'list_appointments', 'callback', 'hours', 'services', 'hours_and_services',
       'missing_info', 'resolve_clarification', 'clarify_needed', 'abort', 'set_name',
       'select_service', 'select_employee', 'accept_offer', 'resume_yes', 'resume_no',
-      'unknown_service',
+      'unknown_service', 'show_services',
     ]);
     if (hasTemporal || leavePicker.has(extract.action)) {
       return extract;

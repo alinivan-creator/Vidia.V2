@@ -411,18 +411,16 @@ describe('real booking journeys', () => {
       { name: 'Tuns', duration_minutes: 30 },
       { name: 'Tuns + Barba', duration_minutes: 60 },
     ]);
-    assert.match(text, /\*Tuns\*/);
-    assert.match(text, /30 min/);
-    assert.match(text, /\*Tuns \+ Barba\*/);
-    assert.match(text, /60 min/);
+    assert.match(text, /Servicii/);
     assert.match(text, /numele/);
+    assert.match(text, /Tuns/);
     const presented = reply('MISSING_SERVICE', {
       services: [
         { id: 'svc-barba', name: 'Tuns + Barba', duration_minutes: 60 },
       ],
     });
+    assert.match(presented, /Servicii/);
     assert.match(presented, /Tuns \+ Barba/);
-    assert.match(presented, /60 min/);
     assert.doesNotMatch(presented, /numărul/);
   });
 
@@ -460,7 +458,7 @@ describe('real booking journeys', () => {
       '1',
     );
     assert.equal(second.hydrated.service_id, 'svc-clasic', 'hydrate must not wipe the chosen service');
-    assert.equal(second.reduced.action, MACHINE_ACTIONS.ACTION_ASK_DATE_TIME);
+    assert.equal(second.reduced.action, MACHINE_ACTIONS.ACTION_ASK_DATE);
     assert.equal(second.reduced.draft.service_id, 'svc-clasic');
   });
 
