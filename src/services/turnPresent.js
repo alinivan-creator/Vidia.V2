@@ -12,6 +12,7 @@ import {
   sendTextMessage,
   sendMessageWithUrlButton,
   sendInteractiveButtons,
+  sendInteractiveList,
   sendBookingFlow,
   clearRememberedMenuOptions,
   simulateHumanDelay,
@@ -139,7 +140,7 @@ export function renderHandlerResult(business, result) {
         (typeof d.client_message === 'string' && d.client_message)
         || waJoin(
           waTitle(d.service_name ? `Alege ziua — ${d.service_name}` : 'Alege ziua'),
-          'Atinge o fereastră de mai jos.',
+          'Apasă *Zile disponibile* și selectează data.',
         )
       );
     case 'ASK_TIME': {
@@ -151,7 +152,7 @@ export function renderHandlerResult(business, result) {
       return waJoin(
         waTitle(d.service_name ? `Alege ora — ${d.service_name}${windowHint}` : `Alege ora${windowHint}`),
         d.date_label ? `*Data*\n${d.date_label}` : null,
-        'Atinge o fereastră liberă de mai jos.',
+        'Atinge ora dorită mai jos.',
       );
     }
     case 'ASK_CLARIFY_DATE_OR_TIME':
@@ -171,17 +172,17 @@ export function renderHandlerResult(business, result) {
       return waJoin(
         waTitle(d.service_name ? `Alege ora — ${d.service_name}${windowHint}` : `Alege ora${windowHint}`),
         d.date_label ? `*Data*\n${d.date_label}` : null,
-        'Atinge o fereastră liberă de mai jos.',
+        'Atinge ora dorită mai jos.',
       );
     }
     case 'SLOT_UNAVAILABLE': {
       const occupied = d.occupied_label
         ? `*${d.occupied_label}* tocmai s-a ocupat.`
         : (d.client_message || 'Intervalul nu e disponibil.');
-      if (typeof d.client_message === 'string' && d.client_message.includes('┌')) {
+      if (typeof d.client_message === 'string' && d.client_message.trim()) {
         return d.client_message;
       }
-      return waJoin(waTitle('Indisponibil'), occupied, '', 'Alege altă fereastră de zi.');
+      return waJoin(waTitle('Indisponibil'), occupied, '', 'Alege altă zi din listă.');
     }
     case 'MISSING_APPOINTMENT': {
       const intent = d.intent === 'cancel' ? 'anulezi' : 'reprogramezi';
@@ -403,7 +404,7 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
     return;
   }
 
-  // Native WhatsApp Flow (DatePicker + free slots) — richest UI when configured.
+  // Native WhatsApp Flow when configured; on failure fall through to list-picker.
   if (d.ui === 'whatsapp_flow' && d.flow_id) {
     const sent = await sendBookingFlow({
       business,
@@ -415,21 +416,28 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
       flowToken: typeof d.flow_token === 'string' ? d.flow_token : null,
     });
     if (sent.ok) return;
-    // Flow unavailable — fall back to rich card calendar below.
-    const { listOpenDayWindows, buildQuickReplyPage, formatDayGridMessage } = await import('../utils/bookingGrid.js');
+
+    const { listOpenDayWindows, buildListPickerPage, formatDayGridMessage } = await import('../utils/bookingGrid.js');
     const days = listOpenDayWindows(business);
-    const qr = buildQuickReplyPage(days, 0);
-    const fallbackBody = formatDayGridMessage(days, business.timezone, d.service_name ? String(d.service_name) : null);
-    if (qr.actions.length) {
-      await sendInteractiveButtons({
+    const listPage = buildListPickerPage(days, 0);
+    if (listPage.items.length) {
+      await sendInteractiveList({
         business,
         recipientPhone,
         requestId,
-        bodyText: fallbackBody,
-        buttons: qr.actions,
+        bodyText: formatDayGridMessage(days, business.timezone, d.service_name ? String(d.service_name) : null),
+        buttonText: 'Zile disponibile',
+        sections: [{
+          title: 'Zile',
+          rows: listPage.items.map((i) => ({
+            id: i.id,
+            title: i.title,
+            description: i.description || 'Disponibil',
+          })),
+        }],
         footerText: business.name,
         menuKind: 'day_grid',
-        rememberOptions: days.map((day) => ({ id: day.id, title: day.title })),
+        rememberOptions: days.map((day) => ({ id: day.id, title: day.title, description: day.description })),
       });
       return;
     }
@@ -462,6 +470,36 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
       return;
     }
 
+    const kind = String(result.menu.kind || '');
+    const wantsList = kind === 'day_grid'
+      || (kind === 'time_grid' && d.ui === 'list_picker')
+      || (kind === 'time_grid' && result.menu.options.length > 3);
+
+    if (wantsList) {
+      const buttonLabel = typeof d.list_button === 'string' && d.list_button
+        ? d.list_button
+        : (kind === 'day_grid' ? 'Zile disponibile' : 'Ore libere');
+      await sendInteractiveList({
+        business,
+        recipientPhone,
+        requestId,
+        bodyText: text,
+        buttonText: buttonLabel,
+        sections: [{
+          title: kind === 'day_grid' ? 'Zile' : 'Ore',
+          rows: result.menu.options.map((opt) => ({
+            id: opt.id,
+            title: opt.title,
+            description: opt.description || (kind === 'day_grid' ? 'Disponibil' : 'Liber'),
+          })),
+        }],
+        footerText: business.name,
+        menuKind: kind || 'list',
+        rememberOptions: result.menu.catalog || result.menu.options,
+      });
+      return;
+    }
+
     await sendInteractiveButtons({
       business,
       recipientPhone,
@@ -469,7 +507,7 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
       bodyText: text,
       buttons: result.menu.options,
       footerText: business.name,
-      menuKind: result.menu.kind || 'generic',
+      menuKind: kind || 'generic',
       rememberOptions: result.menu.catalog || result.menu.options,
     });
     return;

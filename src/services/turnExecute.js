@@ -49,10 +49,11 @@ import { formatRomanianDate } from '../lib/ai/responseFormatter.js';
 import {
   listOpenDayWindows,
   listTimeWindows,
-  buildQuickReplyPage,
+  buildListPickerPage,
   formatDayGridMessage,
   formatTimeGridMessage,
   GRID_PREFIX,
+  QUICK_REPLY_MAX,
 } from '../utils/bookingGrid.js';
 import { flowsEnabled, getConfiguredFlowId } from './whatsappFlowService.js';
 import {
@@ -523,7 +524,7 @@ async function askDateGridResult({
       machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE,
     });
   }
-  const qr = buildQuickReplyPage(days, page);
+  const listPage = buildListPickerPage(days, page);
   const body = clientMessage || formatDayGridMessage(days, business.timezone, service?.name);
   await setConversationStep({
     businessId: business.id,
@@ -535,7 +536,7 @@ async function askDateGridResult({
       service,
       booking_wait: BOOKING_WAIT.DATE,
       grid_kind: 'day',
-      grid_page: qr.page,
+      grid_page: listPage.page,
       last_menu: {
         kind: 'day_grid',
         options: days.map((d) => ({ id: d.id, title: d.title })),
@@ -550,13 +551,14 @@ async function askDateGridResult({
     data: {
       service_name: service?.name,
       client_message: body,
-      grid_page: qr.page,
-      ui: 'rich_card',
+      grid_page: listPage.page,
+      ui: 'list_picker',
+      list_button: 'Zile disponibile',
     },
     menu: {
       kind: 'day_grid',
-      options: qr.actions,
-      catalog: days.map((d) => ({ id: d.id, title: d.title })),
+      options: listPage.items.map((i) => ({ id: i.id, title: i.title, description: i.description })),
+      catalog: days.map((d) => ({ id: d.id, title: d.title, description: d.description })),
     },
     machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE,
   });
@@ -594,9 +596,10 @@ async function missingSlotsResult({
     });
   }
   const times = listTimeWindows(listed.slots, business.timezone);
-  const qr = buildQuickReplyPage(times, page);
+  const listPage = buildListPickerPage(times, page);
   const datePretty = dateKey ? formatRomanianDate(dateKey, business.timezone) : null;
   const body = formatTimeGridMessage(times, dateKey, business.timezone, service?.name);
+  const useQuickReply = times.length > 0 && times.length <= QUICK_REPLY_MAX && listPage.pageCount <= 1;
 
   await setConversationStep({
     businessId: business.id,
@@ -609,7 +612,7 @@ async function missingSlotsResult({
       booking_wait: dateKey || timeWindow ? BOOKING_WAIT.TIME : BOOKING_WAIT.DATE,
       pending_time_window: timeWindow || null,
       grid_kind: 'time',
-      grid_page: qr.page,
+      grid_page: listPage.page,
       last_menu: {
         kind: 'time_grid',
         options: times.map((t) => ({ id: t.id, title: t.title })),
@@ -647,12 +650,16 @@ async function missingSlotsResult({
         label: formatSlotLabel(s.start, business.timezone),
         time: formatTime(s.start, business.timezone),
       })),
-      grid_page: qr.page,
+      grid_page: listPage.page,
+      ui: useQuickReply ? 'quick_reply' : 'list_picker',
+      list_button: 'Ore libere',
     },
     menu: {
       kind: 'time_grid',
-      options: qr.actions,
-      catalog: times.map((t) => ({ id: t.id, title: t.title })),
+      options: useQuickReply
+        ? times.map((t) => ({ id: t.id, title: t.title }))
+        : listPage.items.map((i) => ({ id: i.id, title: i.title, description: i.description })),
+      catalog: times.map((t) => ({ id: t.id, title: t.title, description: t.description })),
     },
     machine_action: reasonKey === 'SLOT_UNAVAILABLE'
       ? MACHINE_ACTIONS.ACTION_SLOT_UNAVAILABLE
@@ -2056,7 +2063,7 @@ async function dispatchExecute({
       requestId,
       page,
       clientMessage: action === 'reprompt_grid'
-        ? `${formatDayGridMessage(listOpenDayWindows(business), business.timezone, service.name)}\n\n_Alege o fereastră — nu scrie text._`
+        ? `${formatDayGridMessage(listOpenDayWindows(business), business.timezone, service.name)}\n\n_Alege din listă — nu scrie text._`
         : null,
     });
   }

@@ -97,7 +97,7 @@ export function formatNumberedMenu(bodyText, options, footerText = null, menuKin
   const kind = String(menuKind || 'generic');
 
   if (kind === 'day_grid' || kind === 'time_grid') {
-    lines.push('Atinge o fereastră (buton) de mai jos — nu scrie text.');
+    lines.push('Alege din listă sau butoane — nu scrie text.');
   } else {
     options.forEach((opt, index) => {
       const n = index + 1;
@@ -716,9 +716,8 @@ export async function sendTechnicalFallbackMessage({
  */
 
 /**
- * Sends interactive options as a rich Twilio WhatsApp card (preferred for grids)
- * or quick-reply buttons. In-session WhatsApp allows max 3 buttons.
- * Falls back to plain text if Content API fails.
+ * Sends interactive options as Twilio WhatsApp quick-reply buttons (≤3 in-session).
+ * Prefer sendInteractiveList for day/time catalogs with many options.
  */
 export async function sendInteractiveButtons({
   business,
@@ -738,15 +737,13 @@ export async function sendInteractiveButtons({
   }));
   const remembered = (rememberOptions || buttons).slice(0, 40).map((btn) => ({
     id: String(btn.id),
-    title: String(btn.title).slice(0, 20),
+    title: String(btn.title).slice(0, 24),
   }));
 
   await rememberMenuOptions(business.id, recipientPhone, remembered, menuKind);
 
   const header = headerText ? `${headerText}\n\n` : '';
-  const footer = footerText ? String(footerText).slice(0, 60) : null;
   const body = `${header}${String(bodyText || '').trim()}`.slice(0, 1024);
-  const richCard = menuKind === 'day_grid' || menuKind === 'time_grid' || menuKind === 'confirm';
 
   if (!visible.length) {
     return sendTwilioMessage({ business, recipientPhone, body, requestId });
@@ -754,14 +751,13 @@ export async function sendInteractiveButtons({
 
   const mockMode = process.env.WHATSAPP_MOCK_MODE === 'true';
   if (mockMode) {
-    console.log('[vidia-v2][whatsapp-mock][rich-ui]', {
+    console.log('[vidia-v2][whatsapp-mock][quick-reply]', {
       businessId: business.id,
       menuKind,
-      mode: richCard ? 'card' : 'quick-reply',
       actions: visible,
       preview: body.slice(0, 200),
     });
-    return { ok: true, data: { mocked: true, richUi: true }, status: 200 };
+    return { ok: true, data: { mocked: true, quickReply: true }, status: 200 };
   }
 
   let fromNumber;
@@ -783,24 +779,12 @@ export async function sendInteractiveButtons({
   const to = toTwilioWhatsApp(recipientPhone);
   const from = toTwilioWhatsApp(fromNumber);
   const client = createTwilioClient(business);
-  const actions = visible.map((btn) => ({
-    type: 'QUICK_REPLY',
-    title: btn.title,
-    id: btn.id,
-  }));
 
   try {
-    /** @type {Record<string, unknown>} */
-    const types = richCard
-      ? {
-        'twilio/card': {
-          // WhatsApp puts primary text in title for cards
-          title: body,
-          ...(footer ? { subtitle: footer } : {}),
-          actions,
-        },
-      }
-      : {
+    const content = await client.content.v1.contents.create({
+      friendlyName: `vidia_qr_${Date.now().toString(36)}`,
+      language: 'ro',
+      types: {
         'twilio/quick-reply': {
           body,
           actions: visible.map((btn) => ({
@@ -808,12 +792,7 @@ export async function sendInteractiveButtons({
             id: btn.id,
           })),
         },
-      };
-
-    const content = await client.content.v1.contents.create({
-      friendlyName: `vidia_ui_${Date.now().toString(36)}`,
-      language: 'ro',
-      types,
+      },
     });
 
     const message = await client.messages.create({
@@ -822,11 +801,10 @@ export async function sendInteractiveButtons({
       contentSid: content.sid,
     });
 
-    console.log('[twilio] rich UI sent:', {
+    console.log('[twilio] quick-reply sent:', {
       sid: message.sid,
       contentSid: content.sid,
       menuKind,
-      mode: richCard ? 'card' : 'quick-reply',
       actions: visible.length,
     });
 
@@ -838,7 +816,7 @@ export async function sendInteractiveButtons({
   } catch (error) {
     console.error('Eroare detalii:', error);
     await logError({
-      message: 'Twilio rich card/quick-reply failed — falling back to text windows',
+      message: 'Twilio quick-reply failed — falling back to text',
       source: 'webhook',
       severity: 'warning',
       businessId: business.id,
@@ -847,7 +825,7 @@ export async function sendInteractiveButtons({
       details: { provider: 'twilio', menuKind },
     });
 
-    const fallback = formatNumberedMenu(body, visible, footer, menuKind);
+    const fallback = formatNumberedMenu(body, visible, footerText, menuKind);
     return sendTwilioMessage({ business, recipientPhone, body: fallback, requestId });
   }
 }
@@ -866,40 +844,137 @@ export async function sendInteractiveButtons({
  */
 
 /**
- * @deprecated Prefer sendInteractiveButtons (quick-reply grid). Kept for compatibility.
+ * Native WhatsApp list picker via Twilio Content API (twilio/list-picker).
+ * Up to 10 rows; in-session only.
  */
 export async function sendInteractiveList({
   business,
   recipientPhone,
   bodyText,
-  buttonText,
+  buttonText = 'Alege',
   sections,
   headerText = null,
   footerText = null,
   requestId = null,
+  menuKind = 'list',
+  rememberOptions = null,
 }) {
-  void buttonText;
-  const options = sections
+  const rows = sections
     .flatMap((section) =>
-      section.rows.map((row) => ({
-        id: row.id,
-        title: row.title,
-        description: row.description,
+      (section.rows || []).map((row) => ({
+        id: String(row.id).slice(0, 200),
+        title: String(row.title || row.item || '').slice(0, 24),
+        description: String(row.description || section.title || ' ').slice(0, 72) || ' ',
       })),
     )
     .slice(0, 10);
 
-  return sendInteractiveButtons({
-    business,
-    recipientPhone,
-    bodyText,
-    buttons: options,
-    headerText,
-    footerText,
-    requestId,
-    menuKind: 'list',
-    rememberOptions: options,
-  });
+  const remembered = (rememberOptions || rows).slice(0, 40).map((row) => ({
+    id: String(row.id),
+    title: String(row.title).slice(0, 24),
+  }));
+  await rememberMenuOptions(business.id, recipientPhone, remembered, menuKind);
+
+  const header = headerText ? `${headerText}\n\n` : '';
+  const body = `${header}${String(bodyText || '').trim()}`.slice(0, 1024);
+  const button = String(buttonText || 'Alege').slice(0, 20);
+
+  if (!rows.length) {
+    return sendTwilioMessage({ business, recipientPhone, body, requestId });
+  }
+
+  const mockMode = process.env.WHATSAPP_MOCK_MODE === 'true';
+  if (mockMode) {
+    console.log('[vidia-v2][whatsapp-mock][list-picker]', {
+      businessId: business.id,
+      menuKind,
+      button,
+      items: rows,
+      preview: body.slice(0, 200),
+    });
+    return { ok: true, data: { mocked: true, listPicker: true }, status: 200 };
+  }
+
+  let fromNumber;
+  try {
+    ({ fromNumber } = resolveTwilioCredentials(business));
+  } catch (error) {
+    console.error('Eroare detalii:', error);
+    await logError({
+      message: error instanceof Error ? error.message : 'Missing Twilio credentials on business',
+      source: 'webhook',
+      severity: 'critical',
+      businessId: business.id,
+      requestId,
+      error,
+    });
+    return { ok: false, data: null, status: 0 };
+  }
+
+  const to = toTwilioWhatsApp(recipientPhone);
+  const from = toTwilioWhatsApp(fromNumber);
+  const client = createTwilioClient(business);
+
+  try {
+    const content = await client.content.v1.contents.create({
+      friendlyName: `vidia_list_${Date.now().toString(36)}`,
+      language: 'ro',
+      types: {
+        'twilio/list-picker': {
+          body,
+          button,
+          items: rows.map((row) => ({
+            id: row.id,
+            item: row.title,
+            description: row.description || ' ',
+          })),
+        },
+      },
+    });
+
+    const message = await client.messages.create({
+      from,
+      to,
+      contentSid: content.sid,
+    });
+
+    console.log('[twilio] list-picker sent:', {
+      sid: message.sid,
+      contentSid: content.sid,
+      menuKind,
+      items: rows.length,
+    });
+
+    void footerText;
+
+    return {
+      ok: true,
+      data: { sid: message.sid, status: message.status, contentSid: content.sid },
+      status: 201,
+    };
+  } catch (error) {
+    console.error('Eroare detalii:', error);
+    await logError({
+      message: 'Twilio list-picker failed — falling back to quick-reply/text',
+      source: 'webhook',
+      severity: 'warning',
+      businessId: business.id,
+      requestId,
+      error,
+      details: { provider: 'twilio', menuKind },
+    });
+
+    // Fallback: first 3 as quick-reply
+    return sendInteractiveButtons({
+      business,
+      recipientPhone,
+      bodyText: body,
+      buttons: rows.slice(0, 3),
+      requestId,
+      menuKind,
+      rememberOptions: remembered,
+    });
+  }
 }
 
 /**

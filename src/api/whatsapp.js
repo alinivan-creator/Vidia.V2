@@ -142,6 +142,7 @@ function sanitizeTwilioBody(body) {
     ProfileName: body?.ProfileName,
     ButtonPayload: body?.ButtonPayload,
     ButtonText: body?.ButtonText,
+    ListId: body?.ListId,
     InteractiveData: body?.InteractiveData ? '[present]' : undefined,
     FlowData: body?.FlowData ? '[present]' : undefined,
   };
@@ -154,8 +155,8 @@ function sanitizeTwilioBody(body) {
 async function processTwilioWebhook(body, requestId) {
   const fromRaw = String(body?.From ?? '');
   const toRaw = String(body?.To ?? '');
-  const buttonPayload = String(body?.ButtonPayload ?? '').trim() || null;
-  const buttonText = String(body?.ButtonText ?? '').trim() || null;
+  const buttonPayload = String(body?.ButtonPayload ?? body?.ListId ?? '').trim() || null;
+  const buttonText = String(body?.ButtonText ?? body?.ListTitle ?? '').trim() || null;
   const flowSubmission = body?.InteractiveData || body?.FlowData || null;
   // Quick-reply taps: ButtonPayload is the stable id; Body/ButtonText are the visible title.
   // Flow complete: InteractiveData carries appointment_date + appointment_slot.

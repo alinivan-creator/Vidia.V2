@@ -113,7 +113,7 @@ export function formatMachineAction({
         waTitle(en ? 'Unavailable' : 'Indisponibil'),
         occupied,
         '',
-        en ? 'Pick another day window.' : 'Alege altă fereastră de zi.',
+        en ? 'Pick another day from the list.' : 'Alege altă zi din listă.',
       );
     }
     case MACHINE_ACTIONS.ACTION_ASK_SERVICE:
@@ -122,11 +122,11 @@ export function formatMachineAction({
       return en
         ? waJoin(
           waTitle(draft.service_name ? `Pick a day — ${draft.service_name}` : 'Pick a day'),
-          'Tap a window below.',
+          'Tap *Available days* and choose a date.',
         )
         : waJoin(
           waTitle(draft.service_name ? `Alege ziua — ${draft.service_name}` : 'Alege ziua'),
-          'Atinge o fereastră de mai jos.',
+          'Apasă *Zile disponibile* și selectează data.',
         );
     case MACHINE_ACTIONS.ACTION_ASK_TIME: {
       const head = en
@@ -141,18 +141,18 @@ export function formatMachineAction({
       return waJoin(
         head,
         '',
-        en ? 'Tap a free window below.' : 'Atinge o fereastră liberă de mai jos.',
+        en ? 'Tap the time you want below.' : 'Atinge ora dorită mai jos.',
       );
     }
     case MACHINE_ACTIONS.ACTION_ASK_DATE_TIME:
       return en
         ? waJoin(
           waTitle('When do you want the appointment?'),
-          'Tap a day window, then a time window.',
+          'Choose a day from the list, then a time.',
         )
         : waJoin(
           waTitle('Când vrei programarea?'),
-          'Atinge o fereastră de zi, apoi una de oră.',
+          'Alege o zi din listă, apoi o oră.',
         );
     default:
       return null;
