@@ -30,6 +30,8 @@ export async function routeInboundTurn({
   business,
   recipientPhone,
   textBody,
+  buttonPayload = null,
+  buttonText = null,
   clientId = null,
   requestId = null,
   convState,
@@ -70,11 +72,13 @@ export async function routeInboundTurn({
   void lastIntent;
   void pendingDismissed;
   void pendingExpired;
+  void buttonText;
 
   await processTurnPipeline({
     business,
     recipientPhone,
     textBody,
+    buttonPayload,
     clientId,
     requestId,
     convState,

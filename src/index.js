@@ -3,6 +3,7 @@ import cors from 'cors';
 import path from 'node:path';
 import { env } from './config/env.js';
 import { whatsappRouter } from './api/whatsapp.js';
+import { whatsappFlowsRouter } from './api/whatsappFlows.js';
 import { googleWebhookRouter } from './api/googleWebhook.js';
 import { cronRouter } from './api/cron.js';
 import { adminRouter } from './api/admin.js';
@@ -30,6 +31,8 @@ export const ROUTE_MAP = [
   { method: 'GET', path: '/test/db', description: 'Supabase connection + seed test (disabled in production)' },
   { method: 'GET', path: '/webhook/whatsapp', description: 'Twilio WhatsApp webhook info' },
   { method: 'POST', path: '/webhook/whatsapp', description: 'Twilio WhatsApp inbound (form-urlencoded)' },
+  { method: 'GET', path: '/webhook/whatsapp-flows', description: 'Meta WhatsApp Flows endpoint info' },
+  { method: 'POST', path: '/webhook/whatsapp-flows', description: 'Meta WhatsApp Flows data_exchange' },
   { method: 'POST', path: '/webhook/google/calendar', description: 'Google Calendar push notifications' },
   { method: 'GET', path: '/calendar/event.ics', description: 'Add-to-calendar .ics download (client phones)' },
   { method: 'GET', path: '/cron/expire-pending', description: 'Background: expire pending booking holds (CRON_SECRET)' },
@@ -109,6 +112,7 @@ app.get('/test/db', async (_req, res) => {
 });
 
 app.use('/webhook/whatsapp', whatsappWebhookRateLimiter, whatsappRouter);
+app.use('/webhook/whatsapp-flows', whatsappWebhookRateLimiter, whatsappFlowsRouter);
 app.use('/webhook/google', googleWebhookRateLimiter, googleWebhookRouter);
 app.use('/calendar', calendarRouter);
 app.use('/cron', cronRouter);

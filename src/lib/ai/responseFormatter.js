@@ -109,14 +109,11 @@ export function formatMachineAction({
         : (en
           ? `*${timeLabel}* is not available${dateLabel ? ` — ${dateLabel}` : ''}.`
           : `*${timeLabel}* nu e disponibil${dateLabel ? ` — ${dateLabel}` : ''}.`);
-      const nearby = nearbyHoursLine(alternatives, en);
       return waJoin(
         waTitle(en ? 'Unavailable' : 'Indisponibil'),
         occupied,
-        nearby ? '' : null,
-        nearby || null,
         '',
-        en ? 'Send the time that works — e.g. *18:00*.' : 'Scrie ora care ți se potrivește — ex: *18:00*.',
+        en ? 'Pick another day window.' : 'Alege altă fereastră de zi.',
       );
     }
     case MACHINE_ACTIONS.ACTION_ASK_SERVICE:
@@ -124,41 +121,38 @@ export function formatMachineAction({
     case MACHINE_ACTIONS.ACTION_ASK_DATE:
       return en
         ? waJoin(
-          waTitle(draft.service_name ? `Date — ${draft.service_name}` : 'Which date?'),
-          'E.g. *Monday* or *18 Aug*',
+          waTitle(draft.service_name ? `Pick a day — ${draft.service_name}` : 'Pick a day'),
+          'Tap a window below.',
         )
         : waJoin(
-          waTitle(draft.service_name ? `Data — ${draft.service_name}` : 'Pe ce dată?'),
-          'Ex: *luni* sau *18 aug*',
+          waTitle(draft.service_name ? `Alege ziua — ${draft.service_name}` : 'Alege ziua'),
+          'Atinge o fereastră de mai jos.',
         );
     case MACHINE_ACTIONS.ACTION_ASK_TIME: {
-      const nearby = nearbyHoursLine(alternatives, en);
       const head = en
         ? waJoin(
-          waTitle(draft.service_name ? `Time — ${draft.service_name}` : 'What time?'),
+          waTitle(draft.service_name ? `Pick a time — ${draft.service_name}` : 'Pick a time'),
           dateLabel ? waField('Date', dateLabel) : null,
         )
         : waJoin(
-          waTitle(draft.service_name ? `Ora — ${draft.service_name}` : 'La ce oră?'),
+          waTitle(draft.service_name ? `Alege ora — ${draft.service_name}` : 'Alege ora'),
           dateLabel ? waField('Data', dateLabel) : null,
         );
       return waJoin(
         head,
-        nearby ? '' : null,
-        nearby || null,
         '',
-        en ? 'E.g. *17* or *17:00*' : 'Ex: *17* sau *17:00*',
+        en ? 'Tap a free window below.' : 'Atinge o fereastră liberă de mai jos.',
       );
     }
     case MACHINE_ACTIONS.ACTION_ASK_DATE_TIME:
       return en
         ? waJoin(
           waTitle('When do you want the appointment?'),
-          'Day and time — e.g. *Monday at 17*',
+          'Tap a day window, then a time window.',
         )
         : waJoin(
           waTitle('Când vrei programarea?'),
-          'Ziua și ora — ex: *luni la 17*',
+          'Atinge o fereastră de zi, apoi una de oră.',
         );
     default:
       return null;

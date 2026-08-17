@@ -1,0 +1,89 @@
+{
+  "version": "6.0",
+  "data_api_version": "3.0",
+  "routing_model": {
+    "BOOKING": []
+  },
+  "screens": [
+    {
+      "id": "BOOKING",
+      "title": "Programare",
+      "terminal": true,
+      "success": true,
+      "data": {
+        "available_slots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "title": { "type": "string" }
+            }
+          },
+          "__example__": [
+            { "id": "slot_demo_0900", "title": "09:00" },
+            { "id": "slot_demo_1000", "title": "10:00" }
+          ]
+        },
+        "min_date": {
+          "type": "string",
+          "__example__": "2026-08-17"
+        },
+        "max_date": {
+          "type": "string",
+          "__example__": "2026-08-31"
+        },
+        "service_label": {
+          "type": "string",
+          "__example__": "Tuns"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextHeading",
+            "text": "Alege data și ora"
+          },
+          {
+            "type": "TextBody",
+            "text": "Serviciu: ${data.service_label}. Doar zilele și orele libere sunt selectabile."
+          },
+          {
+            "type": "DatePicker",
+            "name": "appointment_date",
+            "label": "Ziua",
+            "required": true,
+            "min-date": "${data.min_date}",
+            "max-date": "${data.max_date}",
+            "on-select-action": {
+              "name": "data_exchange",
+              "payload": {
+                "appointment_date": "${form.appointment_date}",
+                "trigger": "date_selected"
+              }
+            }
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "appointment_slot",
+            "label": "Ora liberă",
+            "required": true,
+            "data-source": "${data.available_slots}"
+          },
+          {
+            "type": "Footer",
+            "label": "Continuă",
+            "on-click-action": {
+              "name": "complete",
+              "payload": {
+                "appointment_date": "${form.appointment_date}",
+                "appointment_slot": "${form.appointment_slot}"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

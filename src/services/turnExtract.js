@@ -9,7 +9,8 @@ import { listEmployees, matchEmployeeMention } from '../db/employeeService.js';
 import { CONVERSATION_STEPS, readLastMenu } from '../db/conversationStateService.js';
 import { looksLikeBusinessFactQuestion } from '../utils/businessInfoLookup.js';
 import { resolveAcceptedOffer } from './pendingOfferService.js';
-import { resolveNumberedChoice } from './whatsappService.js';
+import { resolveNumberedChoice, resolveInteractiveChoice } from './whatsappService.js';
+import { GRID_PREFIX } from '../utils/bookingGrid.js';
 import { parseRomanianDateTimeParts } from '../utils/roDateTime.js';
 import { BOOKING_PREFIXES, MOD_PREFIX } from './flowIds.js';
 import {
@@ -152,6 +153,29 @@ function extractFromChoiceId(choiceId, base, business) {
       ...base,
       action: 'select_slot',
       slot_id: choiceId,
+      choice_id: choiceId,
+      confidence: 'high',
+      source: 'menu',
+    });
+  }
+  if (choiceId.startsWith(GRID_PREFIX.DAY)) {
+    const dateKey = choiceId.slice(GRID_PREFIX.DAY.length);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+      return emptyExtract({
+        ...base,
+        action: 'book',
+        date_text: dateKey,
+        time_text: null,
+        choice_id: choiceId,
+        confidence: 'high',
+        source: 'menu',
+      });
+    }
+  }
+  if (choiceId === GRID_PREFIX.NEXT || choiceId === GRID_PREFIX.PREV) {
+    return emptyExtract({
+      ...base,
+      action: 'grid_nav',
       choice_id: choiceId,
       confidence: 'high',
       source: 'menu',
@@ -664,6 +688,7 @@ function applyParsedDateTime(next, text, timezone, opts = {}) {
  * @param {Object} params
  * @param {Business} params.business
  * @param {string} params.textBody
+ * @param {string | null} [params.buttonPayload]
  * @param {import('../db/conversationStateService.js').ConversationState} params.convState
  * @param {import('../db/draftBookingService.js').DraftBooking | null} [params.activeDraft]
  * @param {string | null} [params.requestId]
@@ -672,6 +697,7 @@ function applyParsedDateTime(next, text, timezone, opts = {}) {
 export async function extractTurnIntent({
   business,
   textBody,
+  buttonPayload = null,
   convState,
   activeDraft = null,
   requestId = null,
@@ -694,6 +720,34 @@ export async function extractTurnIntent({
     || step === CONVERSATION_STEPS.CONFIRMING
     || step === CONVERSATION_STEPS.ASKING_NAME
     || step === CONVERSATION_STEPS.WAITING_FOR_CONFIRMATION;
+
+  const gridWait = wait === BOOKING_WAIT.DATE
+    || wait === BOOKING_WAIT.TIME
+    || wait === BOOKING_WAIT.DATE_TIME
+    || lastMenu?.kind === 'day_grid'
+    || lastMenu?.kind === 'time_grid';
+
+  // Native quick-reply / remembered window id always wins.
+  if (lastMenu?.options?.length) {
+    const choiceId = resolveInteractiveChoice(textBody, buttonPayload, lastMenu.options);
+    if (choiceId) {
+      const fromChoice = extractFromChoiceId(choiceId, {}, business);
+      if (fromChoice.action !== 'unknown') return fromChoice;
+    }
+  }
+  if (buttonPayload) {
+    const fromPayload = extractFromChoiceId(buttonPayload, {}, business);
+    if (fromPayload.action !== 'unknown') return fromPayload;
+  }
+
+  // Date/time selection is click-only — free text re-opens the grid.
+  if (gridWait) {
+    return emptyExtract({
+      action: 'reprompt_grid',
+      confidence: 'high',
+      source: 'state',
+    });
+  }
 
   if (looksLikeExistingAppointmentQuery(textBody)) {
     return emptyExtract({ action: 'list_appointments', confidence: 'high', source: 'keyword' });

@@ -140,6 +140,10 @@ function sanitizeTwilioBody(body) {
     MessageSid: body?.MessageSid,
     AccountSid: body?.AccountSid,
     ProfileName: body?.ProfileName,
+    ButtonPayload: body?.ButtonPayload,
+    ButtonText: body?.ButtonText,
+    InteractiveData: body?.InteractiveData ? '[present]' : undefined,
+    FlowData: body?.FlowData ? '[present]' : undefined,
   };
 }
 
@@ -150,7 +154,22 @@ function sanitizeTwilioBody(body) {
 async function processTwilioWebhook(body, requestId) {
   const fromRaw = String(body?.From ?? '');
   const toRaw = String(body?.To ?? '');
-  const textBody = String(body?.Body ?? '').trim();
+  const buttonPayload = String(body?.ButtonPayload ?? '').trim() || null;
+  const buttonText = String(body?.ButtonText ?? '').trim() || null;
+  const flowSubmission = body?.InteractiveData || body?.FlowData || null;
+  // Quick-reply taps: ButtonPayload is the stable id; Body/ButtonText are the visible title.
+  // Flow complete: InteractiveData carries appointment_date + appointment_slot.
+  let textBody = (buttonPayload || String(body?.Body ?? '')).trim();
+  if (flowSubmission) {
+    try {
+      const { parseFlowSubmission } = await import('../services/whatsappFlowService.js');
+      const parsed = parseFlowSubmission(flowSubmission);
+      if (parsed?.slotId) textBody = parsed.slotId;
+      else if (parsed?.dateKey) textBody = `day_${parsed.dateKey}`;
+    } catch (error) {
+      console.error('Eroare detalii:', error);
+    }
+  }
   const profileName = String(body?.ProfileName ?? '').trim() || null;
 
   const toClean = toE164(toRaw);
@@ -162,6 +181,8 @@ async function processTwilioWebhook(body, requestId) {
     fromClean,
     toClean,
     body: textBody.slice(0, 120),
+    buttonPayload: buttonPayload?.slice(0, 80) || null,
+    buttonText: buttonText?.slice(0, 40) || null,
   });
 
   if (!fromRaw || !toRaw) {
@@ -332,6 +353,8 @@ async function processTwilioWebhook(body, requestId) {
       business,
       recipientPhone,
       textBody,
+      buttonPayload,
+      buttonText,
       clientId,
       requestId,
       convState,

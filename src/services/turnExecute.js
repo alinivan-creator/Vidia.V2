@@ -47,6 +47,15 @@ import {
 } from '../utils/datetime.js';
 import { formatRomanianDate } from '../lib/ai/responseFormatter.js';
 import {
+  listOpenDayWindows,
+  listTimeWindows,
+  buildQuickReplyPage,
+  formatDayGridMessage,
+  formatTimeGridMessage,
+  GRID_PREFIX,
+} from '../utils/bookingGrid.js';
+import { flowsEnabled, getConfiguredFlowId } from './whatsappFlowService.js';
+import {
   assertWithinWorkingHours,
   durationMissingClientMessage,
   hasConfiguredOpenDay,
@@ -456,6 +465,103 @@ async function missingService(business, recipientPhone, draft, requestId) {
   });
 }
 
+async function askDateGridResult({
+  business,
+  recipientPhone,
+  draft,
+  service,
+  requestId,
+  page = 0,
+  clientMessage = null,
+}) {
+  // Richer Meta Flow UI when the tenant has published a WhatsApp Flow.
+  if (flowsEnabled(business) && page === 0 && !clientMessage) {
+    const flowId = getConfiguredFlowId(business);
+    const body = service?.name
+      ? `🗓️ Deschide calendarul pentru *${service.name}* — alege ziua și ora liberă.`
+      : '🗓️ Deschide calendarul — alege ziua și ora liberă.';
+    await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: CONVERSATION_STEPS.WAITING_FOR_DATE,
+      context: {
+        draft_id: draft?.id,
+        intent: 'book',
+        service,
+        booking_wait: BOOKING_WAIT.DATE,
+        grid_kind: 'flow',
+        flow_id: flowId,
+      },
+      requestId,
+    });
+    return handlerResult({
+      status: 'MISSING_INFO',
+      next_required_step: 'CHOOSE_DATE',
+      user_message_template_key: 'ASK_DATE',
+      data: {
+        service_name: service?.name,
+        client_message: body,
+        ui: 'whatsapp_flow',
+        flow_id: flowId,
+        flow_token: `vidia_${business.id}_${Date.now().toString(36)}`,
+      },
+      menu: null,
+      machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE,
+    });
+  }
+
+  const days = listOpenDayWindows(business);
+  if (!days.length) {
+    return handlerResult({
+      status: 'MISSING_INFO',
+      next_required_step: 'CHOOSE_DATE',
+      user_message_template_key: 'ASK_DATE',
+      data: {
+        service_name: service?.name,
+        client_message: 'Nu am zile deschise în orizontul de programare. Contactează salonul.',
+      },
+      machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE,
+    });
+  }
+  const qr = buildQuickReplyPage(days, page);
+  const body = clientMessage || formatDayGridMessage(days, business.timezone, service?.name);
+  await setConversationStep({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    step: CONVERSATION_STEPS.WAITING_FOR_DATE,
+    context: {
+      draft_id: draft?.id,
+      intent: 'book',
+      service,
+      booking_wait: BOOKING_WAIT.DATE,
+      grid_kind: 'day',
+      grid_page: qr.page,
+      last_menu: {
+        kind: 'day_grid',
+        options: days.map((d) => ({ id: d.id, title: d.title })),
+      },
+    },
+    requestId,
+  });
+  return handlerResult({
+    status: 'MISSING_INFO',
+    next_required_step: 'CHOOSE_DATE',
+    user_message_template_key: 'ASK_DATE',
+    data: {
+      service_name: service?.name,
+      client_message: body,
+      grid_page: qr.page,
+      ui: 'rich_card',
+    },
+    menu: {
+      kind: 'day_grid',
+      options: qr.actions,
+      catalog: days.map((d) => ({ id: d.id, title: d.title })),
+    },
+    machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE,
+  });
+}
+
 async function missingSlotsResult({
   business,
   recipientPhone,
@@ -469,6 +575,7 @@ async function missingSlotsResult({
   conversationStep = CONVERSATION_STEPS.WAITING_FOR_TIME,
   extraContext = {},
   timeWindow = null,
+  page = 0,
 }) {
   const listed = await listSlotsForService({
     business,
@@ -486,6 +593,11 @@ async function missingSlotsResult({
       data: { client_message: listed.error },
     });
   }
+  const times = listTimeWindows(listed.slots, business.timezone);
+  const qr = buildQuickReplyPage(times, page);
+  const datePretty = dateKey ? formatRomanianDate(dateKey, business.timezone) : null;
+  const body = formatTimeGridMessage(times, dateKey, business.timezone, service?.name);
+
   await setConversationStep({
     businessId: business.id,
     rawPhone: recipientPhone,
@@ -496,30 +608,28 @@ async function missingSlotsResult({
       service,
       booking_wait: dateKey || timeWindow ? BOOKING_WAIT.TIME : BOOKING_WAIT.DATE,
       pending_time_window: timeWindow || null,
-      last_menu: null,
+      grid_kind: 'time',
+      grid_page: qr.page,
+      last_menu: {
+        kind: 'time_grid',
+        options: times.map((t) => ({ id: t.id, title: t.title })),
+      },
       ...extraContext,
     },
     requestId,
   });
   if (!listed.slots.length) {
-    const datePretty = dateKey ? formatRomanianDate(dateKey, business.timezone) : null;
-    return handlerResult({
-      status: 'MISSING_INFO',
-      next_required_step: 'CHOOSE_SLOT',
-      user_message_template_key: 'SLOT_UNAVAILABLE',
-      data: {
-        service_name: service?.name,
-        occupied_label: occupiedLabel,
-        date_label: datePretty,
-        time_window: timeWindow,
-        alternatives: [],
-        client_message:
-          `Nu am găsit ore libere pentru *${service?.name || 'serviciu'}*` +
-          (datePretty ? ` pe *${datePretty}*` : '') +
-          (timeWindow ? ` (${timeWindow})` : '') +
-          '.',
-      },
-      machine_action: MACHINE_ACTIONS.ACTION_SLOT_UNAVAILABLE,
+    return askDateGridResult({
+      business,
+      recipientPhone,
+      draft,
+      service,
+      requestId,
+      clientMessage:
+        `Nu am găsit ore libere pentru *${service?.name || 'serviciu'}*` +
+        (datePretty ? ` pe *${datePretty}*` : '') +
+        '.\n\n' +
+        formatDayGridMessage(listOpenDayWindows(business), business.timezone, service?.name),
     });
   }
   return handlerResult({
@@ -529,13 +639,20 @@ async function missingSlotsResult({
     data: {
       service_name: service?.name,
       occupied_label: occupiedLabel,
-      date_label: dateKey ? formatRomanianDate(dateKey, business.timezone) : null,
+      date_label: datePretty,
       time_window: timeWindow,
+      client_message: body,
       alternatives: listed.slots.map((s) => ({
         id: s.id,
         label: formatSlotLabel(s.start, business.timezone),
         time: formatTime(s.start, business.timezone),
       })),
+      grid_page: qr.page,
+    },
+    menu: {
+      kind: 'time_grid',
+      options: qr.actions,
+      catalog: times.map((t) => ({ id: t.id, title: t.title })),
     },
     machine_action: reasonKey === 'SLOT_UNAVAILABLE'
       ? MACHINE_ACTIONS.ACTION_SLOT_UNAVAILABLE
@@ -816,44 +933,25 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
   }
 
   if (!extract.date_text) {
-    // Soft window without a day: list real free slots in that window (validated from cache).
+    // Soft window without a day: still require a day window first (click grid).
     if (extract.time_window) {
-      return missingSlotsResult({
+      return askDateGridResult({
         business,
         recipientPhone,
         draft: working,
         service,
-        employeeId: draftEmployeeId(working),
-        dateKey: null,
-        timeWindow: extract.time_window,
         requestId,
-        reasonKey: 'ASK_TIME',
-        conversationStep: CONVERSATION_STEPS.WAITING_FOR_TIME,
-        extraContext: { pending_time_window: extract.time_window },
+        clientMessage:
+          formatDayGridMessage(listOpenDayWindows(business), business.timezone, service.name)
+          + `\n\nInterval preferat: *${extract.time_window}*. Alege ziua, apoi ora.`,
       });
     }
-    await setConversationStep({
-      businessId: business.id,
-      rawPhone: recipientPhone,
-      step: CONVERSATION_STEPS.WAITING_FOR_DATE,
-      context: {
-        draft_id: working.id,
-        intent: 'book',
-        service,
-        booking_wait: BOOKING_WAIT.DATE,
-        pending_time_window: extract.time_window || null,
-      },
+    return askDateGridResult({
+      business,
+      recipientPhone,
+      draft: working,
+      service,
       requestId,
-    });
-    return handlerResult({
-      status: 'MISSING_INFO',
-      next_required_step: 'CHOOSE_DATE',
-      user_message_template_key: 'ASK_DATE',
-      data: {
-        service_name: service.name,
-        client_message: '*Pe ce dată?*\nEx: *luni* sau *18 aug*',
-      },
-      machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE,
     });
   }
 
@@ -1912,6 +2010,57 @@ async function dispatchExecute({
     });
   }
 
+  if (action === 'reprompt_grid' || action === 'grid_nav') {
+    const ctx = convState.context_data || {};
+    const service = ctx.service
+      || (draft?.selected_service
+        ? /** @type {{ id?: string, name: string, duration_minutes: number }} */ (draft.selected_service)
+        : null);
+    const pageNow = Number(ctx.grid_page) || 0;
+    const delta = extract.choice_id === GRID_PREFIX.PREV ? -1 : extract.choice_id === GRID_PREFIX.NEXT ? 1 : 0;
+    const page = action === 'grid_nav' ? Math.max(0, pageNow + delta) : pageNow;
+    const kind = ctx.grid_kind || (ctx.pending_date_text ? 'time' : 'day');
+
+    if (!service) {
+      return executeBook({
+        business,
+        recipientPhone,
+        extract: { ...extract, action: 'book', service_id: null },
+        clientId,
+        requestId,
+        activeDraft: draft,
+        convState,
+      });
+    }
+
+    if (kind === 'time' && (ctx.pending_date_text || extract.date_text)) {
+      return missingSlotsResult({
+        business,
+        recipientPhone,
+        draft,
+        service,
+        employeeId: draftEmployeeId(draft),
+        dateKey: ctx.pending_date_text || extract.date_text,
+        timeWindow: ctx.pending_time_window || null,
+        requestId,
+        reasonKey: 'ASK_TIME',
+        page,
+      });
+    }
+
+    return askDateGridResult({
+      business,
+      recipientPhone,
+      draft,
+      service,
+      requestId,
+      page,
+      clientMessage: action === 'reprompt_grid'
+        ? `${formatDayGridMessage(listOpenDayWindows(business), business.timezone, service.name)}\n\n_Alege o fereastră — nu scrie text._`
+        : null,
+    });
+  }
+
   if (action === 'select_service' || action === 'select_employee' || action === 'select_slot') {
     const modifyIntent = convState.context_data?.intent === 'reschedule'
       || convState.current_step === CONVERSATION_STEPS.RESCHEDULING;
@@ -2204,16 +2353,41 @@ async function runBookingMachine(params) {
     });
   }
 
-  if (reduced.action === MACHINE_ACTIONS.ACTION_ASK_DATE_TIME) {
-    return handlerResult({
-      status: 'MISSING_INFO',
-      next_required_step: 'CHOOSE_DATE',
-      user_message_template_key: 'ASK_DATE',
-      data: {
-        client_message: '*Când vrei programarea?*\nZiua și ora — ex: *luni la 17*',
-        service_name: reduced.draft.service_name,
-      },
-      machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE_TIME,
+  if (reduced.action === MACHINE_ACTIONS.ACTION_ASK_DATE_TIME
+    || reduced.action === MACHINE_ACTIONS.ACTION_ASK_DATE) {
+    const service = reduced.draft.service_id
+      ? {
+        id: reduced.draft.service_id,
+        name: reduced.draft.service_name || 'Serviciu',
+        duration_minutes: reduced.draft.duration || 30,
+      }
+      : null;
+    return askDateGridResult({
+      business,
+      recipientPhone,
+      draft: activeDraft,
+      service,
+      requestId,
+    });
+  }
+
+  if (reduced.action === MACHINE_ACTIONS.ACTION_ASK_TIME && reduced.draft.date) {
+    const service = reduced.draft.service_id
+      ? {
+        id: reduced.draft.service_id,
+        name: reduced.draft.service_name || 'Serviciu',
+        duration_minutes: reduced.draft.duration || 30,
+      }
+      : null;
+    return missingSlotsResult({
+      business,
+      recipientPhone,
+      draft: activeDraft,
+      service,
+      employeeId: draftEmployeeId(activeDraft),
+      dateKey: reduced.draft.date,
+      requestId,
+      reasonKey: 'ASK_TIME',
     });
   }
 

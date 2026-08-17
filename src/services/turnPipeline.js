@@ -26,6 +26,7 @@ export async function processTurnPipeline({
   business,
   recipientPhone,
   textBody,
+  buttonPayload = null,
   clientId = null,
   requestId = null,
   convState,
@@ -34,6 +35,7 @@ export async function processTurnPipeline({
   const extract = await extractTurnIntent({
     business,
     textBody,
+    buttonPayload,
     convState,
     activeDraft,
     requestId,
@@ -47,6 +49,7 @@ export async function processTurnPipeline({
     datetime: extract.datetime instanceof Date ? extract.datetime.toISOString() : null,
     date_text: extract.date_text,
     time_text: extract.time_text,
+    choice_id: extract.choice_id,
     intent: extract.extraction?.intent ?? null,
     is_ambiguous: extract.extraction?.is_ambiguous ?? null,
   });
