@@ -4,13 +4,17 @@
  */
 
 import { EXTRACTION_JSON_SCHEMA, parseExtractionResult } from '../schemas/extractionResult.js';
-import { completeTenantChat } from './aiContextLoader.js';
+import {
+  completeTenantChat,
+  buildServicesCatalog,
+  buildBusinessHoursContext,
+  buildEmployeesContext,
+  buildContactContext,
+} from './aiContextLoader.js';
 import { getBookingWait } from './bookingWaitState.js';
 import {
   formatDateKey,
   formatTime,
-  formatBusinessHoursText,
-  getConfiguredBusinessHours,
   getBookingConfig,
   localToUtc,
 } from '../utils/datetime.js';
@@ -81,20 +85,14 @@ function draftSnapshot(activeDraft) {
 }
 
 /**
- * Parser-only system prompt. Not the conversational Admin prompt.
+ * Parser-only system prompt. Injects the same tenant SSOT as the conversational agent
+ * (services, hours, employees, contact, Admin facts) — never invents outside Supabase.
  *
  * @param {import('./aiContextLoader.js').AiTenantContext} ctx
  * @param {Object} session
  */
 function buildParserSystemPrompt(ctx, session) {
   const business = ctx.snapshot;
-  const hours = getConfiguredBusinessHours(business);
-  const catalog = getBookingConfig(business).services.map((s) => {
-    const dur = s.duration_minutes ? `${s.duration_minutes} min` : '';
-    const price = s.price_ron != null && s.price_ron !== '' ? `${s.price_ron} LEI` : '';
-    const meta = [dur, price].filter(Boolean).join(', ');
-    return meta ? `${s.name} (${meta})` : s.name;
-  }).slice(0, 20);
   const clock = session.clock;
   const facts = typeof business.booking_settings?.ai_facts === 'string'
     ? business.booking_settings.ai_facts.trim()
@@ -109,22 +107,30 @@ function buildParserSystemPrompt(ctx, session) {
     }
   }
 
+  const serviceNames = getBookingConfig(business).services
+    .map((s) => s.name)
+    .filter(Boolean);
+
   return [
-    'Ești un PARSER NLP. NU vorbești cu clientul. NU confirma programări. NU evalua disponibilitatea.',
+    'Ești un PARSER NLP (Intent Classifier & Entity Extractor). NU vorbești cu clientul.',
+    'NU confirma programări. NU evalua dacă un slot e liber. NU inventa date din afara blocurilor SSOT de mai jos.',
     'Returnează DOAR JSON-ul din schema extraction_result.',
     '',
     `Afacere: ${business.name} (business_id=${ctx.businessId})`,
     `CEAS SISTEM (${clock.timezone}): ${clock.human}.`,
     `Referință mașină: ${clock.weekday}, ${clock.date} ${clock.time} (ISO ${clock.iso}).`,
     '',
-    'PROGRAM DE LUCRU (doar context — nu decide dacă e liber):',
-    hours ? formatBusinessHoursText(hours) : 'nesetat în Admin',
+    '=== SSOT TENANT (Supabase / Admin — singura sursă de adevăr) ===',
+    buildBusinessHoursContext(business).trim(),
+    buildServicesCatalog(business).trim(),
+    buildEmployeesContext(business).trim(),
+    buildContactContext(business).trim(),
     '',
-    `Catalog servicii (doar acestea există): ${catalog.join('; ') || '(gol)'}`,
-    '',
-    'DATE AFACERE DIN BAZĂ (RAG — nu inventa în afara lor):',
+    'DATE AFACERE DIN BAZĂ (business_info):',
     infoLines.length ? infoLines.join('\n') : '(niciun business_info)',
     facts ? `FACTS ADMIN:\n${facts}` : 'FACTS ADMIN: (gol)',
+    '',
+    `Nume servicii valide (lista scurtă): ${serviceNames.join('; ') || '(gol — extracted_service=null mereu)'}`,
     '',
     `session.current_state: ${session.current_state}`,
     `session.booking_wait: ${session.booking_wait || 'null'}`,
@@ -132,14 +138,17 @@ function buildParserSystemPrompt(ctx, session) {
     `session.pending_date: ${session.pending_date || 'null'}`,
     `session.pending_time: ${session.pending_time || 'null'}`,
     '',
-    'Ultimele 3 mesaje:',
+    'Ultimele 3 mesaje (context — nu reînvia o programare deja confirmată):',
     session.recent_turns.length
       ? session.recent_turns.map((t) => `- ${t.role}: ${t.text}`).join('\n')
       : '(niciun istoric)',
     '',
-    'Reguli stricte:',
-    '- extracted_date = YYYY-MM-DD. extracted_time = HH:mm 24h. Folosește CEAS SISTEM ca ancoră absolută.',
-    '- Transformă ORICE expresie relativă în YYYY-MM-DD / HH:mm:',
+    'Reguli stricte anti-halucinație:',
+    '- extracted_service: DOAR un nume din catalogul de mai sus (sau null). Dacă clientul cere ceva absent → extracted_service=null, intent=missing_info.',
+    '- extracted_date = YYYY-MM-DD sau null. extracted_time = HH:mm 24h sau null. Folosește CEAS SISTEM ca ancoră.',
+    '- NU inventa zile „libere”, ore disponibile, prețuri, angajați sau servicii. Disponibilitatea o decide DOAR backend-ul.',
+    '- Dacă o informație (parcare, preț extra, etc.) lipsește din SSOT → intent=missing_info (nu ghici).',
+    '- Transformă expresii relative în YYYY-MM-DD / HH:mm:',
     '  „mâine”, „peste 3 zile”, „joi săptămâna viitoare”, „de azi într-o săptămână”, „peste 2 ore”.',
     '  Ex: dacă azi e 2026-08-17, „mâine” → 2026-08-18; „peste 3 zile” → 2026-08-20.',
     '- „la 9 dimineața” → 09:00. „la 5 seara” / „5 după-amiaza” → 17:00 (nu 05:00).',
@@ -147,11 +156,11 @@ function buildParserSystemPrompt(ctx, session) {
     '- time_window: morning | afternoon | evening | null când nu există oră exactă („mai pe seară”).',
     '- O cifră izolată (ex. „18”) FĂRĂ „data de”/„pe 17”: dacă booking_wait=waiting_for_time sau waiting_for_confirmation → extracted_time (nu dată).',
     '- Corecții „nu 17, 18”: waiting_for_time / confirmation → change_time 18:00 (păstrează data). waiting_for_date → change_date. Altfel is_ambiguous=true (NU ghici).',
-    '- intent cancel / reschedule: extrage data/ora programării MENȚIONATE („anulează azi la 11” → date+time ale programării de anulat).',
+    '- intent cancel / reschedule: extrage data/ora programării MENȚIONATE.',
     '- intent list_appointments: programări DEJA existente. NU e book.',
-    '- intent book: programare NOUĂ SAU disponibilitate („aveți liber?”).',
+    '- intent book: programare NOUĂ SAU disponibilitate („aveți liber?”) — mapează service+date+time când apar în text.',
     '- intent hours / services / contact / menu / off_topic / missing_info — ca înainte.',
-    '- Nu inventa servicii în afara catalogului. Dacă nu e clar, extracted_service=null.',
+    '- Text neclar, fără entități utile → intent=off_topic sau book cu toate extracted_*=null (backend oferă meniu / îndrumare).',
     '- confidence 0–1. is_ambiguous true ⇒ nu completa extracted_date și extracted_time simultan din aceeași cifră.',
   ].join('\n');
 }

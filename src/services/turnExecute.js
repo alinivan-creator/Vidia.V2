@@ -1132,6 +1132,7 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
   await resetConversationState({
     businessId: business.id,
     rawPhone: recipientPhone,
+    hardReset: true,
     requestId,
   });
 
@@ -1897,6 +1898,20 @@ function executeMissingInfo(business, textBody = '', lang = 'ro') {
 async function executeClarifyNeeded({ business, recipientPhone, extract, convState, requestId }) {
   const amb = extract.ambiguity || {};
   const value = Number(amb.value);
+  if (!Number.isInteger(value) || value < 1 || value > 31) {
+    // Never show "Data de 0" / null labels — guide the user instead.
+    return handlerResult({
+      status: 'CHAT',
+      action_performed: null,
+      next_required_step: null,
+      user_message_template_key: 'CHAT_FALLBACK',
+      data: {
+        business_name: business.name,
+        client_message:
+          'Nu am înțeles exact. Te rog alege o opțiune din meniu sau reformulează (ex: *vreau vineri la 11*).',
+      },
+    });
+  }
   const resumeWait = amb.resume_wait || getBookingWait(convState);
   await setConversationStep({
     businessId: business.id,
@@ -2267,6 +2282,29 @@ async function dispatchExecute({
   }
   if (action === 'off_topic') return executeOffTopic(business, lang);
   if (action === 'missing_info') return executeMissingInfo(business, textBody, lang);
+  if (action === 'unknown_service') {
+    const asked = String(extract.unknown_service_name || '').trim();
+    const label = asked || 'acest serviciu';
+    return handlerResult({
+      status: 'MISSING_INFO',
+      action_performed: null,
+      next_required_step: 'CHOOSE_SERVICE',
+      user_message_template_key: 'UNKNOWN_SERVICE',
+      data: {
+        business_name: business.name,
+        service_name: asked || null,
+        client_message: `Din păcate nu oferim *${label}*. Te rog alege un serviciu din listă sau reformulează.`,
+        services: getBookingConfig(business).services.slice(0, 10).map((s) => ({
+          id: s.id,
+          name: s.name,
+          duration_minutes: s.duration_minutes,
+          price_ron: s.price_ron ?? null,
+        })),
+      },
+      menu: serviceMenu(business),
+      machine_action: MACHINE_ACTIONS.ACTION_ASK_SERVICE,
+    });
+  }
 
   return executeChat(business);
 }

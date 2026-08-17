@@ -186,11 +186,13 @@ export async function resetConversationState({
   businessId,
   rawPhone,
   keepLastIntent = true,
+  /** After a successful booking — drop recent turns / offers so the next message starts clean. */
+  hardReset = false,
   requestId = null,
 }) {
   let lastIntent = null;
   let recentTurns = null;
-  if (keepLastIntent) {
+  if (keepLastIntent && !hardReset) {
     const existing = await getOrCreateConversationState(businessId, rawPhone);
     lastIntent = existing.context_data?.last_booking_intent ?? null;
     recentTurns = existing.context_data?.recent_turns ?? null;
@@ -201,14 +203,29 @@ export async function resetConversationState({
     rawPhone,
     step: CONVERSATION_STEPS.IDLE,
     context: {
-      ...(lastIntent ? { last_booking_intent: lastIntent } : {}),
-      ...(Array.isArray(recentTurns) && recentTurns.length ? { recent_turns: recentTurns } : {}),
+      ...(hardReset
+        ? { last_booking_intent: null }
+        : (lastIntent ? { last_booking_intent: lastIntent } : {})),
+      ...(Array.isArray(recentTurns) && recentTurns.length ? { recent_turns: recentTurns } : { recent_turns: [] }),
       last_menu: null,
       draft_booking: null,
       pending_service_id: null,
       pending_date_text: null,
       pending_time_text: null,
       pending_datetime: null,
+      pending_time_window: null,
+      pending_offer: null,
+      clarified: null,
+      clarification: null,
+      booking_wait: null,
+      grid_kind: null,
+      grid_page: null,
+      intent: null,
+      service: null,
+      appointment_id: null,
+      mode: null,
+      flow_id: null,
+      suggested_employee_id: null,
     },
     mergeContext: false,
     requestId,

@@ -321,6 +321,9 @@ export function interpretNumericFreeText({
 }
 
 export function clarificationPrompt(value) {
-  const n = String(value);
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) {
+    return 'Nu am înțeles exact. Te rog alege din meniu sau reformulează (ex: *vreau vineri la 11*).';
+  }
   return `❓ *${n}* e data sau ora *${n}:00*?`;
 }

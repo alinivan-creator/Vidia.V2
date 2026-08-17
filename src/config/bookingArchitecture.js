@@ -16,14 +16,14 @@
  *     → expire pending_confirmation past Admin pending_ttl_minutes (default 5)
  *
  * Date/time UX:
- *   Default: Twilio list-picker for days ("Luni, 17 Aug") over 14 days with free slots;
- *   fully booked days omitted. Times: all free slots for the day (list or ≤3 quick-replies).
- *   Free-text NLP still works during date/time wait (e.g. "mâine la 10").
- *   Optional: WhatsApp Flows when booking_settings.whatsapp_flow_id is set.
- *   Occupied slots omitted from menus.
+ *   Hybrid: Twilio list-picker / quick-reply + free-text NLP (Intent Classifier).
+ *   Parser system prompt injects per-tenant SSOT (services, hours, employees, Admin facts).
+ *   Invented services rejected → „Din păcate nu oferim…”. Availability only from backend.
+ *   Unclear input → friendly guidance (menu or example phrase). No „Data de 0”.
+ *   After successful booking: hardReset session (no leftover pending/turns).
  *
  * Confirm UX:
  *   Confirmation + Adaugă în calendar URL button; no duplicate Maps markdown line.
  *   Name is never asked when Twilio ProfileName / display_name exists.
  */
-export const BOOKING_ARCHITECTURE_VERSION = 'list-picker-v4';
+export const BOOKING_ARCHITECTURE_VERSION = 'hybrid-nlp-ssot-v5';

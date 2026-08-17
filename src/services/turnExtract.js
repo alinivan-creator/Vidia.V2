@@ -61,6 +61,7 @@ const PREFIX = BOOKING_PREFIXES;
  * @property {string | null} name
  * @property {'high' | 'medium' | 'low'} confidence
  * @property {'menu' | 'keyword' | 'parser' | 'nlu' | 'state'} source
+ * @property {string | null} [unknown_service_name]
  * @property {Record<string, unknown> | null} [ambiguity]
  * @property {import('../schemas/extractionResult.js').ExtractionResult | null} [extraction]
  */
@@ -79,6 +80,7 @@ function emptyExtract(overrides = {}) {
     action: 'unknown',
     service_id: null,
     service_name: null,
+    unknown_service_name: null,
     employee_id: null,
     employee_name: null,
     datetime: null,
@@ -95,6 +97,20 @@ function emptyExtract(overrides = {}) {
     extraction: null,
     ...overrides,
   };
+}
+
+/** Ground catalog + reject invented services as a dedicated action. */
+function finalizeGroundedExtract(extract) {
+  if (extract?.unknown_service_name && !extract.service_id) {
+    return emptyExtract({
+      ...extract,
+      action: 'unknown_service',
+      service_name: null,
+      confidence: extract.confidence || 'high',
+      source: extract.source || 'nlu',
+    });
+  }
+  return extract;
 }
 
 export { matchServiceMention };
@@ -597,6 +613,10 @@ function applyCatalogMatches(extract, textBody, services, employees, timezone, o
     if (hit) {
       next.service_id = hit.id;
       next.service_name = hit.name;
+    } else {
+      // LLM invented or unmatched service — never carry into the state machine.
+      next.unknown_service_name = String(next.service_name).trim() || null;
+      next.service_name = null;
     }
   }
 
@@ -605,6 +625,8 @@ function applyCatalogMatches(extract, textBody, services, employees, timezone, o
   if (mentionedEmp && !next.employee_id) {
     next.employee_id = mentionedEmp.id;
     next.employee_name = mentionedEmp.name;
+  } else if (next.employee_name && !next.employee_id) {
+    next.employee_name = null;
   }
 
   applyParsedDateTime(next, textBody, timezone, opts);
@@ -615,10 +637,19 @@ function applyCatalogMatches(extract, textBody, services, employees, timezone, o
   if (next.date_text && !/^\d{4}-\d{2}-\d{2}$/.test(next.date_text)) {
     const asDate = parseRomanianDateTimeParts(next.date_text, timezone, new Date(), { dayHours: opts.dayHours });
     if (asDate.dateKey) next.date_text = asDate.dateKey;
+    else next.date_text = null;
   }
   if (next.time_text && !/^\d{2}:\d{2}$/.test(next.time_text)) {
     const asTime = parseRomanianDateTimeParts(`la ${next.time_text}`, timezone, new Date(), { dayHours: opts.dayHours });
     if (asTime.timeHHmm) next.time_text = asTime.timeHHmm;
+    else next.time_text = null;
+  }
+  // Drop garbage temporal values that would render as "Data de 0" / null UI.
+  if (next.date_text && !/^\d{4}-\d{2}-\d{2}$/.test(String(next.date_text))) {
+    next.date_text = null;
+  }
+  if (next.time_text && !/^\d{2}:\d{2}$/.test(String(next.time_text))) {
+    next.time_text = null;
   }
   if (next.date_text && next.time_text) {
     const combined = parseRomanianDateTimeParts(`${next.date_text} ${next.time_text}`, timezone, new Date(), { dayHours: opts.dayHours });
@@ -966,7 +997,7 @@ export async function extractTurnIntent({
     if (mapped.action === 'unknown') {
       return emptyExtract({ action: 'chat', confidence: 'low', source: 'nlu', extraction: nlu });
     }
-    return applyCatalogMatches(
+    return finalizeGroundedExtract(applyCatalogMatches(
       {
         ...mapped,
         extraction: nlu,
@@ -980,7 +1011,7 @@ export async function extractTurnIntent({
         freezeTime: nlu.intent === 'change_date',
         dayHours,
       },
-    );
+    ));
   }
 
   /** @type {TurnExtract} */
@@ -1009,7 +1040,7 @@ export async function extractTurnIntent({
     extract.action = 'off_topic';
   }
 
-  extract = applyCatalogMatches(extract, textBody, services, employees, tz, { dayHours });
+  extract = finalizeGroundedExtract(applyCatalogMatches(extract, textBody, services, employees, tz, { dayHours }));
   if (!extract.time_window && !extract.time_text) {
     extract.time_window = detectTimeWindowFromText(textBody);
   }
@@ -1046,6 +1077,7 @@ export async function extractTurnIntent({
       'menu', 'contact', 'list_appointments', 'callback', 'hours', 'services', 'hours_and_services',
       'missing_info', 'resolve_clarification', 'clarify_needed', 'abort', 'set_name',
       'select_service', 'select_employee', 'accept_offer', 'resume_yes', 'resume_no',
+      'unknown_service',
     ]);
     if (hasTemporal || leavePicker.has(extract.action)) {
       return extract;

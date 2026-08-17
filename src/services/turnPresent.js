@@ -270,33 +270,39 @@ export function renderHandlerResult(business, result) {
       );
     }
     case 'CHAT_FALLBACK':
-      return lang === 'en'
-        ? waJoin(
-          waTitle(`Booking assistant — ${d.business_name || business.name}`),
-          'How can I help?',
-          '',
-          waFooter(['booking', 'hours', 'contact']),
-        )
-        : waJoin(
-          waTitle(`Asistent programări — ${d.business_name || business.name}`),
-          'Cu ce te pot ajuta?',
-          '',
-          waFooter(['programare', 'orar', 'contact']),
-        );
+      return (typeof d.client_message === 'string' && d.client_message.trim())
+        || (lang === 'en'
+          ? waJoin(
+            waTitle(`Booking assistant — ${d.business_name || business.name}`),
+            "I didn't catch that. Please pick an option from the menu or rephrase (e.g. *Friday at 11*).",
+            '',
+            waFooter(['booking', 'hours', 'contact']),
+          )
+          : waJoin(
+            waTitle(`Asistent programări — ${d.business_name || business.name}`),
+            'Nu am înțeles exact. Te rog alege o opțiune din meniu sau reformulează (ex: *vreau vineri la 11*).',
+            '',
+            waFooter(['programare', 'orar', 'contact']),
+          ));
     case 'OFF_TOPIC':
       return lang === 'en'
         ? waJoin(
           waTitle(`Booking assistant — ${d.business_name || business.name}`),
-          "I can't discuss that.",
+          "I can help with bookings, hours, and contact. Please pick a menu option or rephrase (e.g. *book tomorrow at 10*).",
           '',
           waFooter(['booking', 'hours', 'contact']),
         )
         : waJoin(
           waTitle(`Asistent programări — ${d.business_name || business.name}`),
-          'Nu pot discuta asta.',
+          'Te pot ajuta cu programări, orar și contact. Alege din meniu sau reformulează (ex: *vreau mâine la 10*).',
           '',
           waFooter(['programare', 'orar', 'contact']),
         );
+    case 'UNKNOWN_SERVICE':
+      return (typeof d.client_message === 'string' && d.client_message.trim())
+        || (lang === 'en'
+          ? `Unfortunately we don't offer that service. Please choose from the list.`
+          : 'Din păcate nu oferim acest serviciu. Te rog alege din listă.');
     case 'MISSING_INFO':
       return d.client_message
         || missingBusinessInfoMessage(d.topic_label || null, lang)
@@ -443,6 +449,8 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
     'ASK_DATE',
     'ASK_TIME',
     'MISSING_SLOT',
+    'MISSING_SERVICE',
+    'UNKNOWN_SERVICE',
     'MENU',
   ]);
 
