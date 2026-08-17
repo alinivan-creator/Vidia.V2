@@ -45,6 +45,7 @@ import {
   formatTime,
   localToUtc,
 } from '../utils/datetime.js';
+import { formatRomanianDate } from '../lib/ai/responseFormatter.js';
 import {
   assertWithinWorkingHours,
   durationMissingClientMessage,
@@ -501,6 +502,7 @@ async function missingSlotsResult({
     requestId,
   });
   if (!listed.slots.length) {
+    const datePretty = dateKey ? formatRomanianDate(dateKey, business.timezone) : null;
     return handlerResult({
       status: 'MISSING_INFO',
       next_required_step: 'CHOOSE_SLOT',
@@ -508,11 +510,12 @@ async function missingSlotsResult({
       data: {
         service_name: service?.name,
         occupied_label: occupiedLabel,
+        date_label: datePretty,
         time_window: timeWindow,
         alternatives: [],
         client_message:
           `Nu am găsit ore libere pentru *${service?.name || 'serviciu'}*` +
-          (dateKey ? ` pe ${dateKey}` : '') +
+          (datePretty ? ` pe *${datePretty}*` : '') +
           (timeWindow ? ` (${timeWindow})` : '') +
           '.',
       },
@@ -526,7 +529,7 @@ async function missingSlotsResult({
     data: {
       service_name: service?.name,
       occupied_label: occupiedLabel,
-      date_label: dateKey,
+      date_label: dateKey ? formatRomanianDate(dateKey, business.timezone) : null,
       time_window: timeWindow,
       alternatives: listed.slots.map((s) => ({
         id: s.id,

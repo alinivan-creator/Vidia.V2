@@ -611,11 +611,17 @@ function applyCatalogMatches(extract, textBody, services, employees, timezone, o
  * @param {string} timezone
  * @param {{ freezeDate?: boolean, freezeTime?: boolean }} [opts]
  */
+/**
+ * True when the utterance itself names a calendar day or relative date
+ * (not merely an hour). Used so leftover LLM/session dates do not win.
+ */
 function textHasExplicitDay(text) {
   const n = normalize(text);
   return /\b(luni|marti|miercuri|joi|vineri|sambata|duminica|maine|azi|astazi|poimaine|ieri|alaltaieri|monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|yesterday)\b/.test(n)
     || /\b\d{1,2}\s*(ian|feb|mar|apr|mai|iun|iul|aug|sep|oct|nov|dec)/.test(n)
-    || /\b(?:pe|on(?:\s+the)?)\s+\d{1,2}/.test(n);
+    || /\b(?:pe|on(?:\s+the)?)\s+\d{1,2}/.test(n)
+    || /\b(?:peste|in)\s+(\d{1,2}|o|un|una|doi|doua|trei|patru|cinci|sase|sapte|opt|noua|zece)\s+(?:de\s+)?(?:zile|zi|ore|ora|minute|minut|min|saptaman)/.test(n)
+    || /\b(?:de\s+azi\s+intr-o\s+saptaman|intr-o\s+saptaman|(?:in\s+)?saptaman(?:a|ii)\s+(?:viitoare|urmatoare)|next\s+week)\b/.test(n);
 }
 
 /**
@@ -647,13 +653,11 @@ export function resolveExplicitSlot(textBody, business, now = new Date()) {
 
 function applyParsedDateTime(next, text, timezone, opts = {}) {
   const parts = parseRomanianDateTimeParts(text, timezone, new Date(), { dayHours: opts.dayHours ?? null });
-  const explicitDay = textHasExplicitDay(text);
-  const dateLocked = Boolean(opts.freezeDate)
-    || (!explicitDay && next.date_text && /^\d{4}-\d{2}-\d{2}$/.test(next.date_text));
-  const timeLocked = Boolean(opts.freezeTime)
-    || (!explicitDay && next.time_text && /^\d{2}:\d{2}$/.test(next.time_text));
-  if (parts.dateKey && !dateLocked) next.date_text = parts.dateKey;
-  if (parts.timeHHmm && !timeLocked) next.time_text = parts.timeHHmm;
+  // Deterministic parse from the user utterance always wins over LLM ISO dates.
+  // Otherwise "peste 2 zile" / "săptămâna viitoare" keep a wrong "today" from the model
+  // and Supabase is filtered on the current day.
+  if (parts.dateKey && !opts.freezeDate) next.date_text = parts.dateKey;
+  if (parts.timeHHmm && !opts.freezeTime) next.time_text = parts.timeHHmm;
 }
 
 /**

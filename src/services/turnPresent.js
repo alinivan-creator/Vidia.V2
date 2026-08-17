@@ -167,7 +167,10 @@ export function renderHandlerResult(business, result) {
       const bounds = timeWindowBounds(d.time_window);
       const windowHint = bounds ? ` (${bounds.labelRo})` : '';
       const head = d.service_name
-        ? waTitle(`Ore libere — ${d.service_name}${windowHint}`)
+        ? waJoin(
+          waTitle(`Ore libere — ${d.service_name}${windowHint}`),
+          d.date_label ? `*Data*\n${d.date_label}` : null,
+        )
         : waTitle(`La ce oră?${windowHint}`);
       const alts = (d.alternatives || []).map((s) => s.label || s.time).filter(Boolean).slice(0, 8);
       return alts.length

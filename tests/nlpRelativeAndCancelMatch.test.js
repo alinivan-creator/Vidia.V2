@@ -30,6 +30,17 @@ describe('relative NLP datetime', () => {
     assert.equal(parseRomanianDateTimeParts('de azi într-o săptămână', TZ, NOW).dateKey, '2026-08-24');
   });
 
+  it('parses săptămâna viitoare / peste două zile|ore / poimâine', () => {
+    assert.equal(parseRomanianDateTimeParts('Săptămâna viitoare', TZ, NOW).dateKey, '2026-08-24');
+    assert.equal(parseRomanianDateTimeParts('saptamana urmatoare', TZ, NOW).dateKey, '2026-08-24');
+    assert.equal(parseRomanianDateTimeParts('peste doua zile', TZ, NOW).dateKey, '2026-08-19');
+    assert.equal(parseRomanianDateTimeParts('peste 2 zile', TZ, NOW).dateKey, '2026-08-19');
+    assert.equal(parseRomanianDateTimeParts('poimâine', TZ, NOW).dateKey, '2026-08-19');
+    const inTwoHours = parseRomanianDateTimeParts('peste doua ore', TZ, NOW);
+    assert.equal(inTwoHours.dateKey, '2026-08-17');
+    assert.equal(inTwoHours.timeHHmm, '10:52');
+  });
+
   it('parses peste 2 ore from now', () => {
     const parsed = parseRomanianDateTimeParts('peste 2 ore', TZ, NOW);
     assert.equal(parsed.dateKey, '2026-08-17');
@@ -37,6 +48,43 @@ describe('relative NLP datetime', () => {
   });
 });
 
+describe('deterministic date beats LLM today', () => {
+  it('applyParsedDateTime overwrites ISO today when text is relative', async () => {
+    const { resolveExplicitSlot } = await import('../src/services/turnExtract.js');
+    // resolveExplicitSlot uses the same parser; verify relative phrases resolve off "today"
+    const business = { timezone: TZ, business_hours: {} };
+    const week = resolveExplicitSlot('De azi într-o săptămână', business, NOW);
+    assert.equal(week?.dateKey, '2026-08-24');
+    const nextWeek = resolveExplicitSlot('Săptămâna viitoare', business, NOW);
+    assert.equal(nextWeek?.dateKey, '2026-08-24');
+    const twoDays = resolveExplicitSlot('peste doua zile', business, NOW);
+    assert.equal(twoDays?.dateKey, '2026-08-19');
+  });
+
+  it('reduceBookingTurn prefers uttered relative date over LLM extracted_date=today', async () => {
+    const { reduceBookingTurn, SESSION_STATES } = await import('../src/lib/booking/stateMachine.js');
+    const reduced = reduceBookingTurn({
+      state: SESSION_STATES.WAITING_FOR_DATE,
+      draft: { service_id: 'svc1', service_name: 'Tuns', date: null, time: null, duration: 30 },
+      extraction: {
+        intent: 'book',
+        extracted_service: 'Tuns',
+        extracted_date: '2026-08-17',
+        extracted_time: null,
+        is_ambiguous: false,
+        ambiguity_reason: null,
+        confidence: 0.9,
+      },
+      text: 'De azi într-o săptămână',
+      timezone: TZ,
+      extractDate: '2026-08-17',
+      extractTime: null,
+      extractServiceId: 'svc1',
+      extractServiceName: 'Tuns',
+    });
+    assert.equal(reduced.draft.date, '2026-08-24');
+  });
+});
 describe('appointment match by slot hints', () => {
   const appts = [
     {

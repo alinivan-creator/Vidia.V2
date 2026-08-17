@@ -354,22 +354,30 @@ export async function getAvailableSlots({
   const blocked = [...busy, ...softLocks];
   const slots = [];
 
-  for (let dayOffset = 0; dayOffset < config.bookingHorizonDays && slots.length < limit; dayOffset++) {
-    const day = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
-    const weekday = getWeekdayInTimezone(day, timezone);
+  /** When a concrete date is requested, scan only that calendar day — never fall back to "today". */
+  const dayKeys = [];
+  if (dateKey && /^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+    dayKeys.push(dateKey);
+  } else {
+    for (let dayOffset = 0; dayOffset < config.bookingHorizonDays; dayOffset++) {
+      const day = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
+      const dayKey = new Intl.DateTimeFormat('en-CA', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(day);
+      if (!dayKeys.includes(dayKey)) dayKeys.push(dayKey);
+    }
+  }
+
+  for (const dayKey of dayKeys) {
+    if (slots.length >= limit) break;
+    const noon = localToUtc(dayKey, '12:00', timezone);
+    const weekday = getWeekdayInTimezone(noon, timezone);
     if (weekday == null) continue;
     const hours = config.businessHours[String(weekday)];
-
     if (!hours || !hours.open || !hours.close) continue;
-
-    const dayKey = new Intl.DateTimeFormat('en-CA', {
-      timeZone: timezone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(day);
-
-    if (dateKey && dayKey !== dateKey) continue;
 
     let cursor = localToUtc(dayKey, hours.open, timezone);
     const dayClose = localToUtc(dayKey, hours.close, timezone);

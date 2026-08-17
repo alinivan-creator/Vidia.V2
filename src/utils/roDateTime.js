@@ -282,29 +282,71 @@ function parseDayOfMonth(normalized, timezone, now) {
   return key;
 }
 
+/** Romanian count words used in "peste două zile / ore". */
+const RO_COUNT_WORDS = {
+  o: 1,
+  un: 1,
+  una: 1,
+  doi: 2,
+  doua: 2,
+  trei: 3,
+  patru: 4,
+  cinci: 5,
+  sase: 6,
+  sapte: 7,
+  opt: 8,
+  noua: 9,
+  zece: 10,
+};
+
+const RO_COUNT_TOKEN = String.raw`(\d{1,2}|o|un|una|doi|doua|trei|patru|cinci|sase|sapte|opt|noua|zece)`;
+
+/**
+ * @param {string} token
+ * @returns {number | null}
+ */
+function parseRoCount(token) {
+  const t = String(token || '').toLowerCase();
+  if (/^\d{1,2}$/.test(t)) {
+    const n = Number(t);
+    return Number.isFinite(n) ? n : null;
+  }
+  return RO_COUNT_WORDS[t] ?? null;
+}
+
 function parseRelativeDate(normalized, timezone, now) {
   const today = formatDateKey(now, timezone);
 
-  // "peste N săptămâni"
-  const weeks = normalized.match(/\bpeste\s+(\d{1,2})\s+saptaman/);
+  // "peste N / două săptămâni"
+  const weeks = normalized.match(new RegExp(String.raw`\bpeste\s+${RO_COUNT_TOKEN}\s+saptaman`));
   if (weeks) {
-    return addCalendarDays(today, Number(weeks[1]) * 7);
+    const n = parseRoCount(weeks[1]);
+    if (n != null && n > 0) return addCalendarDays(today, n * 7);
   }
-  // "de azi într-o săptămână" / "peste o săptămână" — before bare "azi"
+  // "de azi într-o săptămână" / "peste o săptămână" / bare "săptămâna viitoare" — before bare "azi"
   if (
-    /\b(?:peste\s+(?:o|1)\s+saptaman\w*|de\s+azi\s+intr-o\s+saptaman\w*|intr-o\s+saptaman\w*|in\s+o\s+saptaman\w*)\b/.test(
+    /\b(?:peste\s+(?:o|1|un|una)\s+saptaman\w*|de\s+azi\s+intr-o\s+saptaman\w*|intr-o\s+saptaman\w*|in\s+o\s+saptaman\w*)\b/.test(
       normalized,
     )
+    || /\b(?:in\s+)?saptaman(?:a|ii)\s+(?:viitoare|urmatoare)\b/.test(normalized)
+    || /\bnext\s+week\b/.test(normalized)
   ) {
-    return addCalendarDays(today, 7);
+    // Weekday + "săptămâna viitoare" is handled below (joi săptămâna viitoare → specific day).
+    const hasWeekday = Object.keys(WEEKDAY_MAP).some((d) => new RegExp(`\\b${d}\\b`).test(normalized));
+    if (!hasWeekday) return addCalendarDays(today, 7);
   }
 
-  // "peste N zile" (arbitrary N)
-  const nDays = normalized.match(/\bpeste\s+(\d{1,2})\s+zile\b/);
+  // "peste N zile" / "în două zile"
+  const nDays = normalized.match(new RegExp(String.raw`\b(?:peste|in)\s+${RO_COUNT_TOKEN}\s+zile\b`));
   if (nDays) {
-    return addCalendarDays(today, Number(nDays[1]));
+    const n = parseRoCount(nDays[1]);
+    if (n != null && n > 0) return addCalendarDays(today, n);
   }
-  if (/\bpeste\s+(?:o|1)\s+zi\b/.test(normalized) || /\bmaine\b/.test(normalized) || /\btomorrow\b/.test(normalized)) {
+  if (
+    /\b(?:peste|in)\s+(?:o|1|un|una)\s+zi\b/.test(normalized)
+    || /\bmaine\b/.test(normalized)
+    || /\btomorrow\b/.test(normalized)
+  ) {
     return addCalendarDays(today, 1);
   }
   if (/\bpoimaine\b/.test(normalized) || /\bday after tomorrow\b/.test(normalized)) {
@@ -319,17 +361,14 @@ function parseRelativeDate(normalized, timezone, now) {
   const dayName = Object.keys(WEEKDAY_MAP)
     .sort((a, b) => b.length - a.length)
     .find((d) => new RegExp(`\\b${d}\\b`).test(normalized));
-  if (!dayName) {
-    if (/\bnext\s+week\b/.test(normalized)) return addCalendarDays(today, 7);
-    return null;
-  }
+  if (!dayName) return null;
 
   const want = WEEKDAY_MAP[/** @type {keyof typeof WEEKDAY_MAP} */ (dayName)];
   const current = getWeekdayInTimezone(now, timezone);
   if (current == null) return null;
   let add = (want - current + 7) % 7;
   const nextWeek =
-    /\bsaptaman(?:a|ii)\s+viitoare\b/.test(normalized)
+    /\bsaptaman(?:a|ii)\s+(?:viitoare|urmatoare)\b/.test(normalized)
     || /\bnext\s+week\b/.test(normalized);
   if (nextWeek) {
     add = add === 0 ? 7 : add + 7;
@@ -343,21 +382,27 @@ function parseRelativeDate(normalized, timezone, now) {
  */
 export function parseRelativeDurationFromNow(normalized, timezone, now = new Date()) {
   const n = normalize(normalized);
-  const hours = n.match(/\bpeste\s+(\d{1,2})\s+(?:de\s+)?(?:ore|ora)\b/);
+  const hours = n.match(new RegExp(String.raw`\bpeste\s+${RO_COUNT_TOKEN}\s+(?:de\s+)?(?:ore|ora)\b`));
   if (hours) {
-    const then = new Date(now.getTime() + Number(hours[1]) * 3600_000);
-    return {
-      dateKey: formatDateKey(then, timezone),
-      timeHHmm: formatTime(then, timezone),
-    };
+    const count = parseRoCount(hours[1]);
+    if (count != null && count > 0) {
+      const then = new Date(now.getTime() + count * 3600_000);
+      return {
+        dateKey: formatDateKey(then, timezone),
+        timeHHmm: formatTime(then, timezone),
+      };
+    }
   }
-  const mins = n.match(/\bpeste\s+(\d{1,3})\s+(?:de\s+)?(?:minute|minut|min)\b/);
+  const mins = n.match(new RegExp(String.raw`\bpeste\s+${RO_COUNT_TOKEN}\s+(?:de\s+)?(?:minute|minut|min)\b`));
   if (mins) {
-    const then = new Date(now.getTime() + Number(mins[1]) * 60_000);
-    return {
-      dateKey: formatDateKey(then, timezone),
-      timeHHmm: formatTime(then, timezone),
-    };
+    const count = parseRoCount(mins[1]);
+    if (count != null && count > 0) {
+      const then = new Date(now.getTime() + count * 60_000);
+      return {
+        dateKey: formatDateKey(then, timezone),
+        timeHHmm: formatTime(then, timezone),
+      };
+    }
   }
   return null;
 }
@@ -448,12 +493,15 @@ function stripResolvedDateTokens(normalized) {
   rest = rest.replace(new RegExp(`\\b\\d{1,2}\\s+(${monthNames})\\.?\\s*(?:\\d{4})?\\b`, 'g'), ' ');
   rest = rest.replace(/\b\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?\b/g, ' ');
   rest = rest.replace(/\b20\d{2}-\d{2}-\d{2}\b/g, ' ');
-  rest = rest.replace(/\bpeste\s+\d{1,2}\s+saptaman\w*/g, ' ');
-  rest = rest.replace(/\b(?:de\s+azi\s+intr-o\s+saptaman|intr-o\s+saptaman|in\s+o\s+saptaman|next\s+week|saptaman(?:a|ii)\s+viitoare)\b/g, ' ');
-  rest = rest.replace(/\bpeste\s+\d{1,2}\s+zile?\b/g, ' ');
-  rest = rest.replace(/\bpeste\s+(?:o|1)\s+zi\b/g, ' ');
-  rest = rest.replace(/\bpeste\s+\d{1,2}\s+(?:de\s+)?(?:ore|ora)\b/g, ' ');
-  rest = rest.replace(/\bpeste\s+\d{1,3}\s+(?:de\s+)?(?:minute|minut|min)\b/g, ' ');
+  rest = rest.replace(new RegExp(String.raw`\bpeste\s+${RO_COUNT_TOKEN}\s+saptaman\w*`, 'g'), ' ');
+  rest = rest.replace(
+    /\b(?:de\s+azi\s+intr-o\s+saptaman|intr-o\s+saptaman|in\s+o\s+saptaman|next\s+week|(?:in\s+)?saptaman(?:a|ii)\s+(?:viitoare|urmatoare))\b/g,
+    ' ',
+  );
+  rest = rest.replace(new RegExp(String.raw`\b(?:peste|in)\s+${RO_COUNT_TOKEN}\s+zile?\b`, 'g'), ' ');
+  rest = rest.replace(/\b(?:peste|in)\s+(?:o|1|un|una)\s+zi\b/g, ' ');
+  rest = rest.replace(new RegExp(String.raw`\bpeste\s+${RO_COUNT_TOKEN}\s+(?:de\s+)?(?:ore|ora)\b`, 'g'), ' ');
+  rest = rest.replace(new RegExp(String.raw`\bpeste\s+${RO_COUNT_TOKEN}\s+(?:de\s+)?(?:minute|minut|min)\b`, 'g'), ' ');
   return rest.replace(/\s+/g, ' ').trim();
 }
 

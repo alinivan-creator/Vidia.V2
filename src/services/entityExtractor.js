@@ -222,6 +222,12 @@ export async function extractEntities({
 
   if (raw && typeof raw === 'object') {
     const row = /** @type {Record<string, unknown>} */ (raw);
+    // Deterministic relative/calendar parse from the utterance overrides the model.
+    // Prevents "săptămâna viitoare" / "peste 2 zile" from keeping today's ISO date.
+    const uttered = parseRomanianDateTimeParts(String(textBody || ''), timezone, new Date());
+    if (uttered.dateKey) row.extracted_date = uttered.dateKey;
+    if (uttered.timeHHmm) row.extracted_time = uttered.timeHHmm;
+
     const dateHint = (typeof row.extracted_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(row.extracted_date))
       ? row.extracted_date
       : session.pending_date;

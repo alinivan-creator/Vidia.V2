@@ -9,6 +9,7 @@ import {
 } from '../../db/conversationStateService.js';
 import { BOOKING_WAIT, dateKeyFromDayNumber, getBookingWait } from '../../services/bookingWaitState.js';
 import { getBookingConfig } from '../../utils/datetime.js';
+import { parseRomanianDateTimeParts } from '../../utils/roDateTime.js';
 import { resolveServiceDurationMinutes } from '../../utils/workingHours.js';
 
 /** @typedef {import('../../schemas/extractionResult.js').ExtractionResult} ExtractionResult */
@@ -394,9 +395,12 @@ export function reduceBookingTurn({
     return nextFromDraft(nextDraft);
   }
 
+  const uttered = text
+    ? parseRomanianDateTimeParts(text, timezone)
+    : { dateKey: null, timeHHmm: null };
   const intent = extraction?.intent;
-  const dateValue = extractDate || extraction?.extracted_date || null;
-  const timeValue = extractTime || extraction?.extracted_time || null;
+  const dateValue = uttered.dateKey || extractDate || extraction?.extracted_date || null;
+  const timeValue = uttered.timeHHmm || extractTime || extraction?.extracted_time || null;
 
   if (intent === 'change_time') {
     if (timeValue) nextDraft.time = timeValue;
