@@ -38,6 +38,9 @@ import {
   looksLikeGreeting,
   looksLikeOffTopicChat,
   triageUserIntent,
+  detectModificationIntent,
+  looksLikeCancelAll,
+  looksLikePluralAppointments,
 } from './intentTriageService.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
@@ -62,6 +65,8 @@ const PREFIX = BOOKING_PREFIXES;
  * @property {'high' | 'medium' | 'low'} confidence
  * @property {'menu' | 'keyword' | 'parser' | 'nlu' | 'state'} source
  * @property {string | null} [unknown_service_name]
+ * @property {boolean} [cancel_all]
+ * @property {boolean} [vague_choice]
  * @property {Record<string, unknown> | null} [ambiguity]
  * @property {import('../schemas/extractionResult.js').ExtractionResult | null} [extraction]
  */
@@ -91,11 +96,46 @@ function emptyExtract(overrides = {}) {
     slot_id: null,
     choice_id: null,
     name: null,
+    cancel_all: false,
+    vague_choice: false,
     confidence: 'low',
     source: 'parser',
     ambiguity: null,
     extraction: null,
     ...overrides,
+  };
+}
+
+/**
+ * Tag cancel/reschedule extracts so execute never guesses among many bookings.
+ * Menu taps already locked a booking_id (or cancel-all) — do not treat the label as a vague day.
+ * @param {TurnExtract} extract
+ * @param {string} textBody
+ */
+function annotateModifyExtract(extract, textBody) {
+  if (!extract) return extract;
+  const modify = new Set(['cancel', 'reschedule', 'cancel_all', 'select_appointment', 'confirm_cancel']);
+  if (!modify.has(extract.action)) {
+    return {
+      ...extract,
+      cancel_all: Boolean(extract.cancel_all),
+      vague_choice: Boolean(extract.vague_choice),
+    };
+  }
+  if (extract.source === 'menu') {
+    return {
+      ...extract,
+      cancel_all: extract.action === 'cancel_all' || Boolean(extract.cancel_all),
+      vague_choice: false,
+    };
+  }
+  const cancelAll = extract.action === 'cancel_all' || looksLikeCancelAll(textBody);
+  const vague = looksLikePluralAppointments(textBody)
+    || (Boolean(extract.date_text) && !extract.time_text);
+  return {
+    ...extract,
+    cancel_all: Boolean(extract.cancel_all) || cancelAll,
+    vague_choice: Boolean(extract.vague_choice) || vague,
   };
 }
 
@@ -192,6 +232,16 @@ function extractFromChoiceId(choiceId, base, business) {
     return emptyExtract({
       ...base,
       action: 'grid_nav',
+      choice_id: choiceId,
+      confidence: 'high',
+      source: 'menu',
+    });
+  }
+  if (choiceId === MOD_PREFIX.CANCEL_ALL) {
+    return emptyExtract({
+      ...base,
+      action: 'cancel_all',
+      cancel_all: true,
       choice_id: choiceId,
       confidence: 'high',
       source: 'menu',
@@ -744,7 +794,7 @@ function applyParsedDateTime(next, text, timezone, opts = {}) {
  * @param {string | null} [params.requestId]
  * @returns {Promise<TurnExtract>}
  */
-export async function extractTurnIntent({
+async function extractTurnIntentImpl({
   business,
   textBody,
   buttonPayload = null,
@@ -801,7 +851,14 @@ export async function extractTurnIntent({
     return emptyExtract({ action: 'off_topic', confidence: 'high', source: 'keyword' });
   }
   // Soft availability must not be stolen as amenity FAQ.
-  if (looksLikeAvailabilityQuestion(textBody) || detectTimeWindowFromText(textBody)) {
+  // Cancel/reschedule (or an in-progress modify step) must keep the appointment picker.
+  const modifyIntent = detectModificationIntent(textBody);
+  const inModifyStep = step === CONVERSATION_STEPS.RESCHEDULING || step === CONVERSATION_STEPS.MODIFYING;
+  if (
+    !modifyIntent
+    && !inModifyStep
+    && (looksLikeAvailabilityQuestion(textBody) || detectTimeWindowFromText(textBody))
+  ) {
     const named = matchServiceMention(textBody, services);
     return emptyExtract({
       action: 'book',
@@ -1010,7 +1067,7 @@ export async function extractTurnIntent({
     }
     const direct = new Set([
       'hours', 'services', 'hours_and_services', 'contact', 'menu', 'confirm', 'cancel', 'cancel_pending',
-      'reschedule', 'off_topic', 'missing_info',
+      'cancel_all', 'reschedule', 'off_topic', 'missing_info',
     ]);
     if (direct.has(mapped.action)) return mapped;
     if (mapped.action === 'unknown') {
@@ -1093,6 +1150,7 @@ export async function extractTurnIntent({
     );
     const leavePicker = new Set([
       'select_slot', 'grid_nav', 'reprompt_grid', 'confirm', 'cancel', 'cancel_pending',
+      'cancel_all', 'select_appointment',
       'menu', 'contact', 'list_appointments', 'callback', 'hours', 'services', 'hours_and_services',
       'missing_info', 'resolve_clarification', 'clarify_needed', 'abort', 'set_name',
       'select_service', 'select_employee', 'accept_offer', 'resume_yes', 'resume_no',
@@ -1115,4 +1173,9 @@ export async function extractTurnIntent({
   }
 
   return extract;
+}
+
+export async function extractTurnIntent(params) {
+  const extract = await extractTurnIntentImpl(params);
+  return annotateModifyExtract(extract, params.textBody);
 }

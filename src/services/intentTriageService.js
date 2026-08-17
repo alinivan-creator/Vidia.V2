@@ -84,6 +84,35 @@ export function detectModificationIntent(text) {
 }
 
 /**
+ * Explicit "cancel everything" — not a single-booking guess.
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function looksLikeCancelAll(text) {
+  const n = normalize(text);
+  if (!n) return false;
+  if (/\b(cancel all|delete all)\b/.test(n)) return true;
+  if (/\b(toate programarile|toate rezervarile|toate orele)\b/.test(n)) return true;
+  if (/\b(anuleaz[aă]|anulez|anulare|sterge|cancel)\b/.test(n)
+      && /\b(tot|totul|toate|pe toate|le pe toate)\b/.test(n)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Plural / generic appointment phrasing — never auto-pick among many bookings.
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function looksLikePluralAppointments(text) {
+  const n = normalize(text);
+  if (!n) return false;
+  if (looksLikeCancelAll(n)) return true;
+  return /\b(programarile|rezervarile|pe ambele|ambele programari|toate programar)\b/.test(n);
+}
+
+/**
  * Free-text that looks like a new slot search ("vineri la 10", "mâine 14:00").
  * @param {string} text
  * @returns {boolean}

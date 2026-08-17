@@ -98,7 +98,7 @@ import {
   getBookingWait,
   timeFromHourNumber,
 } from './bookingWaitState.js';
-import { resolveTargetAppointment } from '../utils/appointmentMatch.js';
+import { resolveTargetAppointment, buildAppointmentChoiceMenu } from '../utils/appointmentMatch.js';
 import {
   MACHINE_ACTIONS,
   hydrateCatalogService,
@@ -381,16 +381,59 @@ function resolveAppointmentForModify(appointments, extract, convState, business,
     },
     business.timezone || 'Europe/Bucharest',
     mode,
+    {
+      forceChoice: Boolean(extract.cancel_all || extract.vague_choice || extract.action === 'cancel_all'),
+    },
   );
 }
 
-function appointmentChoiceMenu(appointments, business) {
-  return appointments.map((a) => {
-    const service = /** @type {{ name?: string }} */ (a.selected_service ?? {});
-    const when = a.selected_slot_start
-      ? formatSlotLabel(new Date(a.selected_slot_start), business.timezone)
-      : '—';
-    return { id: `${MOD_PREFIX.APPT}${a.id}`, title: `${service.name || 'Programare'} — ${when}` };
+function appointmentChoiceMenu(appointments, business, { includeCancelAll = false } = {}) {
+  return buildAppointmentChoiceMenu(appointments, business.timezone, {
+    includeCancelAll,
+    apptPrefix: MOD_PREFIX.APPT,
+    cancelAllId: MOD_PREFIX.CANCEL_ALL,
+  });
+}
+
+/**
+ * Persist the interactive appointment picker and lock the conversation on CHOOSE_APPOINTMENT.
+ * last_menu is stored here so a numbered reply still works if the Twilio list is not tapped.
+ */
+async function askWhichAppointment({
+  business,
+  recipientPhone,
+  appointments,
+  intent,
+  requestId,
+  clientMessage = null,
+  includeCancelAll = false,
+  extraContext = {},
+}) {
+  const options = appointmentChoiceMenu(appointments, business, { includeCancelAll });
+  await setConversationStep({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    step: CONVERSATION_STEPS.MODIFYING,
+    context: {
+      intent,
+      appointment_ids: appointments.map((a) => a.id),
+      last_menu: { kind: 'modify', options },
+      ...extraContext,
+    },
+    mergeContext: false,
+    requestId,
+  });
+  return handlerResult({
+    status: 'MISSING_INFO',
+    next_required_step: 'CHOOSE_APPOINTMENT',
+    user_message_template_key: 'MISSING_APPOINTMENT',
+    data: {
+      intent,
+      appointments: options,
+      client_message: clientMessage,
+      list_button: 'Programările tale',
+    },
+    menu: { kind: 'modify', options, catalog: options },
   });
 }
 
@@ -1198,7 +1241,13 @@ async function executeCancelPending({ business, recipientPhone, requestId }) {
   });
 }
 
-async function executeCancelAppointment({ business, recipientPhone, appointment, requestId }) {
+async function executeCancelAppointment({
+  business,
+  recipientPhone,
+  appointment,
+  requestId,
+  resetState = true,
+}) {
   const { calendarId } = await resolveStaff(business, appointment);
   const eventId = await resolveCalendarEventId({
     business,
@@ -1252,11 +1301,13 @@ async function executeCancelAppointment({ business, recipientPhone, appointment,
     },
     requestId,
   });
-  await resetConversationState({
-    businessId: business.id,
-    rawPhone: recipientPhone,
-    requestId,
-  });
+  if (resetState) {
+    await resetConversationState({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      requestId,
+    });
+  }
   return handlerResult({
     status: 'SUCCESS',
     action_performed: 'CANCELLED',
@@ -1264,6 +1315,88 @@ async function executeCancelAppointment({ business, recipientPhone, appointment,
     user_message_template_key: 'CONFIRMATION_CANCELLED',
     data: {
       service_name: appointment.selected_service?.name || 'Programare',
+    },
+  });
+}
+
+async function executeCancelAllAppointments({ business, recipientPhone, appointments, requestId }) {
+  const list = Array.isArray(appointments) ? appointments : [];
+  let cancelled = 0;
+  let failed = 0;
+  for (const appointment of list) {
+    const result = await executeCancelAppointment({
+      business,
+      recipientPhone,
+      appointment,
+      requestId,
+      resetState: false,
+    });
+    if (result.status === 'SUCCESS') cancelled += 1;
+    else failed += 1;
+  }
+  await resetConversationState({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    requestId,
+  });
+  if (!cancelled) {
+    return handlerResult({
+      status: 'ERROR',
+      user_message_template_key: 'ERROR_CALENDAR',
+      data: {
+        client_message: 'Din păcate nu am putut anula programările. Te rog încearcă din nou.',
+      },
+    });
+  }
+  return handlerResult({
+    status: 'SUCCESS',
+    action_performed: 'CANCELLED',
+    next_required_step: null,
+    user_message_template_key: 'CONFIRMATION_CANCELLED',
+    data: {
+      service_name: cancelled === 1 ? 'Programare' : `${cancelled} programări`,
+      client_message: failed
+        ? `Am anulat ${cancelled} programări. ${failed} nu au putut fi anulate.`
+        : `Am anulat toate cele ${cancelled} programări.`,
+    },
+  });
+}
+
+async function askConfirmCancelAll({ business, recipientPhone, appointments, requestId }) {
+  await setConversationStep({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    step: CONVERSATION_STEPS.CONFIRMING_CANCEL,
+    context: {
+      intent: 'cancel',
+      cancel_all: true,
+      appointment_ids: appointments.map((a) => a.id),
+      last_menu: {
+        kind: 'confirm',
+        options: [
+          { id: MOD_PREFIX.CONFIRM_CANCEL, title: 'Anulează' },
+          { id: MOD_PREFIX.ABORT, title: 'Renunță' },
+        ],
+      },
+    },
+    mergeContext: false,
+    requestId,
+  });
+  return handlerResult({
+    status: 'MISSING_INFO',
+    next_required_step: 'CONFIRM_CANCEL',
+    user_message_template_key: 'CONFIRM_CANCEL',
+    data: {
+      client_message: `Anulezi toate cele ${appointments.length} programări?`,
+      service_name: `${appointments.length} programări`,
+      slot_label: 'toate intervalele',
+    },
+    menu: {
+      kind: 'confirm',
+      options: [
+        { id: MOD_PREFIX.CONFIRM_CANCEL, title: 'Anulează' },
+        { id: MOD_PREFIX.ABORT, title: 'Renunță' },
+      ],
     },
   });
 }
@@ -1481,33 +1614,21 @@ async function executeReschedule({
 
   if (!appointment) {
     const pool = resolved.candidates?.length ? resolved.candidates : appointments;
-    const options = appointmentChoiceMenu(pool, business);
-    await setConversationStep({
-      businessId: business.id,
-      rawPhone: recipientPhone,
-      step: CONVERSATION_STEPS.MODIFYING,
-      context: {
-        intent: 'reschedule',
-        appointment_ids: pool.map((a) => a.id),
+    const clientMessage = resolved.reason === 'ambiguous'
+      ? 'Am găsit mai multe programări pe intervalul menționat. Care o mutăm?'
+      : null;
+    return askWhichAppointment({
+      business,
+      recipientPhone,
+      appointments: pool,
+      intent: 'reschedule',
+      requestId,
+      clientMessage,
+      extraContext: {
         // Keep new-slot hints so the next turn can apply them after choice.
         pending_date_text: extract.date_text || null,
         pending_time_text: extract.time_text || null,
       },
-      mergeContext: false,
-      requestId,
-    });
-    return handlerResult({
-      status: 'MISSING_INFO',
-      next_required_step: 'CHOOSE_APPOINTMENT',
-      user_message_template_key: 'MISSING_APPOINTMENT',
-      data: {
-        intent: 'reschedule',
-        appointments: options,
-        client_message: resolved.reason === 'ambiguous'
-          ? 'Am găsit mai multe programări pe intervalul menționat. Care o mutăm?'
-          : null,
-      },
-      menu: { kind: 'modify', options },
     });
   }
 
@@ -1565,9 +1686,30 @@ async function executeReschedule({
 }
 
 async function executeCancel({ business, recipientPhone, extract, activeDraft, convState, requestId }) {
-  if (activeDraft && ['browsing', 'pending_confirmation'].includes(activeDraft.state)
-      && convState.current_step !== CONVERSATION_STEPS.CONFIRMING_CANCEL) {
+  const inModifyFlow = convState.current_step === CONVERSATION_STEPS.CONFIRMING_CANCEL
+    || convState.current_step === CONVERSATION_STEPS.MODIFYING
+    || convState.current_step === CONVERSATION_STEPS.RESCHEDULING;
+  const wantsAll = Boolean(extract.cancel_all || extract.action === 'cancel_all');
+
+  // A pending NEW booking: "anulează" drops the hold — unless we are already
+  // cancelling a confirmed appointment (or the client asked to cancel all / picked one).
+  if (
+    activeDraft?.state === 'pending_confirmation'
+    && !inModifyFlow
+    && !extract.appointment_id
+    && !wantsAll
+  ) {
     return executeCancelPending({ business, recipientPhone, requestId });
+  }
+
+  if (activeDraft && ['browsing', 'pending_confirmation'].includes(activeDraft.state)) {
+    await cancelOrResetDraft({
+      draftId: activeDraft.id,
+      businessId: business.id,
+      state: 'cancelled',
+      context: { ...activeDraft.conversation_context, step: 'cancelled_for_modification_intent' },
+      requestId,
+    });
   }
 
   const appointments = await listActionableAppointments(business, recipientPhone, requestId);
@@ -1579,6 +1721,10 @@ async function executeCancel({ business, recipientPhone, extract, activeDraft, c
     });
   }
 
+  if (wantsAll && extract.source === 'menu' && appointments.length > 1) {
+    return askConfirmCancelAll({ business, recipientPhone, appointments, requestId });
+  }
+
   const resolved = resolveAppointmentForModify(appointments, extract, convState, business, 'cancel');
   let appointment = resolved.appointment;
   if (resolved.reason === 'id' && appointment && !appointments.find((a) => a.id === appointment.id)) {
@@ -1586,62 +1732,34 @@ async function executeCancel({ business, recipientPhone, extract, activeDraft, c
   }
 
   if (!appointment) {
+    const includeCancelAll = wantsAll && appointments.length > 1;
     if (resolved.reason === 'not_found' && (extract.date_text || extract.time_text)) {
-      const hint = [
-        extract.date_text,
-        extract.time_text,
-      ].filter(Boolean).join(' ');
-      const options = appointmentChoiceMenu(appointments, business);
-      await setConversationStep({
-        businessId: business.id,
-        rawPhone: recipientPhone,
-        step: CONVERSATION_STEPS.MODIFYING,
-        context: {
-          intent: 'cancel',
-          appointment_ids: appointments.map((a) => a.id),
-        },
-        mergeContext: false,
+      const hint = [extract.date_text, extract.time_text].filter(Boolean).join(' ');
+      return askWhichAppointment({
+        business,
+        recipientPhone,
+        appointments,
+        intent: 'cancel',
         requestId,
-      });
-      return handlerResult({
-        status: 'MISSING_INFO',
-        next_required_step: 'CHOOSE_APPOINTMENT',
-        user_message_template_key: 'MISSING_APPOINTMENT',
-        data: {
-          intent: 'cancel',
-          appointments: options,
-          client_message:
-            `Nu am găsit o programare la *${hint}*. Care vrei să anulezi?`,
-        },
-        menu: { kind: 'modify', options },
+        includeCancelAll,
+        clientMessage: `Nu am găsit o programare la *${hint}*. Care vrei să anulezi?`,
       });
     }
 
     const pool = resolved.candidates?.length ? resolved.candidates : appointments;
-    const options = appointmentChoiceMenu(pool, business);
-    await setConversationStep({
-      businessId: business.id,
-      rawPhone: recipientPhone,
-      step: CONVERSATION_STEPS.MODIFYING,
-      context: {
-        intent: 'cancel',
-        appointment_ids: pool.map((a) => a.id),
-      },
-      mergeContext: false,
+    const clientMessage = resolved.reason === 'ambiguous'
+      ? 'Am găsit mai multe programări pe intervalul menționat. Care o anulezi?'
+      : (includeCancelAll
+        ? `Ai ${pool.length} programări. Alege una sau anulează-le pe toate.`
+        : null);
+    return askWhichAppointment({
+      business,
+      recipientPhone,
+      appointments: pool,
+      intent: 'cancel',
       requestId,
-    });
-    return handlerResult({
-      status: 'MISSING_INFO',
-      next_required_step: 'CHOOSE_APPOINTMENT',
-      user_message_template_key: 'MISSING_APPOINTMENT',
-      data: {
-        intent: 'cancel',
-        appointments: options,
-        client_message: resolved.reason === 'ambiguous'
-          ? 'Am găsit mai multe programări pe intervalul menționat. Care o anulezi?'
-          : null,
-      },
-      menu: { kind: 'modify', options },
+      includeCancelAll,
+      clientMessage,
     });
   }
 
@@ -1659,6 +1777,13 @@ async function executeCancel({ business, recipientPhone, extract, activeDraft, c
       service: appointment.selected_service,
       slot_start: appointment.selected_slot_start,
       slot_end: appointment.selected_slot_end,
+      last_menu: {
+        kind: 'confirm',
+        options: [
+          { id: MOD_PREFIX.CONFIRM_CANCEL, title: 'Anulează' },
+          { id: MOD_PREFIX.ABORT, title: 'Renunță' },
+        ],
+      },
     },
     mergeContext: false,
     requestId,
@@ -2088,6 +2213,24 @@ async function dispatchExecute({
   if (action === 'confirm') return executeConfirm({ business, recipientPhone, activeDraft: draft, requestId });
   if (action === 'cancel_pending') return executeCancelPending({ business, recipientPhone, requestId });
   if (action === 'confirm_cancel') {
+    if (convState.context_data?.cancel_all) {
+      const ids = Array.isArray(convState.context_data.appointment_ids)
+        ? convState.context_data.appointment_ids
+        : [];
+      const appointments = [];
+      for (const id of ids) {
+        const found = await getDraftBookingById(id, business.id);
+        if (found && found.state === 'confirmed') appointments.push(found);
+      }
+      if (!appointments.length) {
+        return handlerResult({
+          status: 'ERROR',
+          user_message_template_key: 'ERROR_NO_APPOINTMENT',
+          data: { client_message: 'Programările nu au fost găsite.' },
+        });
+      }
+      return executeCancelAllAppointments({ business, recipientPhone, appointments, requestId });
+    }
     const id = extract.appointment_id || convState.context_data?.appointment_id;
     const appointment = id ? await getDraftBookingById(id, business.id) : null;
     if (!appointment) {
@@ -2296,7 +2439,7 @@ async function dispatchExecute({
   if (action === 'reschedule') {
     return executeReschedule({ business, recipientPhone, extract, activeDraft: draft, convState, requestId });
   }
-  if (action === 'cancel') {
+  if (action === 'cancel' || action === 'cancel_all') {
     return executeCancel({ business, recipientPhone, extract, activeDraft: draft, convState, requestId });
   }
   if (action === 'hours') return executeHours(business, lang);

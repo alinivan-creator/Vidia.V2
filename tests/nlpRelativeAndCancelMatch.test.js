@@ -117,6 +117,53 @@ describe('appointment match by slot hints', () => {
     assert.equal(resolved.reason, 'slot_hint');
   });
 
+  it('skips the picker when the client has exactly one booking', () => {
+    const resolved = resolveTargetAppointment(
+      [appts[0]],
+      {},
+      TZ,
+      'cancel',
+    );
+    assert.equal(resolved.appointment?.id, 'a1');
+    assert.equal(resolved.reason, 'single');
+  });
+
+  it('does not guess a generic weekday among multiple bookings', () => {
+    const resolved = resolveTargetAppointment(
+      appts,
+      { dateKey: '2026-08-17' },
+      TZ,
+      'cancel',
+    );
+    assert.equal(resolved.appointment, null);
+    assert.equal(resolved.reason, 'need_choice');
+    assert.equal(resolved.candidates.length, 2);
+  });
+
+  it('does not guess when forceChoice (anulează tot / plural)', () => {
+    const resolved = resolveTargetAppointment(
+      appts,
+      { dateKey: '2026-08-17', timeHHmm: '11:00' },
+      TZ,
+      'cancel',
+      { forceChoice: true },
+    );
+    assert.equal(resolved.appointment, null);
+    assert.equal(resolved.reason, 'need_choice');
+  });
+
+  it('locks the tapped booking_id even among many', () => {
+    const resolved = resolveTargetAppointment(
+      appts,
+      { appointmentId: 'a2' },
+      TZ,
+      'cancel',
+      { forceChoice: true },
+    );
+    assert.equal(resolved.appointment?.id, 'a2');
+    assert.equal(resolved.reason, 'id');
+  });
+
   it('does not loop: not_found for cancel when hint misses', () => {
     const resolved = resolveTargetAppointment(
       appts,
@@ -137,5 +184,46 @@ describe('appointment match by slot hints', () => {
     );
     assert.equal(resolved.reason, 'need_choice');
     assert.equal(resolved.newSlotHints, true);
+  });
+});
+
+describe('cancel-all + appointment list picker', () => {
+  it('detects anulează tot / toate', async () => {
+    const { looksLikeCancelAll, looksLikePluralAppointments } = await import('../src/services/intentTriageService.js');
+    assert.equal(looksLikeCancelAll('Vreau să anulez tot'), true);
+    assert.equal(looksLikeCancelAll('anulează toate programările'), true);
+    assert.equal(looksLikeCancelAll('anulează-le pe toate'), true);
+    assert.equal(looksLikeCancelAll('Vreau să anulez'), false);
+    assert.equal(looksLikePluralAppointments('anulează programările'), true);
+  });
+
+  it('builds WhatsApp-safe titles and optional cancel-all row', async () => {
+    const { buildAppointmentChoiceMenu } = await import('../src/utils/appointmentMatch.js');
+    const { MOD_PREFIX } = await import('../src/services/flowIds.js');
+    const rows = buildAppointmentChoiceMenu(
+      [
+        {
+          id: 'a1',
+          selected_slot_start: '2026-08-17T08:00:00.000Z',
+          selected_service: { name: 'Tuns + spălat + aranjat' },
+        },
+        {
+          id: 'a2',
+          selected_slot_start: '2026-08-21T07:00:00.000Z',
+          selected_service: { name: 'Barba' },
+        },
+      ],
+      TZ,
+      { includeCancelAll: true, apptPrefix: MOD_PREFIX.APPT, cancelAllId: MOD_PREFIX.CANCEL_ALL },
+    );
+    assert.equal(rows.length, 3);
+    for (const row of rows) {
+      assert.ok(row.title.length <= 24, row.title);
+      assert.ok((row.description || '').length <= 72);
+    }
+    assert.equal(rows[0].id, `${MOD_PREFIX.APPT}a1`);
+    assert.match(rows[0].description, /Tuns/);
+    assert.equal(rows[2].id, MOD_PREFIX.CANCEL_ALL);
+    assert.match(rows[2].title, /toate/i);
   });
 });

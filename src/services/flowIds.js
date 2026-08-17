@@ -15,6 +15,7 @@ export const BOOKING_PREFIXES = {
 
 export const MOD_PREFIX = {
   APPT: 'mod_appt_',
+  CANCEL_ALL: 'mod_cancel_all',
   CONFIRM_CANCEL: 'mod_confirm_cancel',
   ABORT: 'mod_abort',
 };

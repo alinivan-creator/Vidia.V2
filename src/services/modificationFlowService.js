@@ -14,7 +14,8 @@ import {
   resetConversationState,
 } from '../db/conversationStateService.js';
 import { getAvailableSlots, isSlotAvailable } from '../db/cacheService.js';
-import { formatSlotLabel, decodeSlotId, slotNumberEmoji } from '../utils/datetime.js';
+import { formatSlotLabel, decodeSlotId } from '../utils/datetime.js';
+import { buildAppointmentChoiceMenu } from '../utils/appointmentMatch.js';
 import {
   assertWithinWorkingHours,
   durationMissingClientMessage,
@@ -37,21 +38,17 @@ import {
   sendTextMessage,
   sendMessageWithUrlButton,
   sendInteractiveButtons,
+  sendInteractiveList,
   rememberMenuOptions,
   simulateHumanDelay,
 } from './whatsappService.js';
 import { detectModificationIntent } from './intentTriageService.js';
+import { MOD_PREFIX } from './flowIds.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 /** @typedef {import('../db/conversationStateService.js').ConversationState} ConversationState */
 
-export { detectModificationIntent };
-
-export const MOD_PREFIX = {
-  APPT: 'mod_appt_',
-  CONFIRM_CANCEL: 'mod_confirm_cancel',
-  ABORT: 'mod_abort',
-};
+export { detectModificationIntent, MOD_PREFIX };
 
 /**
  * Employee + calendar for a confirmed appointment (multi-staff safe).
@@ -118,6 +115,8 @@ async function cancelConfirmedAppointment({
   recipientPhone,
   appointment,
   requestId = null,
+  notify = true,
+  resetState = true,
 }) {
   const { calendarId } = await resolveAppointmentStaff(business, appointment);
 
@@ -181,19 +180,23 @@ async function cancelConfirmedAppointment({
     requestId,
   });
 
-  await simulateHumanDelay({ business, recipientPhone, requestId });
-  await sendTextMessage({
-    business,
-    recipientPhone,
-    requestId,
-    text: 'Programarea ta a fost anulată cu succes. Te așteptăm cu drag altă dată!',
-  });
+  if (notify) {
+    await simulateHumanDelay({ business, recipientPhone, requestId });
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: 'Programarea ta a fost anulată cu succes. Te așteptăm cu drag altă dată!',
+    });
+  }
 
-  await resetConversationState({
-    businessId: business.id,
-    rawPhone: recipientPhone,
-    requestId,
-  });
+  if (resetState) {
+    await resetConversationState({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      requestId,
+    });
+  }
   return true;
 }
 
@@ -283,44 +286,44 @@ export async function beginModificationFlow({
     });
   }
 
-  const options = appointments.map((a) => {
-    const service = /** @type {{ name?: string }} */ (a.selected_service ?? {});
-    const when = a.selected_slot_start
-      ? formatSlotLabel(new Date(a.selected_slot_start), business.timezone)
-      : '—';
-    return {
-      id: `${MOD_PREFIX.APPT}${a.id}`,
-      title: `${service.name || 'Programare'} — ${when}`,
-    };
+  const options = buildAppointmentChoiceMenu(appointments, business.timezone, {
+    apptPrefix: MOD_PREFIX.APPT,
+    cancelAllId: MOD_PREFIX.CANCEL_ALL,
+    includeCancelAll: intent === 'cancel',
   });
-
-  await rememberMenuOptions(business.id, recipientPhone, options, 'modify');
-
-  const lines = [
-    intent === 'cancel'
-      ? 'Care programare vrei să anulezi?'
-      : 'Care programare vrei să reprogramezi?',
-    '',
-  ];
-  options.forEach((opt, i) => {
-    lines.push(`${slotNumberEmoji(i)} ${opt.title}`);
-  });
-  lines.push('', 'Scrie *numărul* sau *numele* programării.');
 
   await setConversationStep({
     businessId: business.id,
     rawPhone: recipientPhone,
     step: CONVERSATION_STEPS.MODIFYING,
-    context: { intent, appointment_ids: appointments.map((a) => a.id) },
+    context: {
+      intent,
+      appointment_ids: appointments.map((a) => a.id),
+      last_menu: { kind: 'modify', options },
+    },
     mergeContext: false,
     requestId,
   });
 
-  await sendTextMessage({
+  await sendInteractiveList({
     business,
     recipientPhone,
     requestId,
-    text: lines.join('\n'),
+    bodyText: intent === 'cancel'
+      ? 'Care programare vrei să anulezi?'
+      : 'Care programare vrei să reprogramezi?',
+    buttonText: 'Programările tale',
+    sections: [{
+      title: 'Programări',
+      rows: options.map((opt) => ({
+        id: opt.id,
+        title: opt.title,
+        description: opt.description || 'Programare activă',
+      })),
+    }],
+    footerText: business.name,
+    menuKind: 'modify',
+    rememberOptions: options,
   });
   return true;
 }
@@ -519,6 +522,46 @@ export async function handleModificationInteractive({
     return finalizeCancel({ business, recipientPhone, convState, requestId });
   }
 
+  if (replyId === MOD_PREFIX.CANCEL_ALL) {
+    const ids = Array.isArray(convState.context_data?.appointment_ids)
+      ? convState.context_data.appointment_ids.filter((id) => typeof id === 'string')
+      : [];
+    if (!ids.length) {
+      await sendTextMessage({
+        business,
+        recipientPhone,
+        requestId,
+        text: 'Nu am găsit programări de anulat.',
+      });
+      return true;
+    }
+    await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: CONVERSATION_STEPS.CONFIRMING_CANCEL,
+      context: {
+        intent: 'cancel',
+        cancel_all: true,
+        appointment_ids: ids,
+      },
+      mergeContext: false,
+      requestId,
+    });
+    await sendInteractiveButtons({
+      business,
+      recipientPhone,
+      requestId,
+      bodyText: `Anulezi toate cele ${ids.length} programări?`,
+      buttons: [
+        { id: MOD_PREFIX.CONFIRM_CANCEL, title: 'Anulează' },
+        { id: MOD_PREFIX.ABORT, title: 'Renunță' },
+      ],
+      footerText: business.name,
+      menuKind: 'confirm',
+    });
+    return true;
+  }
+
   if (replyId.startsWith(MOD_PREFIX.APPT)) {
     const appointmentId = replyId.slice(MOD_PREFIX.APPT.length);
     const appointment = await getDraftBookingById(appointmentId, business.id);
@@ -618,6 +661,41 @@ export async function handleModificationText({
  * @returns {Promise<boolean>}
  */
 async function finalizeCancel({ business, recipientPhone, convState, requestId }) {
+  if (convState.context_data?.cancel_all) {
+    const ids = Array.isArray(convState.context_data.appointment_ids)
+      ? convState.context_data.appointment_ids.filter((id) => typeof id === 'string')
+      : [];
+    let cancelled = 0;
+    for (const id of ids) {
+      const appointment = await getDraftBookingById(id, business.id);
+      if (!appointment) continue;
+      await cancelConfirmedAppointment({
+        business,
+        recipientPhone,
+        appointment,
+        requestId,
+        notify: false,
+        resetState: false,
+      });
+      cancelled += 1;
+    }
+    await resetConversationState({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      requestId,
+    });
+    await simulateHumanDelay({ business, recipientPhone, requestId });
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: cancelled
+        ? `Am anulat toate cele ${cancelled} programări. Te așteptăm cu drag altă dată!`
+        : 'Nu am găsit programări de anulat.',
+    });
+    return true;
+  }
+
   const appointmentId = /** @type {string | undefined} */ (convState.context_data?.appointment_id);
   if (!appointmentId) {
     await resetConversationState({

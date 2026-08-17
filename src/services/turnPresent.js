@@ -110,6 +110,12 @@ export function renderHandlerResult(business, result) {
       );
     }
     case 'CONFIRMATION_CANCELLED':
+      if (typeof d.client_message === 'string' && d.client_message.trim()) {
+        return waJoin(
+          waTitle('Programări anulate'),
+          d.client_message.trim(),
+        );
+      }
       return waJoin(
         waTitle('Programare anulată'),
         'Te așteptăm oricând dorești o nouă programare.',
@@ -190,6 +196,9 @@ export function renderHandlerResult(business, result) {
       return waJoin(waTitle('Programări'), custom);
     }
     case 'CONFIRM_CANCEL':
+      if (typeof d.client_message === 'string' && d.client_message.trim()) {
+        return waJoin(waTitle('Confirmi anularea?'), '', d.client_message.trim());
+      }
       return waJoin(
         waTitle('Confirmi anularea?'),
         '',
@@ -359,7 +368,7 @@ async function polishWithAi(business, result, rendered) {
  * @param {string | null} [params.requestId]
  */
 export async function presentTurn({ business, recipientPhone, result, requestId = null }) {
-  const gridKinds = new Set(['day_grid', 'time_grid', 'confirm', 'clarify', 'entry', 'resume', 'service', 'unknown_service']);
+  const gridKinds = new Set(['day_grid', 'time_grid', 'confirm', 'clarify', 'entry', 'resume', 'service', 'unknown_service', 'modify']);
   if (result.menu?.options?.length && gridKinds.has(String(result.menu.kind || ''))) {
     // Remembered by sendInteractiveButtons (full catalog when provided).
   } else if (result.status === 'SUCCESS' && !result.next_required_step) {
@@ -372,10 +381,12 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
     || result.menu?.kind === 'time_grid'
     || result.menu?.kind === 'service'
     || result.menu?.kind === 'unknown_service'
+    || result.menu?.kind === 'modify'
     || result.user_message_template_key === 'ASK_DATE'
     || result.user_message_template_key === 'ASK_TIME'
     || result.user_message_template_key === 'MISSING_SLOT'
     || result.user_message_template_key === 'MISSING_SERVICE'
+    || result.user_message_template_key === 'MISSING_APPOINTMENT'
     || result.user_message_template_key === 'UNKNOWN_SERVICE'
     || result.user_message_template_key === 'CONTACT';
   const polished = skipPolish ? null : await polishWithAi(business, result, rendered);
@@ -477,6 +488,7 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
     'ASK_TIME',
     'MISSING_SLOT',
     'MISSING_SERVICE',
+    'MISSING_APPOINTMENT',
     'UNKNOWN_SERVICE',
     'MENU',
   ]);
@@ -501,13 +513,14 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
     const kind = String(result.menu.kind || '');
     const wantsList = kind === 'day_grid'
       || kind === 'service'
+      || kind === 'modify'
       || (kind === 'time_grid' && d.ui === 'list_picker')
       || (kind === 'time_grid' && result.menu.options.length > 3);
 
     if (wantsList) {
       const buttonLabel = typeof d.list_button === 'string' && d.list_button
         ? d.list_button
-        : (kind === 'day_grid' ? 'Zile disponibile' : kind === 'service' ? 'Servicii' : 'Ore libere');
+        : (kind === 'day_grid' ? 'Zile disponibile' : kind === 'service' ? 'Servicii' : kind === 'modify' ? 'Programările tale' : 'Ore libere');
       await sendInteractiveList({
         business,
         recipientPhone,
@@ -515,11 +528,11 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
         bodyText: text,
         buttonText: buttonLabel,
         sections: [{
-          title: kind === 'day_grid' ? 'Zile' : kind === 'service' ? 'Servicii' : 'Ore',
+          title: kind === 'day_grid' ? 'Zile' : kind === 'service' ? 'Servicii' : kind === 'modify' ? 'Programări' : 'Ore',
           rows: result.menu.options.map((opt) => ({
             id: opt.id,
             title: opt.title,
-            description: opt.description || (kind === 'day_grid' ? 'Disponibil' : kind === 'service' ? 'Din catalog' : 'Liber'),
+            description: opt.description || (kind === 'day_grid' ? 'Disponibil' : kind === 'service' ? 'Din catalog' : kind === 'modify' ? 'Programare activă' : 'Liber'),
           })),
         }],
         footerText: business.name,
