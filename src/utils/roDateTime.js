@@ -1,4 +1,4 @@
-import { formatDateKey, localToUtc, getWeekdayInTimezone, addCalendarDays } from './datetime.js';
+import { formatDateKey, localToUtc, getWeekdayInTimezone, addCalendarDays, formatTime } from './datetime.js';
 
 const WEEKDAY_MAP = {
   duminica: 0,
@@ -284,11 +284,31 @@ function parseDayOfMonth(normalized, timezone, now) {
 
 function parseRelativeDate(normalized, timezone, now) {
   const today = formatDateKey(now, timezone);
-  if (/\bpeste\s+2\s+zile\b/.test(normalized) || /\bpoimaine\b/.test(normalized) || /\bday after tomorrow\b/.test(normalized)) {
-    return addCalendarDays(today, 2);
+
+  // "peste N săptămâni"
+  const weeks = normalized.match(/\bpeste\s+(\d{1,2})\s+saptaman/);
+  if (weeks) {
+    return addCalendarDays(today, Number(weeks[1]) * 7);
+  }
+  // "de azi într-o săptămână" / "peste o săptămână" — before bare "azi"
+  if (
+    /\b(?:peste\s+(?:o|1)\s+saptaman\w*|de\s+azi\s+intr-o\s+saptaman\w*|intr-o\s+saptaman\w*|in\s+o\s+saptaman\w*)\b/.test(
+      normalized,
+    )
+  ) {
+    return addCalendarDays(today, 7);
+  }
+
+  // "peste N zile" (arbitrary N)
+  const nDays = normalized.match(/\bpeste\s+(\d{1,2})\s+zile\b/);
+  if (nDays) {
+    return addCalendarDays(today, Number(nDays[1]));
   }
   if (/\bpeste\s+(?:o|1)\s+zi\b/.test(normalized) || /\bmaine\b/.test(normalized) || /\btomorrow\b/.test(normalized)) {
     return addCalendarDays(today, 1);
+  }
+  if (/\bpoimaine\b/.test(normalized) || /\bday after tomorrow\b/.test(normalized)) {
+    return addCalendarDays(today, 2);
   }
   if (/\balaltaieri\b/.test(normalized) || /\bday before yesterday\b/.test(normalized)) {
     return addCalendarDays(today, -2);
@@ -299,15 +319,47 @@ function parseRelativeDate(normalized, timezone, now) {
   const dayName = Object.keys(WEEKDAY_MAP)
     .sort((a, b) => b.length - a.length)
     .find((d) => new RegExp(`\\b${d}\\b`).test(normalized));
-  if (!dayName) return null;
+  if (!dayName) {
+    if (/\bnext\s+week\b/.test(normalized)) return addCalendarDays(today, 7);
+    return null;
+  }
 
   const want = WEEKDAY_MAP[/** @type {keyof typeof WEEKDAY_MAP} */ (dayName)];
   const current = getWeekdayInTimezone(now, timezone);
   if (current == null) return null;
   let add = (want - current + 7) % 7;
-  // Same weekday = today first. If the clock time already passed, bump later.
-  if (add === 0 && /\b(azi|astazi|today)\b/.test(normalized)) add = 0;
+  const nextWeek =
+    /\bsaptaman(?:a|ii)\s+viitoare\b/.test(normalized)
+    || /\bnext\s+week\b/.test(normalized);
+  if (nextWeek) {
+    add = add === 0 ? 7 : add + 7;
+  }
   return addCalendarDays(today, add);
+}
+
+/**
+ * "peste 2 ore" / "peste 30 minute" → absolute date+time from now.
+ * @returns {{ dateKey: string, timeHHmm: string } | null}
+ */
+export function parseRelativeDurationFromNow(normalized, timezone, now = new Date()) {
+  const n = normalize(normalized);
+  const hours = n.match(/\bpeste\s+(\d{1,2})\s+(?:de\s+)?(?:ore|ora)\b/);
+  if (hours) {
+    const then = new Date(now.getTime() + Number(hours[1]) * 3600_000);
+    return {
+      dateKey: formatDateKey(then, timezone),
+      timeHHmm: formatTime(then, timezone),
+    };
+  }
+  const mins = n.match(/\bpeste\s+(\d{1,3})\s+(?:de\s+)?(?:minute|minut|min)\b/);
+  if (mins) {
+    const then = new Date(now.getTime() + Number(mins[1]) * 60_000);
+    return {
+      dateKey: formatDateKey(then, timezone),
+      timeHHmm: formatTime(then, timezone),
+    };
+  }
+  return null;
 }
 
 function parseTimeFromText(normalized, meridian, dayHours = null) {
@@ -396,7 +448,12 @@ function stripResolvedDateTokens(normalized) {
   rest = rest.replace(new RegExp(`\\b\\d{1,2}\\s+(${monthNames})\\.?\\s*(?:\\d{4})?\\b`, 'g'), ' ');
   rest = rest.replace(/\b\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?\b/g, ' ');
   rest = rest.replace(/\b20\d{2}-\d{2}-\d{2}\b/g, ' ');
-  rest = rest.replace(/\bpeste\s+(?:o|1|2)\s+zile?\b/g, ' ');
+  rest = rest.replace(/\bpeste\s+\d{1,2}\s+saptaman\w*/g, ' ');
+  rest = rest.replace(/\b(?:de\s+azi\s+intr-o\s+saptaman|intr-o\s+saptaman|in\s+o\s+saptaman|next\s+week|saptaman(?:a|ii)\s+viitoare)\b/g, ' ');
+  rest = rest.replace(/\bpeste\s+\d{1,2}\s+zile?\b/g, ' ');
+  rest = rest.replace(/\bpeste\s+(?:o|1)\s+zi\b/g, ' ');
+  rest = rest.replace(/\bpeste\s+\d{1,2}\s+(?:de\s+)?(?:ore|ora)\b/g, ' ');
+  rest = rest.replace(/\bpeste\s+\d{1,3}\s+(?:de\s+)?(?:minute|minut|min)\b/g, ' ');
   return rest.replace(/\s+/g, ' ').trim();
 }
 
@@ -417,14 +474,17 @@ export function parseRomanianDateTimeParts(text, timezone, now = new Date(), opt
   }
 
   const meridian = detectMeridian(normalized);
+  const relativeDuration = parseRelativeDurationFromNow(normalized, timezone, now);
   const calendar = extractCalendarDate(normalized, timezone, now);
-  let dateKey = calendar.dateKey
+  let dateKey = relativeDuration?.dateKey
+    || calendar.dateKey
     || parseRelativeDate(normalized, timezone, now)
     || parseDayOfMonth(calendar.rest, timezone, now)
     || parseDayOfMonth(normalized, timezone, now);
   const dayHours = options.dayHours ?? null;
   const remainder = stripResolvedDateTokens(calendar.rest);
-  const timeHHmm = parseTimeFromText(remainder, meridian, dayHours)
+  const timeHHmm = relativeDuration?.timeHHmm
+    || parseTimeFromText(remainder, meridian, dayHours)
     || parseTimeFromText(calendar.rest, meridian, dayHours)
     || parseTimeFromText(normalized, meridian, dayHours);
 

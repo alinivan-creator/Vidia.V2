@@ -201,10 +201,10 @@ export function renderHandlerResult(business, result) {
     }
     case 'MISSING_APPOINTMENT': {
       const intent = d.intent === 'cancel' ? 'anulezi' : 'reprogramezi';
-      return waJoin(
-        waTitle('Programări'),
-        `Care programare vrei să ${intent}?${menuBlock}`,
-      );
+      const custom = typeof d.client_message === 'string' && d.client_message.trim()
+        ? d.client_message.trim()
+        : `Care programare vrei să ${intent}?`;
+      return waJoin(waTitle('Programări'), custom);
     }
     case 'CONFIRM_CANCEL':
       return waJoin(

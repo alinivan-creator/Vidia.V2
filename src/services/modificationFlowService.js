@@ -14,7 +14,7 @@ import {
   resetConversationState,
 } from '../db/conversationStateService.js';
 import { getAvailableSlots, isSlotAvailable } from '../db/cacheService.js';
-import { formatSlotLabel, decodeSlotId } from '../utils/datetime.js';
+import { formatSlotLabel, decodeSlotId, slotNumberEmoji } from '../utils/datetime.js';
 import {
   assertWithinWorkingHours,
   durationMissingClientMessage,

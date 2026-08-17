@@ -85,6 +85,7 @@ import {
   getBookingWait,
   timeFromHourNumber,
 } from './bookingWaitState.js';
+import { resolveTargetAppointment } from '../utils/appointmentMatch.js';
 import {
   MACHINE_ACTIONS,
   hydrateCatalogService,
@@ -326,6 +327,38 @@ async function listActionableAppointments(business, recipientPhone, requestId) {
     });
   }
   return actionable;
+}
+
+/**
+ * Pick the appointment the client means (id / single / date-time NLP hint).
+ * @param {object[]} appointments
+ * @param {TurnExtract} extract
+ * @param {import('../db/conversationStateService.js').ConversationState} convState
+ * @param {Business} business
+ * @param {'cancel' | 'reschedule'} mode
+ */
+function resolveAppointmentForModify(appointments, extract, convState, business, mode) {
+  return resolveTargetAppointment(
+    appointments,
+    {
+      appointmentId: extract.appointment_id || convState.context_data?.appointment_id || null,
+      dateKey: extract.date_text,
+      timeHHmm: extract.time_text,
+      serviceName: extract.service_name,
+    },
+    business.timezone || 'Europe/Bucharest',
+    mode,
+  );
+}
+
+function appointmentChoiceMenu(appointments, business) {
+  return appointments.map((a) => {
+    const service = /** @type {{ name?: string }} */ (a.selected_service ?? {});
+    const when = a.selected_slot_start
+      ? formatSlotLabel(new Date(a.selected_slot_start), business.timezone)
+      : '—';
+    return { id: `${MOD_PREFIX.APPT}${a.id}`, title: `${service.name || 'Programare'} — ${when}` };
+  });
 }
 
 async function resolveStaff(business, draftOrAppt) {
@@ -1258,24 +1291,26 @@ async function executeReschedule({
     });
   }
 
-  let appointment = null;
-  const ctxId = extract.appointment_id || convState.context_data?.appointment_id;
-  if (ctxId) appointment = appointments.find((a) => a.id === ctxId) || await getDraftBookingById(ctxId, business.id);
-  if (!appointment && appointments.length === 1) appointment = appointments[0];
+  const resolved = resolveAppointmentForModify(appointments, extract, convState, business, 'reschedule');
+  let appointment = resolved.appointment;
+  if (resolved.reason === 'id' && appointment && !appointments.find((a) => a.id === appointment.id)) {
+    appointment = await getDraftBookingById(appointment.id, business.id);
+  }
 
   if (!appointment) {
-    const options = appointments.map((a) => {
-      const service = /** @type {{ name?: string }} */ (a.selected_service ?? {});
-      const when = a.selected_slot_start
-        ? formatSlotLabel(new Date(a.selected_slot_start), business.timezone)
-        : '—';
-      return { id: `${MOD_PREFIX.APPT}${a.id}`, title: `${service.name || 'Programare'} — ${when}` };
-    });
+    const pool = resolved.candidates?.length ? resolved.candidates : appointments;
+    const options = appointmentChoiceMenu(pool, business);
     await setConversationStep({
       businessId: business.id,
       rawPhone: recipientPhone,
       step: CONVERSATION_STEPS.MODIFYING,
-      context: { intent: 'reschedule', appointment_ids: appointments.map((a) => a.id) },
+      context: {
+        intent: 'reschedule',
+        appointment_ids: pool.map((a) => a.id),
+        // Keep new-slot hints so the next turn can apply them after choice.
+        pending_date_text: extract.date_text || null,
+        pending_time_text: extract.time_text || null,
+      },
       mergeContext: false,
       requestId,
     });
@@ -1283,21 +1318,43 @@ async function executeReschedule({
       status: 'MISSING_INFO',
       next_required_step: 'CHOOSE_APPOINTMENT',
       user_message_template_key: 'MISSING_APPOINTMENT',
-      data: { intent: 'reschedule', appointments: options },
+      data: {
+        intent: 'reschedule',
+        appointments: options,
+        client_message: resolved.reason === 'ambiguous'
+          ? 'Am găsit mai multe programări pe intervalul menționat. Care o mutăm?'
+          : null,
+      },
       menu: { kind: 'modify', options },
     });
   }
 
-  const slotStart = (extract.date_text && extract.time_text)
-    ? localToUtc(extract.date_text, extract.time_text, business.timezone)
-    : extract.datetime
-      || (extract.slot_id ? decodeSlotId(extract.slot_id, business.timezone) : null);
-  if (slotStart) {
+  // slot_hint = date/time named the existing booking; otherwise date/time is the NEW slot.
+  let applyStart = null;
+  if (resolved.reason !== 'slot_hint') {
+    applyStart = (extract.date_text && extract.time_text)
+      ? localToUtc(extract.date_text, extract.time_text, business.timezone)
+      : extract.datetime
+        || (extract.slot_id ? decodeSlotId(extract.slot_id, business.timezone) : null);
+    if (!applyStart) {
+      const pendingDate = typeof convState.context_data?.pending_date_text === 'string'
+        ? convState.context_data.pending_date_text
+        : null;
+      const pendingTime = typeof convState.context_data?.pending_time_text === 'string'
+        ? convState.context_data.pending_time_text
+        : null;
+      if (pendingDate && pendingTime) {
+        applyStart = localToUtc(pendingDate, pendingTime, business.timezone);
+      }
+    }
+  }
+
+  if (applyStart) {
     return applyReschedule({
       business,
       recipientPhone,
       appointment,
-      slotStart,
+      slotStart: applyStart,
       convState,
       requestId,
     });
@@ -1310,7 +1367,7 @@ async function executeReschedule({
     draft: appointment,
     service: appointment.selected_service,
     employeeId,
-    dateKey: extract.date_text,
+    dateKey: resolved.reason === 'slot_hint' ? null : extract.date_text,
     requestId,
     reasonKey: 'MISSING_SLOT',
     conversationStep: CONVERSATION_STEPS.RESCHEDULING,
@@ -1340,24 +1397,54 @@ async function executeCancel({ business, recipientPhone, extract, activeDraft, c
     });
   }
 
-  let appointment = null;
-  const ctxId = extract.appointment_id || convState.context_data?.appointment_id;
-  if (ctxId) appointment = appointments.find((a) => a.id === ctxId) || await getDraftBookingById(ctxId, business.id);
-  if (!appointment && appointments.length === 1) appointment = appointments[0];
+  const resolved = resolveAppointmentForModify(appointments, extract, convState, business, 'cancel');
+  let appointment = resolved.appointment;
+  if (resolved.reason === 'id' && appointment && !appointments.find((a) => a.id === appointment.id)) {
+    appointment = await getDraftBookingById(appointment.id, business.id);
+  }
 
   if (!appointment) {
-    const options = appointments.map((a) => {
-      const service = /** @type {{ name?: string }} */ (a.selected_service ?? {});
-      const when = a.selected_slot_start
-        ? formatSlotLabel(new Date(a.selected_slot_start), business.timezone)
-        : '—';
-      return { id: `${MOD_PREFIX.APPT}${a.id}`, title: `${service.name || 'Programare'} — ${when}` };
-    });
+    if (resolved.reason === 'not_found' && (extract.date_text || extract.time_text)) {
+      const hint = [
+        extract.date_text,
+        extract.time_text,
+      ].filter(Boolean).join(' ');
+      const options = appointmentChoiceMenu(appointments, business);
+      await setConversationStep({
+        businessId: business.id,
+        rawPhone: recipientPhone,
+        step: CONVERSATION_STEPS.MODIFYING,
+        context: {
+          intent: 'cancel',
+          appointment_ids: appointments.map((a) => a.id),
+        },
+        mergeContext: false,
+        requestId,
+      });
+      return handlerResult({
+        status: 'MISSING_INFO',
+        next_required_step: 'CHOOSE_APPOINTMENT',
+        user_message_template_key: 'MISSING_APPOINTMENT',
+        data: {
+          intent: 'cancel',
+          appointments: options,
+          client_message:
+            `Nu am găsit o programare la *${hint}*. Care vrei să anulezi?`,
+        },
+        menu: { kind: 'modify', options },
+      });
+    }
+
+    const pool = resolved.candidates?.length ? resolved.candidates : appointments;
+    const options = appointmentChoiceMenu(pool, business);
     await setConversationStep({
       businessId: business.id,
       rawPhone: recipientPhone,
       step: CONVERSATION_STEPS.MODIFYING,
-      context: { intent: 'cancel', appointment_ids: appointments.map((a) => a.id) },
+      context: {
+        intent: 'cancel',
+        appointment_ids: pool.map((a) => a.id),
+      },
       mergeContext: false,
       requestId,
     });
@@ -1365,7 +1452,13 @@ async function executeCancel({ business, recipientPhone, extract, activeDraft, c
       status: 'MISSING_INFO',
       next_required_step: 'CHOOSE_APPOINTMENT',
       user_message_template_key: 'MISSING_APPOINTMENT',
-      data: { intent: 'cancel', appointments: options },
+      data: {
+        intent: 'cancel',
+        appointments: options,
+        client_message: resolved.reason === 'ambiguous'
+          ? 'Am găsit mai multe programări pe intervalul menționat. Care o anulezi?'
+          : null,
+      },
       menu: { kind: 'modify', options },
     });
   }
