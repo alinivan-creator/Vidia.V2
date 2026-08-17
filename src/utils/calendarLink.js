@@ -156,19 +156,23 @@ export function buildIcsDownloadUrl({ baseUrl, title, startIso, endIso, descript
 }
 
 /**
- * Prefer hosted .ics (universal / Apple) when PUBLIC_WEBHOOK_BASE_URL is set;
- * otherwise Google Calendar template URL.
+ * WhatsApp in-app browser shows hosted .ics as raw text — use Google Calendar
+ * TEMPLATE URL so the tap opens the event (title, dates, location) directly.
+ * Hosted .ics remains available via /calendar/event.ics for downloads.
  * @param {CalendarEventInput} event
  * @returns {{ url: string; kind: 'ics' | 'google' }}
  */
 export function buildAddToCalendarLink(event) {
+  const google = buildGoogleCalendarUrl(event);
+  if (google) return { url: google, kind: 'google' };
+
   const baseUrl = googleEnv.webhookBaseUrl;
   if (baseUrl) {
     const icsUrl = buildIcsDownloadUrl({ baseUrl, ...event });
     if (icsUrl) return { url: icsUrl, kind: 'ics' };
   }
 
-  return { url: buildGoogleCalendarUrl(event), kind: 'google' };
+  return { url: '', kind: 'google' };
 }
 
 /** Label text inside markdown brackets (no surrounding []). */

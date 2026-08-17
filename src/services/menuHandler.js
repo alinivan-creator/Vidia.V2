@@ -6,7 +6,7 @@ import { getActiveDraftBooking } from '../db/draftBookingService.js';
 import { generateAiReply, buildInfoButtonPrompt } from './aiService.js';
 import { rememberOfferFromAssistant } from './pendingOfferService.js';
 import { formatContactMessage } from './contactService.js';
-import { buildAiTransparencyWelcome, buildBusinessMapsLink } from '../utils/businessMessages.js';
+import { buildAiTransparencyWelcome, buildContactLinkButtons } from '../utils/businessMessages.js';
 import {
   sendInteractiveButtons,
   sendTextMessage,
@@ -251,16 +251,18 @@ export async function handleInfoAction({
 export async function handleContactAction({ business, recipientPhone, requestId = null }) {
   await simulateHumanDelay({ business, recipientPhone, requestId });
 
-  const maps = buildBusinessMapsLink(business);
   const body = formatContactMessage(business);
-  if (maps?.url) {
+  const buttons = buildContactLinkButtons(business);
+  const [first, ...rest] = buttons;
+  if (first?.url) {
     await sendMessageWithUrlButton({
       business,
       recipientPhone,
       requestId,
       text: body,
-      buttonTitle: 'Vezi locația',
-      buttonUrl: maps.url,
+      buttonTitle: first.title,
+      buttonUrl: first.url,
+      extraButtons: rest,
     });
     return;
   }

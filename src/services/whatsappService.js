@@ -511,12 +511,25 @@ export async function sendMessageWithUrlButton({
   buttonUrl,
   buttonTitle = 'Adaugă în calendar',
   requestId = null,
+  /** Extra URL buttons (Twilio CTA allows max 2 total). */
+  extraButtons = [],
 }) {
   const title = String(buttonTitle || 'Adaugă în calendar').slice(0, 20);
   const url = String(buttonUrl || '').trim();
   const bodyText = String(text || '').trim();
 
-  if (!url) {
+  const actions = [
+    url ? { type: 'URL', title, url } : null,
+    ...(Array.isArray(extraButtons) ? extraButtons : []).map((b) => ({
+      type: 'URL',
+      title: String(b.title || 'Link').slice(0, 20),
+      url: String(b.url || '').trim(),
+    })),
+  ]
+    .filter((a) => a && a.url)
+    .slice(0, 2);
+
+  if (!actions.length) {
     return sendTextMessage({ business, recipientPhone, text: bodyText, requestId });
   }
 
@@ -524,8 +537,7 @@ export async function sendMessageWithUrlButton({
   if (mockMode) {
     console.log('[vidia-v2][whatsapp-mock][twilio-cta]', {
       businessId: business.id,
-      buttonTitle: title,
-      buttonUrl: url.slice(0, 120),
+      actions: actions.map((a) => ({ title: a.title, url: String(a.url).slice(0, 120) })),
       preview: bodyText.slice(0, 200),
     });
     return { ok: true, data: { mocked: true, cta: true }, status: 200 };
@@ -558,13 +570,7 @@ export async function sendMessageWithUrlButton({
       types: {
         'twilio/call-to-action': {
           body: bodyText,
-          actions: [
-            {
-              type: 'URL',
-              title,
-              url,
-            },
-          ],
+          actions,
         },
       },
     });
@@ -601,8 +607,9 @@ export async function sendMessageWithUrlButton({
     });
 
     // Fallback: single contiguous markdown link (no bare URL dump, no duplicate CTA text)
-    const calendarMd = `[${CALENDAR_ANCHOR_TEXT}](${url})`;
-    const withAnchor = bodyText.includes(url)
+    const first = actions[0];
+    const calendarMd = `[${first.title || CALENDAR_ANCHOR_TEXT}](${first.url})`;
+    const withAnchor = bodyText.includes(first.url)
       ? bodyText
       : `${bodyText}\n\n${calendarMd}`;
 

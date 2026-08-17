@@ -72,7 +72,7 @@ import {
 import { detectClientLanguage } from '../utils/clientLanguage.js';
 import { getPendingTtlMinutes } from '../config/conversationConfig.js';
 import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
-import { buildBusinessMapsLink } from '../utils/businessMessages.js';
+import { buildContactLinkButtons } from '../utils/businessMessages.js';
 import { waServiceMeta } from '../utils/waCopy.js';
 import { getBusinessContactInfo } from './contactService.js';
 import { createCallbackRequest } from '../db/callbackRequestService.js';
@@ -1732,7 +1732,7 @@ async function executeHoursAndServices(business, lang = 'ro') {
 }
 
 async function executeContact(business) {
-  const maps = buildBusinessMapsLink(business);
+  const linkButtons = buildContactLinkButtons(business);
   return handlerResult({
     status: 'SUCCESS',
     action_performed: 'CONTACT_LOOKUP',
@@ -1741,9 +1741,7 @@ async function executeContact(business) {
     data: {
       contact: getBusinessContactInfo(business),
       business_name: business.name,
-      maps_cta: maps?.url
-        ? { url: maps.url, title: 'Vezi locația' }
-        : null,
+      link_ctas: linkButtons,
     },
   });
 }

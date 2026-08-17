@@ -20,17 +20,16 @@ import { WA_DIVIDER, waField, waJoin, waTitle } from '../utils/waCopy.js';
  * @returns {BusinessContactInfo}
  */
 export function getBusinessContactInfo(business) {
-  const contact = /** @type {Record<string, string | undefined>} */ (
-    business.booking_settings?.contact ?? {}
-  );
+  const settings = /** @type {Record<string, unknown>} */ (business.booking_settings ?? {});
+  const contact = /** @type {Record<string, string | undefined>} */ (settings.contact ?? {});
 
   return {
     phone: contact.phone ?? null,
     email: contact.email ?? null,
     address: contact.address ?? null,
     hours: contact.hours ?? null,
-    mapsUrl: contact.maps_url ?? contact.mapsUrl ?? null,
-    website: contact.website ?? null,
+    mapsUrl: contact.maps_url ?? contact.mapsUrl ?? (typeof settings.maps_url === 'string' ? settings.maps_url : null),
+    website: contact.website ?? (typeof settings.website === 'string' ? settings.website : null),
   };
 }
 
@@ -55,7 +54,6 @@ export function formatContactMessage(business) {
     waField('Telefon', info.phone),
     waField('Email', info.email),
     waField('Adresă', info.address),
-    waField('Website', info.website),
   ];
 
   if (structuredHours) {

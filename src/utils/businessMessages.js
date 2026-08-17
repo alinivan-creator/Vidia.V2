@@ -94,6 +94,52 @@ export function buildAiTransparencyWelcome(business) {
 }
 
 /**
+ * HTTPS URL suitable for WhatsApp CTA buttons (no javascript:, no bare host).
+ * @param {string | null | undefined} raw
+ * @returns {string | null}
+ */
+export function normalizeHttpUrl(raw) {
+  const trimmed = String(raw || '').trim().replace(/\s+/g, '');
+  if (!trimmed) return null;
+  const withProto = /^[a-z][a-z0-9+.-]*:/i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed.replace(/^\/\//, '')}`;
+  try {
+    const u = new URL(withProto);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Compact URL buttons from Admin contact fields (maps + website). Max 2.
+ * URLs stay off the message body so WhatsApp does not unfurl a huge preview.
+ *
+ * @param {Business} business
+ * @returns {{ title: string, url: string }[]}
+ */
+export function buildContactLinkButtons(business) {
+  const info = getBusinessContactInfo(business);
+  /** @type {{ title: string, url: string }[]} */
+  const buttons = [];
+
+  const maps = buildBusinessMapsLink(business);
+  const mapsUrl = normalizeHttpUrl(maps?.url);
+  if (mapsUrl) {
+    buttons.push({ title: 'Vezi locația', url: mapsUrl });
+  }
+
+  const website = normalizeHttpUrl(info.website);
+  if (website && website !== mapsUrl) {
+    buttons.push({ title: 'Website', url: website });
+  }
+
+  return buttons.slice(0, 2);
+}
+
+/**
  * Universal Google Maps URL for the business location.
  * Prefers Admin `maps_url`; otherwise builds a search link from the address.
  *
@@ -103,7 +149,7 @@ export function buildAiTransparencyWelcome(business) {
 export function buildBusinessMapsLink(business) {
   const info = getBusinessContactInfo(business);
   const address = info.address?.trim() || null;
-  const configured = info.mapsUrl?.trim() || null;
+  const configured = normalizeHttpUrl(info.mapsUrl);
 
   if (configured) {
     return { url: configured, address };

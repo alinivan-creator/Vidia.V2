@@ -40,7 +40,8 @@ function parseEventQuery(req) {
  * @param {number} byteLength
  */
 function setIcsDownloadHeaders(res, byteLength) {
-  res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+  // octet-stream + attachment so browsers download a file instead of showing BEGIN:VCALENDAR.
+  res.setHeader('Content-Type', 'application/octet-stream');
   res.setHeader(
     'Content-Disposition',
     `attachment; filename="${ICS_FILENAME}"; filename*=UTF-8''${ICS_FILENAME}`,

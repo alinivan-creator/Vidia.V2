@@ -408,16 +408,26 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
     return;
   }
 
-  if (d.maps_cta?.url) {
-    await sendMessageWithUrlButton({
-      business,
-      recipientPhone,
-      requestId,
-      text,
-      buttonTitle: String(d.maps_cta.title || 'Vezi locația').slice(0, 20),
-      buttonUrl: d.maps_cta.url,
-    });
-    return;
+  if (d.link_ctas?.length || d.maps_cta?.url || d.website_cta?.url) {
+    const buttons = Array.isArray(d.link_ctas) && d.link_ctas.length
+      ? d.link_ctas
+      : [
+        d.maps_cta?.url ? { title: d.maps_cta.title || 'Vezi locația', url: d.maps_cta.url } : null,
+        d.website_cta?.url ? { title: d.website_cta.title || 'Website', url: d.website_cta.url } : null,
+      ].filter(Boolean);
+    const [first, ...rest] = buttons;
+    if (first?.url) {
+      await sendMessageWithUrlButton({
+        business,
+        recipientPhone,
+        requestId,
+        text,
+        buttonTitle: String(first.title || 'Link').slice(0, 20),
+        buttonUrl: first.url,
+        extraButtons: rest,
+      });
+      return;
+    }
   }
 
   // Native WhatsApp Flow when configured; on failure fall through to list-picker.
