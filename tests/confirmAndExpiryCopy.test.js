@@ -22,7 +22,8 @@ describe('confirm menu + session expiry copy', () => {
 
   it('generic menus still allow name or number', () => {
     const body = formatNumberedMenu('Alege', [{ id: 'a', title: 'Tuns' }], null, 'service');
-    assert.match(body, /Poți răspunde cu \*numele\*/);
+    assert.match(body, /Scrie \*numele\* opțiunii/);
+    assert.doesNotMatch(body, /Poți răspunde cu \*numele\*/);
   });
 
   it('session expiry restart asks for a service', () => {

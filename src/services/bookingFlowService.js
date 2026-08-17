@@ -254,7 +254,7 @@ export async function sendServicePicker({ business, recipientPhone, draft, reque
     if (meta) blocks.push(`   ${meta}`);
     blocks.push('');
   });
-  blocks.push(WA_DIVIDER, '', 'Scrie *numărul* (ex: *1*).');
+  blocks.push(WA_DIVIDER, '', 'Scrie *numele* serviciului (sau numărul, dacă preferi).');
 
   await sendTextMessage({
     business,
@@ -349,7 +349,7 @@ export async function sendSlotPicker({ business, recipientPhone, draft, requestI
   options.forEach((opt, i) => {
     lines.push(`*${i + 1}.*  ${opt.title}`);
   });
-  lines.push('', WA_DIVIDER, '', 'Scrie *numărul* opțiunii.');
+  lines.push('', WA_DIVIDER, '', 'Scrie *ora* dorită — ex: *18:00* (sau numărul opțiunii).');
 
   await sendTextMessage({
     business,
@@ -592,7 +592,7 @@ export async function sendEmployeePicker({
         : '';
     lines.push(`*${i + 1}.*  ${opt.title}${hint}`);
   });
-  lines.push('', WA_DIVIDER, '', 'Scrie *numărul* opțiunii (ex: *1*).');
+  lines.push('', WA_DIVIDER, '', 'Scrie *numele* specialistului (sau numărul opțiunii).');
 
   await sendTextMessage({
     business,

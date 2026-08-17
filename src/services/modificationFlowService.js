@@ -305,7 +305,7 @@ export async function beginModificationFlow({
   options.forEach((opt, i) => {
     lines.push(`${slotNumberEmoji(i)} ${opt.title}`);
   });
-  lines.push('', 'Răspunde cu numărul opțiunii.');
+  lines.push('', 'Scrie *numărul* sau *numele* programării.');
 
   await setConversationStep({
     businessId: business.id,
@@ -479,7 +479,7 @@ async function sendRescheduleSlotPicker({ business, recipientPhone, appointment,
   options.forEach((opt, i) => {
     lines.push(`*${i + 1}.*  ${opt.title}`);
   });
-  lines.push('', WA_DIVIDER, '', 'Scrie *numărul* opțiunii.');
+  lines.push('', WA_DIVIDER, '', 'Scrie *ora* dorită — ex: *18:00* (sau numărul opțiunii).');
 
   await sendTextMessage({
     business,

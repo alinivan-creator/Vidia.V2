@@ -108,7 +108,7 @@ export function formatNumberedMenu(bodyText, options, footerText = null, menuKin
   } else if (kind === 'resume') {
     lines.push('', 'Răspunde cu *Da, reia* sau *Alte ore* (sau *1* / *2*).');
   } else {
-    lines.push('', 'Poți răspunde cu *numele* sau cu numărul opțiunii.');
+    lines.push('', 'Scrie *numele* opțiunii (sau numărul, dacă preferi).');
   }
 
   if (footerText) {
