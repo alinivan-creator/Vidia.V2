@@ -349,6 +349,29 @@
         </div>
 
         <div class="border-t border-vidia-border pt-4">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="text-sm font-semibold">Configurări afacere / FAQ</h4>
+            <button type="button" id="bf-add-faq" class="text-xs text-vidia-red hover:underline">+ Adaugă întrebare</button>
+          </div>
+          <p class="text-xs text-slate-500 mb-3">
+            Politici pe care le setezi aici (card, parcare, animale, anulare). Botul le citește automat la fiecare mesaj WhatsApp — fără SQL.
+          </p>
+          <p id="bf-faqs-warning" class="hidden text-xs text-vidia-red mb-3"></p>
+          <div class="overflow-x-auto border border-vidia-border rounded-lg">
+            <table class="w-full text-sm">
+              <thead class="bg-vidia-light text-left">
+                <tr>
+                  <th class="px-3 py-2 font-medium">Întrebare (cum ar întreba clientul)</th>
+                  <th class="px-3 py-2 font-medium">Răspuns</th>
+                  <th class="px-3 py-2 w-10"></th>
+                </tr>
+              </thead>
+              <tbody id="bf-faqs-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="border-t border-vidia-border pt-4">
           <h4 class="text-sm font-semibold mb-1">SMS Marketing (Twilio)</h4>
           <p class="text-xs text-slate-500 mb-3">
             Baza de opt-in: (1) automat pe WhatsApp când clientul confirmă o programare,

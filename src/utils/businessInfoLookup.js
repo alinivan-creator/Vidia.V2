@@ -166,6 +166,18 @@ export function lookupBusinessInfo(business, text) {
     }
   }
 
+  const faqHit = matchBusinessFaq(business?.faqs, text);
+  if (faqHit) {
+    return {
+      found: true,
+      topic,
+      topicLabelRo: spec?.labelRo ?? null,
+      topicLabelEn: spec?.labelEn ?? null,
+      polarity: 'fact',
+      text: faqHit.answer,
+    };
+  }
+
   const line = matchAiFactLine(settings.ai_facts, text);
   if (line) {
     return {
@@ -189,12 +201,55 @@ export function lookupBusinessInfo(business, text) {
 }
 
 /**
+ * Match a client question to a tenant FAQ row (question + answer tokens).
+ * @param {Array<{ question?: string, answer?: string }> | null | undefined} faqs
+ * @param {string} text
+ * @returns {{ question: string, answer: string } | null}
+ */
+export function matchBusinessFaq(faqs, text) {
+  const list = Array.isArray(faqs) ? faqs : [];
+  const q = normalize(text);
+  if (!q || !list.length) return null;
+  const stop = new Set([
+    'vreau', 'aveti', 'avem', 'este', 'sunt', 'pentru', 'aceasta', 'acesta',
+    'informatie', 'spune', 'puteti', 'poate', 'despre', 'care', 'cum',
+    'have', 'does', 'your', 'with', 'this', 'that', 'what', 'when',
+    'pot', 'plata', 'please',
+  ]);
+  const keys = q.split(/[^a-z0-9]+/).filter((t) => t.length >= 3 && !stop.has(t));
+  if (!keys.length) return null;
+
+  let best = null;
+  let bestScore = 0;
+  for (const row of list) {
+    const question = String(row?.question || '').trim();
+    const answer = String(row?.answer || '').trim();
+    if (!question || !answer) continue;
+    const nq = normalize(question);
+    const na = normalize(answer);
+    let score = 0;
+    if (q.includes(nq) || nq.includes(q)) score += 10;
+    for (const k of keys) {
+      if (nq.includes(k)) score += 3;
+      if (na.includes(k)) score += 1;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = { question, answer };
+    }
+  }
+  if (bestScore >= 3 && best) return best;
+  return null;
+}
+
+/**
  * Natural reply from Admin data only — never invents a location or extra amenity.
  * @param {ReturnType<typeof lookupBusinessInfo>} looked
  * @param {'ro' | 'en'} [lang]
  */
 export function formatBusinessInfoReply(looked, lang = 'ro') {
   if (!looked?.found) return null;
+  if (looked.polarity === 'fact' && looked.text) return looked.text;
   if (looked.text && looked.text.length > 12) return looked.text;
   const label = lang === 'en' ? looked.topicLabelEn : looked.topicLabelRo;
   if (looked.polarity === 'yes') {

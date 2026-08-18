@@ -157,6 +157,37 @@ export function resolveTargetAppointment(appointments, hints, timezone, mode = '
 }
 
 /**
+ * After the booking to move is locked, decide the next reschedule UI.
+ * Date/time that identified the *existing* booking must not skip the new-day picker.
+ *
+ * @param {object} params
+ * @param {string} [params.resolvedReason]
+ * @param {string | null} [params.extractDate]
+ * @param {string | null} [params.extractTime]
+ * @param {string | null} [params.pendingDate]
+ * @param {string | null} [params.pendingTime]
+ * @returns {{ kind: 'apply', date: string, time: string } | { kind: 'ask_time', date: string } | { kind: 'ask_date' }}
+ */
+export function nextRescheduleSlotStep({
+  resolvedReason = '',
+  extractDate = null,
+  extractTime = null,
+  pendingDate = null,
+  pendingTime = null,
+}) {
+  if (resolvedReason === 'slot_hint') {
+    return { kind: 'ask_date' };
+  }
+  const date = (extractDate && /^\d{4}-\d{2}-\d{2}$/.test(extractDate) ? extractDate : null)
+    || (pendingDate && /^\d{4}-\d{2}-\d{2}$/.test(pendingDate) ? pendingDate : null);
+  const time = (extractTime && /^\d{2}:\d{2}$/.test(extractTime) ? extractTime : null)
+    || (pendingTime && /^\d{2}:\d{2}$/.test(pendingTime) ? pendingTime : null);
+  if (date && time) return { kind: 'apply', date, time };
+  if (date) return { kind: 'ask_time', date };
+  return { kind: 'ask_date' };
+}
+
+/**
  * Twilio list-picker rows for the client's upcoming bookings.
  * Title ≤24 chars (WhatsApp cap); description holds service + weekday.
  *

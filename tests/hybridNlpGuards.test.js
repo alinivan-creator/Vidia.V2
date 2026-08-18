@@ -44,3 +44,27 @@ describe('hybrid NLP guards', () => {
     assert.doesNotMatch(text, /\]\(/);
   });
 });
+
+describe('tenant FAQ lookup', () => {
+  it('answers from business_faqs instead of inventing', async () => {
+    const { lookupBusinessInfo, formatBusinessInfoReply, matchBusinessFaq } = await import(
+      '../src/utils/businessInfoLookup.js'
+    );
+    const faqs = [
+      { question: 'Acceptați plata cu cardul?', answer: 'Da, POS la recepție.' },
+      { question: 'Sunt permise animalele?', answer: 'Nu, fără animale în salon.' },
+    ];
+    assert.equal(matchBusinessFaq(faqs, 'pot plăti cu cardul?')?.answer, 'Da, POS la recepție.');
+    const looked = lookupBusinessInfo(
+      { booking_settings: {}, faqs },
+      'Aveți POS / card?',
+    );
+    assert.equal(looked.found, true);
+    assert.equal(formatBusinessInfoReply(looked), 'Da, POS la recepție.');
+    const unknown = lookupBusinessInfo(
+      { booking_settings: {}, faqs },
+      'Aveți saună?',
+    );
+    assert.equal(unknown.found, false);
+  });
+});

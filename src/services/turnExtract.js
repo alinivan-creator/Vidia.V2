@@ -895,7 +895,9 @@ async function extractTurnIntentImpl({
   // Soft availability must not be stolen as amenity FAQ.
   // Cancel/reschedule (or an in-progress modify step) must keep the appointment picker.
   const modifyIntent = detectModificationIntent(textBody);
-  const inModifyStep = step === CONVERSATION_STEPS.RESCHEDULING || step === CONVERSATION_STEPS.MODIFYING;
+  const inModifyStep = step === CONVERSATION_STEPS.RESCHEDULING
+    || step === CONVERSATION_STEPS.MODIFYING
+    || convState.context_data?.intent === 'reschedule';
   if (
     !modifyIntent
     && !inModifyStep
@@ -1018,7 +1020,9 @@ async function extractTurnIntentImpl({
     timezone: tz,
     pendingDateKey,
     business,
-    inModify: step === CONVERSATION_STEPS.RESCHEDULING || step === CONVERSATION_STEPS.MODIFYING,
+    inModify: step === CONVERSATION_STEPS.RESCHEDULING
+      || step === CONVERSATION_STEPS.MODIFYING
+      || convState.context_data?.intent === 'reschedule',
     dayHours,
     now,
   });
@@ -1061,7 +1065,9 @@ async function extractTurnIntentImpl({
     return emptyExtract({ action: triage.intent, confidence: 'high', source: 'keyword' });
   }
 
-  const inModify = step === CONVERSATION_STEPS.RESCHEDULING || step === CONVERSATION_STEPS.MODIFYING;
+  const inModify = step === CONVERSATION_STEPS.RESCHEDULING
+    || step === CONVERSATION_STEPS.MODIFYING
+    || convState.context_data?.intent === 'reschedule';
   const explicit = resolveExplicitSlot(textBody, business, now);
   if (explicit?.dateKey && explicit?.timeHHmm && !looksLikeExistingAppointmentQuery(textBody)) {
     const mod = triageUserIntent(textBody, { businessType: business.business_type, services });

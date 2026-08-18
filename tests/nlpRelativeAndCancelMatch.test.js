@@ -5,6 +5,7 @@ import { buildSystemClock } from '../src/services/entityExtractor.js';
 import {
   matchAppointmentsBySlotHints,
   resolveTargetAppointment,
+  nextRescheduleSlotStep,
 } from '../src/utils/appointmentMatch.js';
 
 const TZ = 'Europe/Bucharest';
@@ -186,6 +187,39 @@ describe('appointment match by slot hints', () => {
     );
     assert.equal(resolved.reason, 'need_choice');
     assert.equal(resolved.newSlotHints, true);
+  });
+
+  it('reschedule asks for a new day unless date+time of the new slot are both known', () => {
+    assert.equal(nextRescheduleSlotStep({ resolvedReason: 'single' }).kind, 'ask_date');
+    assert.equal(nextRescheduleSlotStep({ resolvedReason: 'id' }).kind, 'ask_date');
+    assert.equal(
+      nextRescheduleSlotStep({
+        resolvedReason: 'slot_hint',
+        extractDate: '2026-08-17',
+        extractTime: '11:00',
+      }).kind,
+      'ask_date',
+    );
+    assert.equal(
+      nextRescheduleSlotStep({ resolvedReason: 'single', extractDate: '2026-08-20' }).kind,
+      'ask_time',
+    );
+    assert.deepEqual(
+      nextRescheduleSlotStep({
+        resolvedReason: 'single',
+        extractDate: '2026-08-20',
+        extractTime: '10:00',
+      }),
+      { kind: 'apply', date: '2026-08-20', time: '10:00' },
+    );
+    assert.equal(
+      nextRescheduleSlotStep({
+        resolvedReason: 'id',
+        pendingDate: '2026-08-21',
+        extractTime: '14:00',
+      }).kind,
+      'apply',
+    );
   });
 });
 

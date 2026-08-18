@@ -5,6 +5,7 @@
 
 import { getBusinessById } from '../db/businessService.js';
 import { listEmployees } from '../db/employeeService.js';
+import { listFaqsForBusiness } from '../db/faqService.js';
 import { getBookingConfig } from '../utils/datetime.js';
 import {
   getAdminBusinessHours,
@@ -39,6 +40,7 @@ export async function loadBusinessContext(businessOrId) {
   const config = getBookingConfig(business);
   const services = (config.services || []).filter((s) => Number(s.duration_minutes) > 0);
   const employees = await listEmployees(business.id, { activeOnly: true });
+  const faqs = await listFaqsForBusiness(business.id);
 
   const settings =
     business.booking_settings && typeof business.booking_settings === 'object'
@@ -51,6 +53,7 @@ export async function loadBusinessContext(businessOrId) {
       ...business,
       services,
       employees,
+      faqs,
       booking_settings: settings,
       ai_system_prompt: '',
     },

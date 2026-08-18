@@ -25,6 +25,11 @@ import {
   deleteEmployeeAdmin,
 } from '../db/employeeService.js';
 import {
+  listFaqsForBusiness,
+  upsertFaqAdmin,
+  deleteFaqAdmin,
+} from '../db/faqService.js';
+import {
   listCallbackRequestsAdmin,
   updateCallbackRequestStatus,
 } from '../db/callbackRequestService.js';
@@ -263,6 +268,42 @@ adminRouter.post('/businesses/:id/employees', async (req, res) => {
 
 adminRouter.delete('/businesses/:id/employees/:employeeId', async (req, res) => {
   const { ok, error } = await deleteEmployeeAdmin(req.params.id, req.params.employeeId);
+  if (!ok) return res.status(400).json({ error: error || 'Ștergere eșuată' });
+  res.json({ ok: true });
+});
+
+// --- Tenant FAQ / business policies ---
+adminRouter.get('/businesses/:id/faqs', async (req, res) => {
+  const available = await isTableAvailable('business_faqs');
+  const faqs = available ? await listFaqsForBusiness(req.params.id) : [];
+  res.json({
+    faqs,
+    module: available ? 'ok' : 'unavailable',
+    warning: available ? null : 'Eroare: Tabelă lipsă — public.business_faqs',
+  });
+});
+
+adminRouter.post('/businesses/:id/faqs', async (req, res) => {
+  try {
+    const { faq, error } = await upsertFaqAdmin({
+      ...(req.body ?? {}),
+      business_id: req.params.id,
+    });
+    if (error) return res.status(400).json({ error });
+    res.status(req.body?.id ? 200 : 201).json({ faq });
+  } catch (error) {
+    await logError({
+      message: 'POST /admin/businesses/:id/faqs failed',
+      source: 'system',
+      severity: 'error',
+      error,
+    });
+    res.status(500).json({ error: 'Eroare server' });
+  }
+});
+
+adminRouter.delete('/businesses/:id/faqs/:faqId', async (req, res) => {
+  const { ok, error } = await deleteFaqAdmin(req.params.id, req.params.faqId);
   if (!ok) return res.status(400).json({ error: error || 'Ștergere eșuată' });
   res.json({ ok: true });
 });

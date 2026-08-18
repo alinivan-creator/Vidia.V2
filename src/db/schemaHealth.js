@@ -36,6 +36,7 @@ export const TABLE_SPECS = {
   error_logs: { module: 'errors', critical: true, label: 'Jurnale erori' },
   calendar_cache: { module: 'calendar', critical: false, label: 'Cache calendar' },
   system_settings: { module: 'settings', critical: false, label: 'Setări sistem' },
+  business_faqs: { module: 'faqs', critical: false, label: 'FAQ afacere', migration: '018_business_faqs.sql' },
 };
 
 /** Tables required by the Admin / WhatsApp health banner. */

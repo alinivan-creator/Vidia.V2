@@ -566,6 +566,94 @@ $('#bf-add-employee')?.addEventListener('click', () => {
   renderEmployeesRows(current);
 });
 
+/** @type {Array<{ id?: string; question: string; answer: string; sort_order?: number }>} */
+let modalFaqs = [];
+
+function renderFaqsRows(faqs) {
+  modalFaqs = (faqs || []).map((f) => ({ ...f }));
+  const body = $('#bf-faqs-body');
+  if (!body) return;
+  body.innerHTML = '';
+  modalFaqs.forEach((f, idx) => {
+    const tr = document.createElement('tr');
+    tr.className = 'border-t border-vidia-border';
+    tr.dataset.id = f.id || '';
+    tr.innerHTML = `
+      <td class="px-2 py-1"><input data-field="question" value="${esc(f.question || '')}" class="w-full border border-vidia-border rounded px-2 py-1 text-sm" placeholder="Ex: Acceptați plata cu cardul?" /></td>
+      <td class="px-2 py-1"><input data-field="answer" value="${esc(f.answer || '')}" class="w-full border border-vidia-border rounded px-2 py-1 text-sm" placeholder="Ex: Da, POS la recepție." /></td>
+      <td class="px-2 py-1 text-center"><button type="button" data-remove-faq="${idx}" class="text-vidia-red text-xs">✕</button></td>
+    `;
+    body.appendChild(tr);
+  });
+  body.querySelectorAll('[data-remove-faq]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.closest('tr')?.dataset.id;
+      btn.closest('tr')?.remove();
+      if (id && $('#bf-id').value) {
+        api(`/businesses/${$('#bf-id').value}/faqs/${id}`, { method: 'DELETE' }).catch(() => {});
+      }
+    });
+  });
+}
+
+function collectFaqsFromTable() {
+  return [...($('#bf-faqs-body')?.querySelectorAll('tr') || [])].map((tr, idx) => ({
+    id: tr.dataset.id || undefined,
+    question: (tr.querySelector('[data-field="question"]')?.value || '').trim(),
+    answer: (tr.querySelector('[data-field="answer"]')?.value || '').trim(),
+    sort_order: idx,
+  }));
+}
+
+$('#bf-add-faq')?.addEventListener('click', () => {
+  const current = collectFaqsFromTable();
+  current.push({ question: '', answer: '', sort_order: current.length });
+  renderFaqsRows(current);
+});
+
+async function loadFaqsForBusiness(businessId) {
+  const warn = $('#bf-faqs-warning');
+  if (!businessId) {
+    renderFaqsRows([]);
+    if (warn) {
+      warn.classList.add('hidden');
+      warn.textContent = '';
+    }
+    return;
+  }
+  try {
+    const data = await api(`/businesses/${businessId}/faqs`, { optional: true });
+    renderFaqsRows(data.faqs || []);
+    if (warn) {
+      if (data.warning) {
+        warn.textContent = data.warning;
+        warn.classList.remove('hidden');
+      } else {
+        warn.classList.add('hidden');
+        warn.textContent = '';
+      }
+    }
+  } catch {
+    renderFaqsRows([]);
+    if (warn) {
+      warn.textContent = 'Eroare: nu am putut încărca FAQ-urile.';
+      warn.classList.remove('hidden');
+    }
+  }
+}
+
+async function persistFaqs(businessId) {
+  if (!businessId) return;
+  const rows = collectFaqsFromTable();
+  for (const row of rows) {
+    if (!row.question || !row.answer) continue;
+    await api(`/businesses/${businessId}/faqs`, {
+      method: 'POST',
+      body: JSON.stringify({ ...row, business_id: businessId }),
+    });
+  }
+}
+
 async function loadEmployeesForBusiness(businessId) {
   const warn = $('#bf-employees-warning');
   if (!businessId) {
@@ -831,6 +919,7 @@ function openBusinessModal(id = null, opts = {}) {
     $('#bf-sms-optin-count').textContent = '';
     $('#bf-journal-section').classList.remove('hidden');
     loadEmployeesForBusiness(b.id);
+    loadFaqsForBusiness(b.id);
     loadSmsOptInCount(b.id);
     loadBusinessJournal(b.id).then(() => {
       if (opts.focusJournal) {
@@ -880,6 +969,7 @@ function openBusinessModal(id = null, opts = {}) {
     fillMenuButtonFields(defaultMenuButtons);
     renderServicesRows([]);
     renderEmployeesRows([]);
+    renderFaqsRows([]);
     setPreview('booking');
   }
 }
@@ -1204,6 +1294,15 @@ $('#business-form').addEventListener('submit', async (e) => {
       } catch (empErr) {
         $('#form-error').textContent =
           'Afacerea s-a salvat. Angajații nu: ' + (empErr.message || 'eroare');
+        $('#form-error').classList.remove('hidden');
+        await loadBusinesses();
+        return;
+      }
+      try {
+        await persistFaqs(businessId);
+      } catch (faqErr) {
+        $('#form-error').textContent =
+          'Afacerea s-a salvat. FAQ-urile nu: ' + (faqErr.message || 'eroare');
         $('#form-error').classList.remove('hidden');
         await loadBusinesses();
         return;

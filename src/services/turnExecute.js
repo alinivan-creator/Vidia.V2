@@ -100,7 +100,7 @@ import {
   getBookingWait,
   timeFromHourNumber,
 } from './bookingWaitState.js';
-import { resolveTargetAppointment, buildAppointmentChoiceMenu } from '../utils/appointmentMatch.js';
+import { resolveTargetAppointment, buildAppointmentChoiceMenu, nextRescheduleSlotStep } from '../utils/appointmentMatch.js';
 import {
   MACHINE_ACTIONS,
   hydrateCatalogService,
@@ -585,9 +585,12 @@ async function askDateGridResult({
   requestId,
   page = 0,
   clientMessage = null,
+  conversationStep = CONVERSATION_STEPS.WAITING_FOR_DATE,
+  extraContext = {},
 }) {
+  const intent = extraContext.intent || 'book';
   // Richer Meta Flow UI when the tenant has published a WhatsApp Flow.
-  if (flowsEnabled(business) && page === 0 && !clientMessage) {
+  if (flowsEnabled(business) && page === 0 && !clientMessage && intent !== 'reschedule') {
     const flowId = getConfiguredFlowId(business);
     const body = service?.name
       ? `🗓️ Deschide calendarul pentru *${service.name}* — alege ziua și ora liberă.`
@@ -646,14 +649,15 @@ async function askDateGridResult({
   await setConversationStep({
     businessId: business.id,
     rawPhone: recipientPhone,
-    step: CONVERSATION_STEPS.WAITING_FOR_DATE,
+    step: conversationStep,
     context: {
       draft_id: draft?.id,
-      intent: 'book',
       service,
       booking_wait: BOOKING_WAIT.DATE,
       grid_kind: 'day',
       grid_page: listPage.page,
+      ...extraContext,
+      intent,
       last_menu: {
         kind: 'day_grid',
         options: days.map((d) => ({ id: d.id, title: d.title })),
@@ -746,6 +750,10 @@ async function missingSlotsResult({
       draft,
       service,
       requestId,
+      conversationStep: extraContext.intent === 'reschedule'
+        ? CONVERSATION_STEPS.RESCHEDULING
+        : CONVERSATION_STEPS.WAITING_FOR_DATE,
+      extraContext: extraContext.intent === 'reschedule' ? extraContext : {},
       clientMessage:
         `Nu am găsit ore libere pentru *${service?.name || 'serviciu'}*` +
         (datePretty ? ` pe *${datePretty}*` : '') +
@@ -1634,56 +1642,86 @@ async function executeReschedule({
     });
   }
 
-  // slot_hint = date/time named the existing booking; otherwise date/time is the NEW slot.
-  let applyStart = null;
+  const { employeeId } = await resolveStaff(business, appointment);
+  const extraContext = {
+    intent: 'reschedule',
+    appointment_id: appointment.id,
+    google_event_id: appointment.google_event_id,
+    employee_id: employeeId,
+    slot_start: appointment.selected_slot_start,
+    slot_end: appointment.selected_slot_end,
+  };
+
   if (resolved.reason !== 'slot_hint') {
-    applyStart = (extract.date_text && extract.time_text)
-      ? localToUtc(extract.date_text, extract.time_text, business.timezone)
-      : extract.datetime
-        || (extract.slot_id ? decodeSlotId(extract.slot_id, business.timezone) : null);
-    if (!applyStart) {
-      const pendingDate = typeof convState.context_data?.pending_date_text === 'string'
-        ? convState.context_data.pending_date_text
-        : null;
-      const pendingTime = typeof convState.context_data?.pending_time_text === 'string'
-        ? convState.context_data.pending_time_text
-        : null;
-      if (pendingDate && pendingTime) {
-        applyStart = localToUtc(pendingDate, pendingTime, business.timezone);
-      }
+    const tapped = extract.datetime
+      || (extract.slot_id ? decodeSlotId(extract.slot_id, business.timezone) : null);
+    if (tapped) {
+      return applyReschedule({
+        business,
+        recipientPhone,
+        appointment,
+        slotStart: tapped,
+        convState,
+        requestId,
+      });
     }
   }
 
-  if (applyStart) {
+  // slot_hint = date/time named the existing booking; otherwise date/time is the NEW slot.
+  const slotStep = nextRescheduleSlotStep({
+    resolvedReason: resolved.reason,
+    extractDate: extract.date_text,
+    extractTime: extract.time_text,
+    pendingDate: typeof convState.context_data?.pending_date_text === 'string'
+      ? convState.context_data.pending_date_text
+      : null,
+    pendingTime: typeof convState.context_data?.pending_time_text === 'string'
+      ? convState.context_data.pending_time_text
+      : null,
+  });
+
+  if (slotStep.kind === 'apply') {
     return applyReschedule({
       business,
       recipientPhone,
       appointment,
-      slotStart: applyStart,
+      slotStart: localToUtc(slotStep.date, slotStep.time, business.timezone),
       convState,
       requestId,
     });
   }
 
-  const { employeeId } = await resolveStaff(business, appointment);
-  return missingSlotsResult({
+  if (slotStep.kind === 'ask_time') {
+    return missingSlotsResult({
+      business,
+      recipientPhone,
+      draft: appointment,
+      service: appointment.selected_service,
+      employeeId,
+      dateKey: slotStep.date,
+      requestId,
+      reasonKey: 'MISSING_SLOT',
+      conversationStep: CONVERSATION_STEPS.RESCHEDULING,
+      extraContext,
+    });
+  }
+
+  const oldWhen = appointment.selected_slot_start
+    ? formatSlotLabel(new Date(appointment.selected_slot_start), business.timezone)
+    : null;
+  const serviceName = /** @type {{ name?: string }} */ (appointment.selected_service ?? {}).name || 'programarea';
+  return askDateGridResult({
     business,
     recipientPhone,
     draft: appointment,
     service: appointment.selected_service,
-    employeeId,
-    dateKey: resolved.reason === 'slot_hint' ? null : extract.date_text,
     requestId,
-    reasonKey: 'MISSING_SLOT',
     conversationStep: CONVERSATION_STEPS.RESCHEDULING,
-    extraContext: {
-      intent: 'reschedule',
-      appointment_id: appointment.id,
-      google_event_id: appointment.google_event_id,
-      employee_id: employeeId,
-      slot_start: appointment.selected_slot_start,
-      slot_end: appointment.selected_slot_end,
-    },
+    extraContext,
+    clientMessage:
+      `Reprogramăm *${serviceName}*` +
+      (oldWhen ? ` de *${oldWhen}*` : '') +
+      '. Alege mai întâi *ziua nouă* — orele apar după ce ai ales data.',
   });
 }
 
@@ -2004,13 +2042,27 @@ async function executeListAppointments({ business, recipientPhone, activeDraft }
   });
 }
 
-async function executeChat(business) {
+async function executeChat(business, textBody = '', lang = 'ro') {
+  const looked = lookupBusinessInfo(business, textBody);
+  if (looked.found) {
+    return handlerResult({
+      status: 'SUCCESS',
+      action_performed: 'FACT_LOOKUP',
+      user_message_template_key: 'ADMIN_FACT',
+      data: {
+        fact: formatBusinessInfoReply(looked, lang),
+        business_name: business.name,
+        fact_topic: looked.topic,
+        client_language: lang,
+      },
+    });
+  }
   return handlerResult({
     status: 'CHAT',
     action_performed: null,
     next_required_step: null,
     user_message_template_key: 'CHAT_FALLBACK',
-    data: { business_name: business.name },
+    data: { business_name: business.name, client_language: lang },
   });
 }
 
@@ -2349,13 +2401,28 @@ async function dispatchExecute({
       return missingSlotsResult({
         business,
         recipientPhone,
-        draft,
+        draft: ctx.intent === 'reschedule' && ctx.appointment_id
+          ? { id: ctx.appointment_id, selected_service: service, employee_id: ctx.employee_id }
+          : draft,
         service,
-        employeeId: draftEmployeeId(draft),
+        employeeId: ctx.employee_id || draftEmployeeId(draft),
         dateKey: ctx.pending_date_text || extract.date_text,
         timeWindow: ctx.pending_time_window || null,
         requestId,
         reasonKey: 'ASK_TIME',
+        conversationStep: ctx.intent === 'reschedule'
+          ? CONVERSATION_STEPS.RESCHEDULING
+          : CONVERSATION_STEPS.WAITING_FOR_TIME,
+        extraContext: ctx.intent === 'reschedule'
+          ? {
+            intent: 'reschedule',
+            appointment_id: ctx.appointment_id,
+            google_event_id: ctx.google_event_id,
+            employee_id: ctx.employee_id,
+            slot_start: ctx.slot_start,
+            slot_end: ctx.slot_end,
+          }
+          : {},
         page,
       });
     }
@@ -2363,10 +2430,25 @@ async function dispatchExecute({
     return askDateGridResult({
       business,
       recipientPhone,
-      draft,
+      draft: ctx.intent === 'reschedule' && ctx.appointment_id
+        ? { id: ctx.appointment_id, selected_service: service, employee_id: ctx.employee_id }
+        : draft,
       service,
       requestId,
       page,
+      conversationStep: ctx.intent === 'reschedule'
+        ? CONVERSATION_STEPS.RESCHEDULING
+        : CONVERSATION_STEPS.WAITING_FOR_DATE,
+      extraContext: ctx.intent === 'reschedule'
+        ? {
+          intent: 'reschedule',
+          appointment_id: ctx.appointment_id,
+          google_event_id: ctx.google_event_id,
+          employee_id: ctx.employee_id,
+          slot_start: ctx.slot_start,
+          slot_end: ctx.slot_end,
+        }
+        : {},
       clientMessage: action === 'reprompt_grid'
         ? `${formatDayGridMessage(listOpenDayWindows(business, { limit: 14 }), business.timezone, service.name)}\n\n_Poți alege din listă sau scrie, ex: *mâine la 10*._`
         : null,
@@ -2575,7 +2657,7 @@ async function dispatchExecute({
     });
   }
 
-  return executeChat(business);
+  return executeChat(business, textBody, lang);
 }
 
 /**

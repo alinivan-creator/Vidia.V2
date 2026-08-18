@@ -9,6 +9,7 @@
 import { supabase } from '../config/supabase.js';
 import { hydrateBusiness, withServices } from '../db/businessService.js';
 import { listEmployees } from '../db/employeeService.js';
+import { listFaqsForBusiness } from '../db/faqService.js';
 import { logError } from '../db/loggerService.js';
 import { CALLBACK_SENTINEL, DEFAULT_SYSTEM_PROMPT } from '../config/defaultSystemPrompt.js';
 import { getConversationLogic } from '../config/conversationConfig.js';
@@ -112,12 +113,28 @@ export function buildContactContext(business) {
  * @param {Business} business
  */
 function buildFactsContext(business) {
+  const faqs = Array.isArray(business.faqs) ? business.faqs : [];
+  const faqBlock = faqs.length
+    ? (
+      '\n\nFAQ / POLITICI LOCAȚIE (singura sursă pentru întrebări de tipul card, parcare, animale, anulare, wifi):\n' +
+      faqs.map((row) => `- Î: ${row.question}\n  R: ${row.answer}`).join('\n') +
+      '\nDacă întrebarea clientului nu e acoperită de lista de mai sus, spune că nu deții informația. NU inventa politici.'
+    )
+    : (
+      '\n\nFAQ / POLITICI LOCAȚIE: nesetat.\n' +
+      'Dacă clientul întreabă de card, parcare, animale, taxe de anulare sau alte politici, răspunde exact: ' +
+      '"Nu dețin această informație, din păcate nu vă pot răspunde la această întrebare." ' +
+      'Nu menționa Admin. NU inventa.'
+    );
+
   const facts = business.booking_settings?.ai_facts;
-  if (typeof facts !== 'string' || !facts.trim()) return '';
-  return (
-    '\n\nFACTS ADMIN (poți folosi doar aceste fapte suplimentare):\n' +
-    facts.trim()
-  );
+  const extra = typeof facts === 'string' && facts.trim()
+    ? (
+      '\n\nFACTS ADMIN (poți folosi doar aceste fapte suplimentare):\n' +
+      facts.trim()
+    )
+    : '';
+  return faqBlock + extra;
 }
 
 /**
@@ -202,9 +219,11 @@ export async function loadAiTenantContext(businessId) {
   if (!hydrated || String(hydrated.id) !== id) return null;
 
   const employees = await listEmployees(id, { activeOnly: true });
+  const faqs = await listFaqsForBusiness(id);
   const snapshot = {
     ...hydrated,
     employees,
+    faqs,
   };
 
   const fromAdmin = typeof snapshot.ai_system_prompt === 'string'
