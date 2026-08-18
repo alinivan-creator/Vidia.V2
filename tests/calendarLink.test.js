@@ -58,6 +58,15 @@ describe('calendar + contact link rendering', () => {
     assert.equal(buttons[1].title, 'Website');
     assert.match(buttons[1].url, /^https:\/\/salon\.ro/);
 
+    const customOnly = buildContactLinkButtons({
+      name: 'Salon Test',
+      booking_settings: {
+        contact: { website_url: 'https://custom.salon.ro/booking' },
+      },
+    });
+    assert.equal(customOnly.length, 1);
+    assert.match(customOnly[0].url, /custom\.salon\.ro/);
+
     const text = formatContactMessage(business);
     assert.match(text, /Strada Test 1/);
     assert.doesNotMatch(text, /salon\.ro/);

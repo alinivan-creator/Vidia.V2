@@ -15,6 +15,18 @@ import { WA_DIVIDER, waField, waJoin, waTitle } from '../utils/waCopy.js';
  */
 
 /**
+ * First non-empty string among Admin contact fields.
+ * @param {...unknown} values
+ * @returns {string | null}
+ */
+function pickStr(...values) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+/**
  * Extracts contact details from `businesses.booking_settings.contact` (zero-code config).
  * @param {Business} business
  * @returns {BusinessContactInfo}
@@ -24,12 +36,25 @@ export function getBusinessContactInfo(business) {
   const contact = /** @type {Record<string, string | undefined>} */ (settings.contact ?? {});
 
   return {
-    phone: contact.phone ?? null,
-    email: contact.email ?? null,
-    address: contact.address ?? null,
-    hours: contact.hours ?? null,
-    mapsUrl: contact.maps_url ?? contact.mapsUrl ?? (typeof settings.maps_url === 'string' ? settings.maps_url : null),
-    website: contact.website ?? (typeof settings.website === 'string' ? settings.website : null),
+    phone: pickStr(contact.phone),
+    email: pickStr(contact.email),
+    address: pickStr(contact.address),
+    hours: pickStr(contact.hours),
+    mapsUrl: pickStr(
+      contact.maps_url,
+      contact.mapsUrl,
+      settings.maps_url,
+    ),
+    website: pickStr(
+      contact.website,
+      contact.website_url,
+      contact.url,
+      contact.link,
+      contact.custom_url,
+      settings.website,
+      settings.website_url,
+      settings.custom_url,
+    ),
   };
 }
 

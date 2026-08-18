@@ -124,7 +124,15 @@ export function resolveTargetAppointment(appointments, hints, timezone, mode = '
 
   // A bare weekday is generic — show the interactive list instead of auto-picking.
   if (hasDate && !hasTime) {
-    return { appointment: null, reason: 'need_choice', candidates: list };
+    const sameDay = list.filter((a) => {
+      if (!a?.selected_slot_start) return false;
+      return formatDateKey(new Date(a.selected_slot_start), timezone) === hints.dateKey;
+    });
+    return {
+      appointment: null,
+      reason: 'need_choice',
+      candidates: sameDay.length ? sameDay : list,
+    };
   }
 
   const hasSlotHint = hasDate || hasTime || hasService;

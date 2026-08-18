@@ -27,56 +27,106 @@ function normalize(text) {
 }
 
 /**
+ * GDPR / data-deletion phrasing — not a booking cancel.
+ * @param {string} n already-normalized
+ */
+function looksLikeDataDeletion(n) {
+  return /\b(datele|datele mele|gdpr|contul|account)\b/.test(n)
+    && /\b(sterg|sterge|stergere|elimin|anuleaz|anulez)\w*/.test(n);
+}
+
+/**
+ * Hours / price FAQ — "modificare program" is the schedule, not a booking.
+ * @param {string} n already-normalized
+ */
+function looksLikeHoursOrPriceFaq(n) {
+  if (/\bprogramar/.test(n) || /\brezervar/.test(n)) return false;
+  return /\b(pret|preturi|cost|tarif|orar|orele|hours|price)\b/.test(n)
+    || (/\bprogram\b/.test(n) && !/\bprogramar/.test(n));
+}
+
+/**
+ * The utterance refers to saved bookings (not the in-flight hold).
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function refersToSavedAppointments(text) {
+  const n = normalize(text);
+  if (!n) return false;
+  if (looksLikeCancelAll(n) || looksLikePluralAppointments(n)) return true;
+  return /\b(programar|rezervar)\w*/.test(n);
+}
+
+/**
  * Detect cancel / reschedule intent from free text.
- * Uses substring stems so "anulez", "anulare", "o anulez" match.
+ * Stems + colloquial Romanian — must beat NLU book/clarify misreads.
  * @param {string} text
  * @returns {'cancel' | 'reschedule' | null}
  */
 export function detectModificationIntent(text) {
   const n = normalize(text);
   if (!n) return null;
+  if (looksLikeDataDeletion(n)) return null;
 
-  const cancelHints = [
-    'anulez',
-    'anuleaza',
-    'anulare',
-    'anulari',
-    'anulati',
-    'cancel',
-    'sterge',
-    'stergeti',
-    'renunt',
-    'renunta',
-    'nu mai vin',
-    'nu mai ajung',
+  // Avoid "anul 2026" (the year) — not a cancellation.
+  const yearAnul = /\banul\s+\d{4}\b/.test(n);
+
+  /** @type {RegExp[]} */
+  const cancelPatterns = [
+    /\banulez\b/,
+    /\banuleaza\b/,
+    /\banulare\b/,
+    /\banulari\b/,
+    /\banulati\b/,
+    /\banulam\b/,
+    /\bcancel\b/,
+    /\bsterg\w*/,
+    /\belimin\w*/,
+    /\bnu mai vin\b/,
+    /\bnu mai ajung\b/,
+    /\bnu mai pot veni\b/,
+    /\bnu mai vreau (programar|rezervar)/,
+    /\b(scoate|scoat)\w*\s+(programar|rezervar)/,
+    /\b(renunt|renunta)\s+(la |de la )?(programar|rezervar)/,
+    /\brenunt\w*\s+(la |de la )?(ea|o|le|tot|toate)/,
+    /\b(vreau|as vrea|doresc|pot)\s+(sa\s+)?(anul|sterg|elimin)\w*/,
+    /\b(anul|sterg|elimin)\w*\s+(o\s+|niste\s+|toate\s+|una\s+|ceva\s+)?(programar|rezervar)?/,
+    /\b(programar|rezervar)\w*\s+(sa\s+)?(anul|sterg|elimin)\w*/,
   ];
-  if (cancelHints.some((k) => n.includes(k))) {
+  if (!yearAnul && cancelPatterns.some((re) => re.test(n))) {
+    return 'cancel';
+  }
+  // Bare "renunț" only with a booking noun — otherwise it is abort/pending-cancel.
+  if (/\brenunt\w*/.test(n) && /\b(programar|rezervar)\w*/.test(n)) {
+    return 'cancel';
+  }
+  if (/^(renunt|renunta|renuntare)[\s!.]*$/.test(n)) {
     return 'cancel';
   }
 
-  const rescheduleHints = [
-    'reprogrameaza',
-    'reprogramez',
-    'reprogramare',
-    'reprogramari',
-    'reprogram',
-    'reschedule',
-    'schimb',
-    'modific',
-    'modificare',
-    'muta programarea',
-    'alta ora',
-    'alta data',
-    'alt slot',
-    'move my appointment',
-    'change my appointment',
+  if (looksLikeHoursOrPriceFaq(n)) return null;
+
+  /** @type {RegExp[]} */
+  const reschedulePatterns = [
+    /\breprogram\w*/,
+    /\breschedule\b/,
+    /\bmuta\s+programar/,
+    /\bmut\s+programar/,
+    /\bmodific\w*\s+(programar|rezervar|ora|data|slot)/,
+    /\bschimb\w*\s+(programar|rezervar|ora|data)/,
+    /\balt\s+(slot|interval)\b/,
+    /\bmove my appointment\b/,
+    /\bchange my appointment\b/,
+    /\b(vreau|as vrea|doresc|pot)\s+(sa\s+)?(reprogram|modific|schimb|mut)\w*/,
+    /\b(reprogram|modific|schimb|mut)\w*\s+(programar|rezervar|ora|data)/,
   ];
-  if (
-    rescheduleHints.some((k) => n.includes(k))
-    || /\bmut\b/.test(n)
-    || /vreau sa (schimb|modific|mut)/.test(n)
-    || /\b(move|change)\b/.test(n) && /\b(appointment|booking|slot)\b/.test(n)
-  ) {
+  if (reschedulePatterns.some((re) => re.test(n))) {
+    return 'reschedule';
+  }
+  if (/\bmut\b/.test(n) && /\b(programar|rezervar|ora|data)\b/.test(n)) {
+    return 'reschedule';
+  }
+  if (/\bmodific\w*/.test(n) && !looksLikeHoursOrPriceFaq(n)) {
     return 'reschedule';
   }
 
@@ -93,7 +143,7 @@ export function looksLikeCancelAll(text) {
   if (!n) return false;
   if (/\b(cancel all|delete all)\b/.test(n)) return true;
   if (/\b(toate programarile|toate rezervarile|toate orele)\b/.test(n)) return true;
-  if (/\b(anuleaz[aă]|anulez|anulare|sterge|cancel)\b/.test(n)
+  if (/\b(anuleaz[aă]|anulez|anulare|sterge|sterg|elimin|cancel)\b/.test(n)
       && /\b(tot|totul|toate|pe toate|le pe toate)\b/.test(n)) {
     return true;
   }
@@ -109,7 +159,7 @@ export function looksLikePluralAppointments(text) {
   const n = normalize(text);
   if (!n) return false;
   if (looksLikeCancelAll(n)) return true;
-  return /\b(programarile|rezervarile|pe ambele|ambele programari|toate programar)\b/.test(n);
+  return /\b(programarile|rezervarile|pe ambele|ambele programari|toate programar|niste programar)\b/.test(n);
 }
 
 /**

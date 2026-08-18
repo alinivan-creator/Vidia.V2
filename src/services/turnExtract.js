@@ -41,6 +41,7 @@ import {
   detectModificationIntent,
   looksLikeCancelAll,
   looksLikePluralAppointments,
+  refersToSavedAppointments,
 } from './intentTriageService.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
@@ -518,7 +519,15 @@ function faqActionFromText(text) {
  * @returns {TurnExtract}
  */
 export function recoverSoftParserIntent(mapped, textBody, triage, inModify = false, services = null) {
-  const soft = new Set(['off_topic', 'missing_info', 'unknown', 'chat']);
+  const mod = detectModificationIntent(textBody);
+  if (mod === 'cancel' || triage.intent === 'cancel') {
+    return { ...mapped, action: 'cancel', confidence: 'high', source: 'keyword' };
+  }
+  if (mod === 'reschedule' || triage.intent === 'reschedule') {
+    return { ...mapped, action: 'reschedule', confidence: 'high', source: 'keyword' };
+  }
+
+  const soft = new Set(['off_topic', 'missing_info', 'unknown', 'chat', 'book', 'clarify_needed']);
   if (!soft.has(mapped.action)) return mapped;
 
   if (looksLikeExistingAppointmentQuery(textBody) || triage.intent === 'list_appointments') {
@@ -586,6 +595,24 @@ function firstDigitPair(text) {
  * @returns {TurnExtract}
  */
 function mapExtractionToTurnExtract(parsed, { textBody, isPendingHold, inModify, wait, timezone }) {
+  const mod = detectModificationIntent(textBody);
+  if (mod === 'cancel') {
+    return emptyExtract({
+      action: isPendingHold ? 'cancel_pending' : 'cancel',
+      confidence: 'high',
+      source: 'keyword',
+      extraction: parsed,
+    });
+  }
+  if (mod === 'reschedule') {
+    return emptyExtract({
+      action: 'reschedule',
+      confidence: 'high',
+      source: 'keyword',
+      extraction: parsed,
+    });
+  }
+
   const numeric = interpretNumericFreeText({
     text: textBody,
     wait,
@@ -874,6 +901,25 @@ async function extractTurnIntentImpl({
     return emptyExtract({ action: 'missing_info', confidence: 'high', source: 'keyword' });
   }
 
+  // Modification intent wins over NLU book/clarify misreads — go straight to DB lookup in execute.
+  if (modifyIntent === 'cancel') {
+    const dropHoldOnly = isPendingHold && !refersToSavedAppointments(textBody) && !looksLikeCancelAll(textBody);
+    return annotateModifyExtract(emptyExtract({
+      action: dropHoldOnly ? 'cancel_pending' : 'cancel',
+      date_text: extractDateKey(textBody, tz),
+      confidence: 'high',
+      source: 'keyword',
+    }), textBody);
+  }
+  if (modifyIntent === 'reschedule') {
+    return annotateModifyExtract(emptyExtract({
+      action: 'reschedule',
+      date_text: extractDateKey(textBody, tz),
+      confidence: 'high',
+      source: 'keyword',
+    }), textBody);
+  }
+
   if (wait === BOOKING_WAIT.CLARIFICATION) {
     const pending = convState.context_data?.clarification || {};
     const numeric = interpretNumericFreeText({
@@ -1056,7 +1102,7 @@ async function extractTurnIntentImpl({
       inModify,
       services,
     );
-    if (mapped.action === 'clarify_needed') return mapped;
+    if (mapped.action === 'clarify_needed' && !detectModificationIntent(textBody)) return mapped;
     if (mapped.action === 'list_appointments' || looksLikeExistingAppointmentQuery(textBody)) {
       return emptyExtract({
         action: 'list_appointments',

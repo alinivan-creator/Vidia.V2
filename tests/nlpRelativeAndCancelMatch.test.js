@@ -137,7 +137,8 @@ describe('appointment match by slot hints', () => {
     );
     assert.equal(resolved.appointment, null);
     assert.equal(resolved.reason, 'need_choice');
-    assert.equal(resolved.candidates.length, 2);
+    assert.equal(resolved.candidates.length, 1);
+    assert.equal(resolved.candidates[0].id, 'a1');
   });
 
   it('does not guess when forceChoice (anulează tot / plural)', () => {
@@ -225,5 +226,52 @@ describe('cancel-all + appointment list picker', () => {
     assert.match(rows[0].description, /Tuns/);
     assert.equal(rows[2].id, MOD_PREFIX.CANCEL_ALL);
     assert.match(rows[2].title, /toate/i);
+  });
+});
+
+describe('colloquial cancel / reschedule NLP', () => {
+  it('captures Romanian cancel variants and skips fallback intents', async () => {
+    const { detectModificationIntent, triageUserIntent } = await import('../src/services/intentTriageService.js');
+    const phrases = [
+      'vreau să anulez niște programări',
+      'să șterg o programare',
+      'renunț la programare',
+      'șterg vineri',
+      'anulează programarea',
+      'nu mai vin',
+    ];
+    for (const phrase of phrases) {
+      assert.equal(detectModificationIntent(phrase), 'cancel', phrase);
+      assert.equal(triageUserIntent(phrase).intent, 'cancel', phrase);
+    }
+    assert.equal(detectModificationIntent('reprogramez programarea'), 'reschedule');
+    assert.equal(detectModificationIntent('vreau să modific ora'), 'reschedule');
+    assert.equal(detectModificationIntent('ce prețuri aveți'), null);
+    assert.equal(detectModificationIntent('ștergeți datele mele'), null);
+  });
+
+  it('does not auto-pick a weekday among many bookings', () => {
+    const fridayAndSat = [
+      {
+        id: 'a1',
+        selected_slot_start: '2026-08-21T07:00:00.000Z', // Friday 10:00 Bucharest
+        selected_service: { name: 'Tuns' },
+      },
+      {
+        id: 'a2',
+        selected_slot_start: '2026-08-22T07:00:00.000Z',
+        selected_service: { name: 'Barba' },
+      },
+    ];
+    const resolved = resolveTargetAppointment(
+      fridayAndSat,
+      { dateKey: '2026-08-21' },
+      TZ,
+      'cancel',
+    );
+    assert.equal(resolved.appointment, null);
+    assert.equal(resolved.reason, 'need_choice');
+    assert.equal(resolved.candidates.length, 1);
+    assert.equal(resolved.candidates[0].id, 'a1');
   });
 });

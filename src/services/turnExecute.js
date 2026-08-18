@@ -70,6 +70,7 @@ import {
   missingBusinessInfoMessage,
 } from '../utils/businessInfoLookup.js';
 import { detectClientLanguage } from '../utils/clientLanguage.js';
+import { detectModificationIntent, refersToSavedAppointments, looksLikeCancelAll } from './intentTriageService.js';
 import { getPendingTtlMinutes } from '../config/conversationConfig.js';
 import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
 import { buildContactLinkButtons } from '../utils/businessMessages.js';
@@ -1685,19 +1686,32 @@ async function executeReschedule({
   });
 }
 
-async function executeCancel({ business, recipientPhone, extract, activeDraft, convState, requestId }) {
+async function executeCancel({
+  business,
+  recipientPhone,
+  extract,
+  activeDraft,
+  convState,
+  requestId,
+  textBody = '',
+}) {
   const inModifyFlow = convState.current_step === CONVERSATION_STEPS.CONFIRMING_CANCEL
     || convState.current_step === CONVERSATION_STEPS.MODIFYING
     || convState.current_step === CONVERSATION_STEPS.RESCHEDULING;
   const wantsAll = Boolean(extract.cancel_all || extract.action === 'cancel_all');
+  const meansSavedBookings = wantsAll
+    || Boolean(extract.vague_choice)
+    || Boolean(extract.appointment_id)
+    || Boolean(extract.date_text)
+    || refersToSavedAppointments(textBody)
+    || looksLikeCancelAll(textBody);
 
-  // A pending NEW booking: "anulează" drops the hold — unless we are already
-  // cancelling a confirmed appointment (or the client asked to cancel all / picked one).
+  // A pending NEW booking: "anulează" drops the hold — unless the client
+  // is talking about saved appointments (plural, a day, "programare").
   if (
     activeDraft?.state === 'pending_confirmation'
     && !inModifyFlow
-    && !extract.appointment_id
-    && !wantsAll
+    && !meansSavedBookings
   ) {
     return executeCancelPending({ business, recipientPhone, requestId });
   }
@@ -2195,6 +2209,29 @@ async function dispatchExecute({
   const intent = convState.context_data?.intent;
   const lang = detectClientLanguage(textBody, convState?.context_data?.client_language);
 
+  const stolenMod = rerouteModification(textBody, extract);
+  if (stolenMod === 'cancel') {
+    return executeCancel({
+      business,
+      recipientPhone,
+      extract: { ...extract, action: 'cancel' },
+      activeDraft: draft,
+      convState,
+      requestId,
+      textBody,
+    });
+  }
+  if (stolenMod === 'reschedule') {
+    return executeReschedule({
+      business,
+      recipientPhone,
+      extract: { ...extract, action: 'reschedule' },
+      activeDraft: draft,
+      convState,
+      requestId,
+    });
+  }
+
   if (action === 'clarify_needed') {
     return executeClarifyNeeded({ business, recipientPhone, extract, convState, requestId });
   }
@@ -2345,6 +2382,7 @@ async function dispatchExecute({
         activeDraft: draft,
         convState,
         requestId,
+        textBody,
       });
     }
     return executeReschedule({
@@ -2440,7 +2478,15 @@ async function dispatchExecute({
     return executeReschedule({ business, recipientPhone, extract, activeDraft: draft, convState, requestId });
   }
   if (action === 'cancel' || action === 'cancel_all') {
-    return executeCancel({ business, recipientPhone, extract, activeDraft: draft, convState, requestId });
+    return executeCancel({
+      business,
+      recipientPhone,
+      extract,
+      activeDraft: draft,
+      convState,
+      requestId,
+      textBody,
+    });
   }
   if (action === 'hours') return executeHours(business, lang);
   if (action === 'services') return executeServices(business, lang);
@@ -2498,6 +2544,21 @@ async function dispatchExecute({
   }
 
   return executeChat(business);
+}
+
+/**
+ * Last-resort: never show "Nu am înțeles" when the client clearly wants cancel/reschedule.
+ */
+function rerouteModification(textBody, extract) {
+  const action = extract?.action;
+  const steal = new Set(['chat', 'off_topic', 'missing_info', 'clarify_needed', 'unknown_service', 'show_services', 'book']);
+  if (action === 'cancel' || action === 'cancel_all' || action === 'reschedule' || action === 'select_appointment') {
+    return null;
+  }
+  if (!steal.has(String(action || ''))) return null;
+  const mod = detectModificationIntent(textBody);
+  if (!mod) return null;
+  return mod;
 }
 
 function bookingMachineHandles(action) {
