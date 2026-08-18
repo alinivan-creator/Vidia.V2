@@ -5,7 +5,7 @@ import {
   isBusinessOperational,
   getCachedBusinessForWhatsAppTo,
 } from '../db/businessService.js';
-import { appendRecentTurn } from '../db/conversationStateService.js';
+import { appendRecentTurn, touchSessionTimestamp } from '../db/conversationStateService.js';
 import { logError } from '../db/loggerService.js';
 import { loadBusinessContext } from '../services/businessContext.js';
 import { routeInboundTurn } from '../services/inboundTurnService.js';
@@ -14,12 +14,14 @@ import { getBookingConfig } from '../utils/datetime.js';
 import {
   ensureClient,
   sendAiTransparencyWelcome,
+  buildInteractiveButtons,
 } from '../services/menuHandler.js';
 import {
   rememberInboundMessageSid,
   sendTypingIndicator,
   sendTextMessage,
   sendTechnicalFallbackMessage,
+  sendInteractiveButtons,
   clearRememberedMenuOptions,
 } from '../services/whatsappService.js';
 import { toE164, toMetaPhone } from '../utils/phone.js';
@@ -30,6 +32,10 @@ import {
   resolveLastBookingIntent,
 } from '../services/pendingExpiryService.js';
 import { resetExpiredSessionForRestart } from '../services/pendingExpiryCron.js';
+import {
+  getSessionTtlMinutes,
+  isConversationSessionExpired,
+} from '../services/sessionValidator.js';
 
 /**
  * Twilio WhatsApp inbound webhook.
@@ -279,8 +285,11 @@ async function processTwilioWebhook(body, requestId) {
     let convState = swept.conv;
     let activeDraft = swept.draft;
     const expiry = { expired: swept.expired, lastIntent: swept.lastIntent };
+    const sessionTtl = getSessionTtlMinutes(business);
+    const sessionExpired = Boolean(swept.idleExpired)
+      || isConversationSessionExpired(convState, sessionTtl);
 
-    if (swept.idleExpired || swept.expired) {
+    if (sessionExpired) {
       clearRememberedMenuOptions(business.id, recipientPhone);
       const restarted = await resetExpiredSessionForRestart({
         business,
@@ -288,15 +297,36 @@ async function processTwilioWebhook(body, requestId) {
         clientId,
         requestId,
       });
+      convState = restarted.conv || convState;
+      activeDraft = restarted.draft;
       await sendTextMessage({
         business,
         recipientPhone,
         requestId,
         text: restarted.message,
       });
-      // Fresh session started — wait for the next client reply (service name).
-      return;
+      const menuButtons = buildInteractiveButtons(business);
+      if (menuButtons.length) {
+        await sendInteractiveButtons({
+          business,
+          recipientPhone,
+          requestId,
+          bodyText: 'Alege o opțiune sau scrie ce ai nevoie.',
+          buttons: menuButtons,
+        });
+      }
+      console.log('[webhook] Session TTL reset — processing inbound on a clean slate', {
+        sessionTtl,
+        idleExpired: Boolean(swept.idleExpired),
+        pendingExpired: Boolean(swept.expired),
+      });
     }
+
+    convState = await touchSessionTimestamp({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      requestId,
+    }) || convState;
 
     console.log('[webhook] Conversation state:', {
       step: convState.current_step,
@@ -304,6 +334,7 @@ async function processTwilioWebhook(body, requestId) {
       isNewClient: isNew,
       pendingSwept: swept.expired,
       idleExpired: Boolean(swept.idleExpired),
+      sessionExpired,
     });
 
     if (textBody.trim()) {

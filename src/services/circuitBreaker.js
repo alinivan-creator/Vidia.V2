@@ -6,11 +6,12 @@
 const THRESHOLD = 3;
 const OPEN_MS = 30_000;
 
-/** @typedef {'openai' | 'twilio' | 'supabase'} CircuitName */
+/** @typedef {'openai' | 'gemini' | 'twilio' | 'supabase'} CircuitName */
 
 /** @type {Record<CircuitName, { failures: number, openUntil: number }>} */
 const circuits = {
   openai: { failures: 0, openUntil: 0 },
+  gemini: { failures: 0, openUntil: 0 },
   twilio: { failures: 0, openUntil: 0 },
   supabase: { failures: 0, openUntil: 0 },
 };

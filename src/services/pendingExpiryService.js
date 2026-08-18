@@ -12,10 +12,12 @@ import {
   setConversationStep,
   getOrCreateConversationState,
   isBookingFlowStep,
+  isModificationFlowStep,
 } from '../db/conversationStateService.js';
 import { getEmployeeById, resolveEmployeeCalendarId } from '../db/employeeService.js';
 import { deleteCalendarEvent, resolveCalendarEventId } from './googleCalendarService.js';
 import { formatSlotLabel } from '../utils/datetime.js';
+import { getSessionTtlMinutes, readSessionTimestamp } from './sessionValidator.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 /** @typedef {import('../db/draftBookingService.js').DraftBooking} DraftBooking */
@@ -233,13 +235,13 @@ export async function sweepStalePendingForPhone({
   return { draft, conv, expired, lastIntent, idleExpired: pickerUnstuck.unstuck === true };
 }
 
-/** Idle picker (service/date/slot) uses the same TTL as pending holds (default 5 min). */
+/** Idle conversation uses session TTL (default 10 min), not the 5-min slot hold. */
 function stalePickerMs(business) {
-  return Math.max(1, getPendingTtlMinutes(business)) * 60 * 1000;
+  return Math.max(1, getSessionTtlMinutes(business)) * 60 * 1000;
 }
 
 /**
- * CHOOSING_SERVICE / waiting_for_* left idle longer than pending TTL must not
+ * CHOOSING_SERVICE / waiting_for_* left idle longer than session TTL must not
  * resume as if the client never left — cancel draft and reset to IDLE.
  */
 async function unstickStaleBookingPicker({
@@ -259,6 +261,7 @@ async function unstickStaleBookingPicker({
     || step === CONVERSATION_STEPS.WAITING_FOR_TIME
     || step === CONVERSATION_STEPS.WAITING_FOR_DATE_TIME
     || step === CONVERSATION_STEPS.WAITING_FOR_CLARIFICATION
+    || isModificationFlowStep(step)
     || (isBookingFlowStep(step) && draft?.state === 'browsing');
 
   if (!pickerStep && draft?.state !== 'browsing') {
@@ -269,7 +272,8 @@ async function unstickStaleBookingPicker({
   }
 
   const ttlMs = stalePickerMs(business);
-  const convAge = conv?.updated_at ? Date.now() - new Date(conv.updated_at).getTime() : Number.POSITIVE_INFINITY;
+  const inboundTs = readSessionTimestamp(conv);
+  const convAge = inboundTs ? Date.now() - inboundTs : Number.POSITIVE_INFINITY;
   const draftAge = draft?.updated_at ? Date.now() - new Date(draft.updated_at).getTime() : 0;
   const stale = convAge >= ttlMs || draftAge >= ttlMs;
   if (!stale) {

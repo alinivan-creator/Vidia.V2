@@ -5,6 +5,7 @@ import {
   buildConversationTurnContext,
   isOpenAiTemporarilyDown,
 } from './aiService.js';
+import { isGeminiConfigured } from './llmProvider.js';
 import { runFunctionCallingTurn } from './aiAgentService.js';
 import {
   handleBookingInteractiveReply,
@@ -155,7 +156,8 @@ export async function handlePendingHoldTurn({
     clarified: readClarified(convState),
   });
 
-  const skipAgent = !process.env.OPENAI_API_KEY || isOpenAiTemporarilyDown();
+  const skipAgent = (!process.env.OPENAI_API_KEY && !isGeminiConfigured())
+    || (isOpenAiTemporarilyDown() && !isGeminiConfigured());
   if (!skipAgent) {
     const result = await runFunctionCallingTurn({
       business,

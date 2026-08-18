@@ -1,29 +1,32 @@
 /**
- * VIDIA booking architecture — live WhatsApp path (Twilio).
+ * VIDIA booking architecture — Dual-AI + backend SSOT (Twilio WhatsApp).
  *
- * Flow (SSOT):
+ * Flow:
  *   POST /webhook/whatsapp
  *     → tenant by Twilio To → businesses.whatsapp_phone_number_id (Supabase)
  *     → ProfileName → clients.display_name (if empty)
- *     → sweepStalePendingForPhone / resetExpiredSessionForRestart
+ *     → sweepStalePendingForPhone (hold TTL) + conversation session TTL check
+ *     → if session idle > session_ttl_minutes: greeting + hardReset, then process inbound
  *     → routeInboundTurn → turnPipeline
- *          1. turnExtract  (keyword + LLM JSON Mode parser with tenant RAG)
- *          2. turnExecute  (validate slots from calendar_cache + Admin hours)
- *          3. turnPresent  (templates only — never invent availability)
+ *          1. Dialogue Agent — turnExtract (keywords first; Gemini JSON parse, OpenAI fallback)
+ *          2. Execution Agent — turnExecute (catalog / hours / calendar_cache). No LLM.
+ *          3. turnPresent — templates from Execution JSON only (optional Gemini polish)
+ *
+ * TTLs (independent):
+ *   pending_ttl_minutes (default 5) — calendar hold for pending_confirmation only
+ *   session_ttl_minutes (default 10) — idle booking/modify conversation; last client inbound
  *
  * Background:
  *   GET/POST /cron/expire-pending every minute (vercel.json)
- *     → expire pending_confirmation past Admin pending_ttl_minutes (default 5)
+ *     → expire pending_confirmation past Admin pending_ttl_minutes
  *
  * Date/time UX:
- *   Hybrid: Twilio list-picker / quick-reply + free-text NLP (Intent Classifier).
- *   Parser system prompt injects per-tenant SSOT (services, hours, employees, Admin facts).
- *   Invented services rejected → „Din păcate nu oferim…”. Availability only from backend.
- *   Unclear input → friendly guidance (menu or example phrase). No „Data de 0”.
- *   After successful booking: hardReset session (no leftover pending/turns).
+ *   Hybrid: Twilio list-picker / quick-reply + free-text NLP.
+ *   Invented services rejected. Availability only from backend. No „Data de 0”.
+ *   After successful booking: hardReset session.
  *
  * Confirm UX:
- *   Confirmation + Adaugă în calendar URL button; no duplicate Maps markdown line.
+ *   Confirmation + Adaugă în calendar URL button.
  *   Name is never asked when Twilio ProfileName / display_name exists.
  */
-export const BOOKING_ARCHITECTURE_VERSION = 'hybrid-nlp-ssot-v5';
+export const BOOKING_ARCHITECTURE_VERSION = 'dual-ai-session-ttl-v6';

@@ -1,13 +1,13 @@
 /**
- * 3-layer inbound pipeline:
- *   1. Extractor — structured JSON only (src/lib/ai/extractor.js)
- *   2. State machine — session + slot decisions (src/lib/booking/stateMachine.js)
- *   3. Response formatter — WhatsApp text from Layer 2 actions (src/lib/ai/responseFormatter.js)
+ * Dual-AI inbound pipeline:
+ *   1. Dialogue Agent (Gemini) — extractTurnIntent → intent_actions JSON
+ *   2. Execution Agent (backend) — catalog / hours / calendar SSOT, structured JSON
+ *   3. Present — WhatsApp templates from Execution JSON only
  */
 
 import { debugLog } from '../utils/debugLog.js';
 import { extractTurnIntent } from './turnExtract.js';
-import { executeTurn } from './turnExecute.js';
+import { runExecutionAgent } from './executionAgent.js';
 import { presentTurn } from './turnPresent.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
@@ -54,7 +54,7 @@ export async function processTurnPipeline({
     is_ambiguous: extract.extraction?.is_ambiguous ?? null,
   });
 
-  const result = await executeTurn({
+  const { handler: result, envelope } = await runExecutionAgent({
     business,
     recipientPhone,
     extract,
@@ -67,9 +67,9 @@ export async function processTurnPipeline({
 
   debugLog('turn-pipeline execute', {
     requestId,
-    status: result.status,
-    action_performed: result.action_performed,
-    next_required_step: result.next_required_step,
+    status: envelope.status,
+    action_performed: envelope.action,
+    next_required_step: envelope.next_step,
     machine_action: result.machine_action ?? null,
   });
 
@@ -80,5 +80,5 @@ export async function processTurnPipeline({
     requestId,
   });
 
-  return { extract, result };
+  return { extract, result, envelope };
 }

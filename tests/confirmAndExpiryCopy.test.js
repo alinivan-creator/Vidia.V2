@@ -15,27 +15,27 @@ describe('confirm menu + session expiry copy', () => {
       null,
       'confirm',
     );
-    assert.match(body, /Răspunde cu \*Confirmă\* sau \*Anulează\*/);
-    assert.match(body, /\*1\* \/ \*2\*/);
+    assert.match(body, /Atinge \*Confirmă\* sau \*Anulează\*/);
+    assert.match(body, /1\. Confirmă/);
     assert.doesNotMatch(body, /Poți răspunde cu \*numele\*/);
   });
 
   it('generic menus still allow name or number', () => {
     const body = formatNumberedMenu('Alege', [{ id: 'a', title: 'Tuns' }], null, 'service');
-    assert.match(body, /Scrie \*numele\* opțiunii/);
+    assert.match(body, /Atinge o opțiune de mai jos/);
     assert.doesNotMatch(body, /Poți răspunde cu \*numele\*/);
   });
 
-  it('session expiry restart asks for a service', () => {
+  it('session expiry restart is a clean-slate greeting', () => {
     const text = buildSessionExpiredRestartMessage({
       name: 'Salon Test',
       booking_settings: {
         services: [{ id: '1', name: 'Tuns', duration_minutes: 30 }],
       },
     });
-    assert.match(text, /Sesiunea ta a expirat din motive de inactivitate/);
-    assert.match(text, /Hai să o luăm de la început/);
-    assert.match(text, /Ce serviciu/);
-    assert.match(text, /Tuns/);
+    assert.match(text, /Asistent Vidia/);
+    assert.match(text, /cu ce te pot ajuta/);
+    assert.match(text, /Salon Test/);
+    assert.doesNotMatch(text, /Sesiunea ta a expirat/);
   });
 });

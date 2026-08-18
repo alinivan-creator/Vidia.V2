@@ -281,7 +281,7 @@
             <label class="text-sm font-medium">Google Calendar ID (email calendar)</label>
             <input id="bf-calendar" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="salonulmeu@gmail.com" />
           </div>
-          <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
+          <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3">
             <div>
               <label class="text-sm font-medium">Interval slot (min)</label>
               <input id="bf-slot-interval" type="number" min="5" max="240" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="30" />
@@ -295,9 +295,14 @@
               <input id="bf-buffer-minutes" type="number" min="0" max="120" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="0" />
             </div>
             <div>
-              <label class="text-sm font-medium">TTL pending / idle (min)</label>
+              <label class="text-sm font-medium">TTL hold slot (min)</label>
               <input id="bf-pending-ttl" type="number" min="1" max="60" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="5" />
-              <p class="text-[10px] text-slate-500 mt-0.5">Hold slot + conversație abandonată se anulează. Implicit 5 min.</p>
+              <p class="text-[10px] text-slate-500 mt-0.5">Cât stă reținut un slot neconfirmat. Implicit 5 min.</p>
+            </div>
+            <div>
+              <label class="text-sm font-medium">TTL sesiune (min)</label>
+              <input id="bf-session-ttl" type="number" min="2" max="120" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="10" />
+              <p class="text-[10px] text-slate-500 mt-0.5">După inactivitate, conversația reîncepe de la zero. Implicit 10 min.</p>
             </div>
           </div>
         </div>

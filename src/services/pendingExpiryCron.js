@@ -7,30 +7,25 @@ import { getActiveBusinesses } from '../db/businessService.js';
 import { logError } from '../db/loggerService.js';
 import { expireStalePendingForBusiness } from './pendingExpiryService.js';
 import { getPendingTtlMinutes } from '../config/conversationConfig.js';
-import { formatServiceAskMessage } from '../utils/serviceMatch.js';
-import { getBookingConfig } from '../utils/datetime.js';
 import {
   CONVERSATION_STEPS,
-  setConversationStep,
+  resetConversationState,
+  getOrCreateConversationState,
 } from '../db/conversationStateService.js';
-import { startBrowsingFlow } from '../db/draftBookingService.js';
-import { BOOKING_WAIT } from './bookingWaitState.js';
+import { cancelActiveDraftsForPhone } from '../db/draftBookingService.js';
+import { buildFreshSessionGreeting } from './sessionValidator.js';
 
 /**
- * Friendly copy when the client returns after TTL cancelled their session.
+ * Fresh-slate greeting after conversation TTL.
  * @param {import('../db/businessService.js').Business} business
  */
 export function buildSessionExpiredRestartMessage(business) {
-  const services = getBookingConfig(business).services;
-  const ask = formatServiceAskMessage(services);
-  return (
-    `Sesiunea ta a expirat din motive de inactivitate. Hai să o luăm de la început.\n\n` +
-    ask
-  );
+  return buildFreshSessionGreeting(business);
 }
 
 /**
- * After TTL expiry on inbound: reset to service choice and prepare draft.
+ * After TTL expiry on inbound: drop in-flight booking state so the next
+ * extract/execute turn has no leftover date, menu, or draft.
  *
  * @param {Object} params
  * @param {import('../db/businessService.js').Business} params.business
@@ -44,36 +39,32 @@ export async function resetExpiredSessionForRestart({
   clientId = null,
   requestId = null,
 }) {
-  let draft = null;
+  void clientId;
   try {
-    if (clientId) {
-      draft = await startBrowsingFlow({
-        businessId: business.id,
-        clientId,
-        rawPhone,
-        requestId,
-      });
-    }
+    await cancelActiveDraftsForPhone({
+      businessId: business.id,
+      rawPhone,
+      context: { step: 'cancelled_session_ttl' },
+      requestId,
+    });
   } catch (error) {
-    console.warn('[pending-cron] startBrowsingFlow after expiry failed', error);
+    console.warn('[session-ttl] cancel drafts after expiry failed', error);
   }
 
-  await setConversationStep({
+  await resetConversationState({
     businessId: business.id,
     rawPhone,
-    step: CONVERSATION_STEPS.WAITING_FOR_SERVICE,
-    context: {
-      draft_id: draft?.id ?? null,
-      intent: 'book',
-      booking_wait: BOOKING_WAIT.SERVICE,
-      last_menu: null,
-      session_restart_after_expiry: true,
-    },
-    mergeContext: false,
+    keepLastIntent: false,
+    hardReset: true,
     requestId,
   });
 
-  return { draft, message: buildSessionExpiredRestartMessage(business) };
+  const conv = await getOrCreateConversationState(business.id, rawPhone);
+  return {
+    draft: null,
+    conv: conv?.current_step === CONVERSATION_STEPS.IDLE ? conv : conv,
+    message: buildFreshSessionGreeting(business),
+  };
 }
 
 /**
@@ -121,26 +112,17 @@ export async function runPendingExpiryCron({ requestId = null } = {}) {
       }
     } catch (error) {
       summary.errors += 1;
-      console.error('[pending-cron] business sweep failed', {
-        businessId: business?.id,
-        error,
-      });
       await logError({
-        message: `pending expiry cron failed for business ${business?.id}`,
+        message: 'pending expiry cron: tenant sweep failed',
         source: 'cron',
-        severity: 'warning',
-        businessId: business?.id ?? null,
+        severity: 'error',
+        businessId: business.id,
         requestId,
         error,
       });
     }
   }
 
-  console.log('[pending-cron] Done', {
-    ...summary,
-    durationMs: Date.now() - started,
-    requestId,
-  });
-
+  console.log('[pending-cron] done', { ...summary, ms: Date.now() - started, requestId });
   return summary;
 }

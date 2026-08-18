@@ -296,6 +296,7 @@ const defaultSettings = {
   slot_interval_minutes: 30,
   booking_horizon_days: 7,
   pending_ttl_minutes: 5,
+  session_ttl_minutes: 10,
   business_hours: {
     '0': null,
     '1': { open: '09:00', close: '18:00' },
@@ -878,6 +879,7 @@ function openBusinessModal(id = null, opts = {}) {
     $('#bf-horizon-days').value = settings.booking_horizon_days ?? defaultSettings.booking_horizon_days;
     $('#bf-buffer-minutes').value = settings.buffer_minutes ?? 0;
     $('#bf-pending-ttl') && ($('#bf-pending-ttl').value = settings.pending_ttl_minutes ?? defaultSettings.pending_ttl_minutes);
+    $('#bf-session-ttl') && ($('#bf-session-ttl').value = settings.session_ttl_minutes ?? defaultSettings.session_ttl_minutes);
     const advanced = { ...settings };
     delete advanced.services;
     delete advanced.google;
@@ -945,6 +947,7 @@ function openBusinessModal(id = null, opts = {}) {
     $('#bf-horizon-days').value = String(defaultSettings.booking_horizon_days);
     $('#bf-buffer-minutes').value = '0';
     $('#bf-pending-ttl').value = String(defaultSettings.pending_ttl_minutes);
+    $('#bf-session-ttl') && ($('#bf-session-ttl').value = String(defaultSettings.session_ttl_minutes));
     $('#bf-settings').value = '{}';
     $('#bf-ai-facts').value = '';
     $('#bf-welcome').value = '';
@@ -1249,6 +1252,7 @@ $('#business-form').addEventListener('submit', async (e) => {
   booking_settings.booking_horizon_days = Number($('#bf-horizon-days').value) || 7;
   booking_settings.buffer_minutes = Number($('#bf-buffer-minutes').value) || 0;
   booking_settings.pending_ttl_minutes = Number($('#bf-pending-ttl')?.value) || 5;
+  booking_settings.session_ttl_minutes = Number($('#bf-session-ttl')?.value) || 10;
   booking_settings.conversation_logic = ($('#bf-conversation-logic')?.value || '').trim();
   delete booking_settings.privacy_url;
 

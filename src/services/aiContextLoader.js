@@ -20,6 +20,12 @@ import {
 } from '../utils/datetime.js';
 import { getBusinessContactInfo } from './contactService.js';
 import { isOpenAiTemporarilyDown, markOpenAiUnavailable } from './openaiGate.js';
+import {
+  completeGeminiChat,
+  getOpenAiApiKey,
+  isGeminiConfigured,
+  isOpenAiConfigured,
+} from './llmProvider.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -348,9 +354,10 @@ export async function completeTenantChat({
     return { ok: false, error: 'tenant_context_missing', context: null, message: null, text: null };
   }
 
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey || isOpenAiTemporarilyDown()) {
-    return { ok: false, error: 'openai_unavailable', context: ctx, message: null, text: null };
+  const geminiOk = isGeminiConfigured();
+  const openaiOk = isOpenAiConfigured() && !isOpenAiTemporarilyDown();
+  if (!geminiOk && !openaiOk) {
+    return { ok: false, error: 'llm_unavailable', context: ctx, message: null, text: null };
   }
 
   let system = '';
@@ -409,6 +416,36 @@ export async function completeTenantChat({
         ? Math.min(0.4, ctx.temperature)
         : ctx.temperature;
 
+  const tokenBudget = maxTokens ?? (jsonMode ? 400 : useTools ? 400 : 280);
+
+  if (geminiOk && !useTools) {
+    const gemini = await completeGeminiChat({
+      system,
+      messages: chatMessages,
+      jsonMode: Boolean(jsonMode || jsonSchema),
+      temperature: temp,
+      maxTokens: tokenBudget,
+      timeoutMs,
+      businessId: ctx.businessId,
+      requestId,
+    });
+    if (gemini.ok && gemini.text) {
+      return {
+        ok: true,
+        error: null,
+        context: ctx,
+        message: { role: 'assistant', content: gemini.text },
+        text: gemini.text,
+        provider: 'gemini',
+      };
+    }
+  }
+
+  const apiKey = getOpenAiApiKey();
+  if (!apiKey || !openaiOk) {
+    return { ok: false, error: 'llm_unavailable', context: ctx, message: null, text: null };
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -417,7 +454,7 @@ export async function completeTenantChat({
     const body = {
       model: ctx.model,
       temperature: temp,
-      max_tokens: maxTokens ?? (jsonMode ? 400 : useTools ? 400 : 280),
+      max_tokens: tokenBudget,
       messages: chatMessages,
     };
     if (jsonSchema && jsonSchema.schema) {

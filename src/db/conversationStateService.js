@@ -233,6 +233,29 @@ export async function resetConversationState({
 }
 
 /**
+ * Stamp last client inbound without changing the conversation step.
+ */
+export async function touchSessionTimestamp({
+  businessId,
+  rawPhone,
+  requestId = null,
+}) {
+  const existing = await getOrCreateConversationState(businessId, rawPhone);
+  const nowIso = new Date().toISOString();
+  return setConversationStep({
+    businessId,
+    rawPhone,
+    step: existing.current_step || CONVERSATION_STEPS.IDLE,
+    context: {
+      session_timestamp: nowIso,
+      last_inbound_at: nowIso,
+    },
+    mergeContext: true,
+    requestId,
+  });
+}
+
+/**
  * Appends a short turn to conversation memory (last 8 messages).
  */
 export async function appendRecentTurn({
