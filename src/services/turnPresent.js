@@ -312,6 +312,9 @@ export function renderHandlerResult(business, result) {
         || (lang === 'en'
           ? `Unfortunately we don't offer that service. Please choose from the list.`
           : 'Din păcate nu oferim acest serviciu. Te rog alege din listă.');
+    case 'STALE_CHOICE':
+      return (typeof d.client_message === 'string' && d.client_message.trim())
+        || 'Opțiunea dintr-un mesaj mai vechi nu mai e valabilă. Alege din lista actuală sau scrie *programare*.';
     case 'MISSING_INFO':
       return d.client_message
         || missingBusinessInfoMessage(d.topic_label || null, lang)
@@ -388,6 +391,7 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
     || result.user_message_template_key === 'MISSING_SERVICE'
     || result.user_message_template_key === 'MISSING_APPOINTMENT'
     || result.user_message_template_key === 'UNKNOWN_SERVICE'
+    || result.user_message_template_key === 'STALE_CHOICE'
     || result.user_message_template_key === 'CONTACT';
   const polished = skipPolish ? null : await polishWithAi(business, result, rendered);
   const text = polished || rendered;
@@ -490,6 +494,7 @@ export async function presentTurn({ business, recipientPhone, result, requestId 
     'MISSING_SERVICE',
     'MISSING_APPOINTMENT',
     'UNKNOWN_SERVICE',
+    'STALE_CHOICE',
     'MENU',
   ]);
 

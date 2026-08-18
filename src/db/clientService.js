@@ -183,7 +183,7 @@ export async function getClientByPhone({ businessId, rawPhone, requestId = null 
  * @param {Object} params
  * @param {string} params.clientId
  * @param {string} params.displayName
- * @param {string | null} [params.businessId]
+ * @param {string} params.businessId tenant scope (required)
  * @param {string | null} [params.requestId]
  * @returns {Promise<Client | null>}
  */
@@ -198,14 +198,14 @@ export async function updateClientDisplayName({
     .trim()
     .slice(0, 80);
 
-  if (!clientId || cleaned.length < 2) return null;
+  if (!clientId || !businessId || cleaned.length < 2) return null;
 
-  const { data, error } = await supabase
+  const query = supabase
     .from('clients')
     .update({ display_name: cleaned })
     .eq('id', clientId)
-    .select(CLIENT_COLUMNS)
-    .single();
+    .eq('business_id', businessId);
+  const { data, error } = await query.select(CLIENT_COLUMNS).single();
 
   if (error) {
     await logError({

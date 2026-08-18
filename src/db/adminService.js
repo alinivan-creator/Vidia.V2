@@ -1,9 +1,10 @@
 import { supabase } from '../config/supabase.js';
 import { logError } from './loggerService.js';
 import { getSchemaHealthSnapshot, reportQueryFailure } from './schemaHealth.js';
-import { hydrateBusiness } from './businessService.js';
+import { hydrateBusiness, invalidateBusinessCacheForWhatsAppTo } from './businessService.js';
 import { listServicesForBusiness, replaceServicesForBusiness } from './serviceCatalog.js';
 import { listRecentDraftsForJournal } from './draftBookingService.js';
+import { normalizeBusinessPhoneKey } from '../utils/phone.js';
 
 /** @typedef {import('./businessService.js').Business} Business */
 
@@ -111,6 +112,29 @@ function scrubSecrets(payload, keys, isUpdate) {
       delete payload[key];
     }
   }
+}
+
+/**
+ * @param {string} rawNumber
+ * @param {string | null} excludeBusinessId
+ * @returns {Promise<boolean>}
+ */
+async function isWhatsAppNumberTaken(rawNumber, excludeBusinessId) {
+  const key = normalizeBusinessPhoneKey(rawNumber);
+  if (!key) return false;
+  const { data, error } = await supabase
+    .from('businesses')
+    .select('id, whatsapp_phone_number_id')
+    .not('whatsapp_phone_number_id', 'is', null);
+  if (error) {
+    console.error('Eroare detalii:', error);
+    return true;
+  }
+  return (data ?? []).some(
+    (row) =>
+      row.id !== excludeBusinessId
+      && normalizeBusinessPhoneKey(row.whatsapp_phone_number_id) === key,
+  );
 }
 
 /**
@@ -284,6 +308,13 @@ export async function upsertBusinessAdmin(input) {
     delete fullPayload.twilio_account_sid;
   }
 
+  const waNumber = typeof basePayload.whatsapp_phone_number_id === 'string'
+    ? basePayload.whatsapp_phone_number_id
+    : null;
+  if (waNumber && await isWhatsAppNumberTaken(waNumber, id || null)) {
+    return { business: null, error: 'Acest număr WhatsApp este deja folosit de altă locație.' };
+  }
+
   /**
    * @param {Record<string, unknown>} payload
    */
@@ -318,6 +349,9 @@ export async function upsertBusinessAdmin(input) {
   }
 
   if (error) {
+    if (/unique|duplicate|whatsapp_phone/i.test(error.message ?? '')) {
+      return { business: null, error: 'Acest număr WhatsApp este deja folosit de altă locație.' };
+    }
     await logError({
       message: id ? 'upsertBusinessAdmin update failed' : 'upsertBusinessAdmin insert failed',
       source: 'database',
@@ -328,6 +362,13 @@ export async function upsertBusinessAdmin(input) {
     });
     return { business: null, error: error.message };
   }
+
+  invalidateBusinessCacheForWhatsAppTo(
+    typeof existingRow?.whatsapp_phone_number_id === 'string'
+      ? existingRow.whatsapp_phone_number_id
+      : null,
+  );
+  invalidateBusinessCacheForWhatsAppTo(waNumber);
 
   const businessId = /** @type {string} */ (data.id);
   let savedServices = null;
@@ -397,6 +438,12 @@ export async function setBusinessStatusAdmin(businessId, status) {
 export async function deleteBusinessAdmin(businessId) {
   if (!businessId) return { ok: false, error: 'ID lipsă' };
 
+  const { data: existing } = await supabase
+    .from('businesses')
+    .select('whatsapp_phone_number_id')
+    .eq('id', businessId)
+    .maybeSingle();
+
   const { error } = await supabase.from('businesses').delete().eq('id', businessId);
 
   if (error) {
@@ -410,6 +457,11 @@ export async function deleteBusinessAdmin(businessId) {
     return { ok: false, error: error.message };
   }
 
+  invalidateBusinessCacheForWhatsAppTo(
+    typeof existing?.whatsapp_phone_number_id === 'string'
+      ? existing.whatsapp_phone_number_id
+      : null,
+  );
   return { ok: true, error: null };
 }
 

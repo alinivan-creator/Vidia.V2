@@ -854,17 +854,32 @@ async function extractTurnIntentImpl({
     || lastMenu?.kind === 'day_grid'
     || lastMenu?.kind === 'time_grid';
 
-  // Native quick-reply / remembered window id always wins.
+  // Native quick-reply / remembered window id always wins — but only the CURRENT last_menu.
+  if (buttonPayload) {
+    const inMenu = Boolean(lastMenu?.options?.some((o) => o.id === buttonPayload));
+    if (!inMenu) {
+      return emptyExtract({
+        action: 'stale_choice',
+        choice_id: buttonPayload,
+        confidence: 'high',
+        source: 'menu',
+      });
+    }
+  }
   if (lastMenu?.options?.length) {
     const choiceId = resolveInteractiveChoice(textBody, buttonPayload, lastMenu.options);
     if (choiceId) {
       const fromChoice = extractFromChoiceId(choiceId, {}, business);
       if (fromChoice.action !== 'unknown') return fromChoice;
+      if (buttonPayload) {
+        return emptyExtract({
+          action: 'stale_choice',
+          choice_id: buttonPayload,
+          confidence: 'high',
+          source: 'menu',
+        });
+      }
     }
-  }
-  if (buttonPayload) {
-    const fromPayload = extractFromChoiceId(buttonPayload, {}, business);
-    if (fromPayload.action !== 'unknown') return fromPayload;
   }
 
   // Interactive list/button taps always win (handled above).
@@ -1196,7 +1211,7 @@ async function extractTurnIntentImpl({
     );
     const leavePicker = new Set([
       'select_slot', 'grid_nav', 'reprompt_grid', 'confirm', 'cancel', 'cancel_pending',
-      'cancel_all', 'select_appointment',
+      'cancel_all', 'select_appointment', 'stale_choice',
       'menu', 'contact', 'list_appointments', 'callback', 'hours', 'services', 'hours_and_services',
       'missing_info', 'resolve_clarification', 'clarify_needed', 'abort', 'set_name',
       'select_service', 'select_employee', 'accept_offer', 'resume_yes', 'resume_no',

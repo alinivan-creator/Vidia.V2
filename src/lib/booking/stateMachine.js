@@ -324,6 +324,7 @@ function applyNumberToDraft(draft, field, value, timezone) {
  * @param {string | null} [params.extractTime]
  * @param {string | null} [params.extractServiceId]
  * @param {string | null} [params.extractServiceName]
+ * @param {Date} [params.now]
  */
 export function reduceBookingTurn({
   state,
@@ -335,6 +336,7 @@ export function reduceBookingTurn({
   extractTime = null,
   extractServiceId = null,
   extractServiceName = null,
+  now = new Date(),
 }) {
   let nextDraft = emptyDraft(draft);
   if (extractServiceId) {
@@ -396,7 +398,7 @@ export function reduceBookingTurn({
   }
 
   const uttered = text
-    ? parseRomanianDateTimeParts(text, timezone)
+    ? parseRomanianDateTimeParts(text, timezone, now)
     : { dateKey: null, timeHHmm: null };
   const intent = extraction?.intent;
   const dateValue = uttered.dateKey || extractDate || extraction?.extracted_date || null;

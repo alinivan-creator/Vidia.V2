@@ -10,8 +10,71 @@ import { listOpenDayWindows, listTimeWindows } from '../utils/bookingGrid.js';
 import { addCalendarDays, formatDateKey, getBookingConfig } from '../utils/datetime.js';
 import { getAvailableSlots } from '../db/cacheService.js';
 import { resolveServiceDurationMinutes } from '../utils/workingHours.js';
+import { getEmployeeById } from '../db/employeeService.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function flowTokenSecret() {
+  return env.supabaseServiceRoleKey;
+}
+
+function flowTokenHmac(businessId) {
+  return crypto.createHmac('sha256', flowTokenSecret()).update(businessId).digest('hex').slice(0, 16);
+}
+
+function timingSafeHexEqual(a, b) {
+  const left = Buffer.from(String(a));
+  const right = Buffer.from(String(b));
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
+}
+
+/**
+ * Signed tenant binding for WhatsApp Flows. Never accept a client `business_id`.
+ * @param {string} businessId
+ * @returns {string}
+ */
+export function createFlowToken(businessId) {
+  const id = String(businessId || '');
+  if (!UUID_RE.test(id)) return '';
+  return `vidia.${id}.${flowTokenHmac(id)}`;
+}
+
+/**
+ * @param {string | null | undefined} token
+ * @returns {string | null} business UUID
+ */
+export function parseFlowToken(token) {
+  const raw = String(token || '').trim();
+  const signed = raw.split('.');
+  if (signed.length !== 3 || signed[0] !== 'vidia') return null;
+  const id = signed[1];
+  const sig = signed[2];
+  if (!UUID_RE.test(id) || !timingSafeHexEqual(sig, flowTokenHmac(id))) return null;
+  return id;
+}
+
+/**
+ * Catalog row for this tenant only — ignore client-supplied duration.
+ * @param {Business} business
+ * @param {Record<string, unknown>} data
+ */
+export function catalogServiceFromFlowData(business, data) {
+  const name = typeof data.service_name === 'string' ? data.service_name.trim() : '';
+  const id = typeof data.service_id === 'string' ? data.service_id.trim() : '';
+  if (!name && !id) return null;
+  const services = [
+    ...(Array.isArray(business.services) ? business.services : []),
+    ...(Array.isArray(business.booking_settings?.services)
+      ? /** @type {Array<{ id?: string, name?: string, duration_minutes?: number }>} */ (
+        business.booking_settings.services
+      )
+      : []),
+  ];
+  return services.find((s) => (id && s.id === id) || (name && s.name === name)) || null;
+}
 
 /**
  * @param {Business} business
@@ -65,13 +128,19 @@ export async function buildFlowSlotsForDate({
   employeeId = null,
   draftId = null,
 }) {
-  const duration = resolveServiceDurationMinutes(business, service) || 30;
+  const duration = resolveServiceDurationMinutes(business, service);
+  if (!duration) {
+    return [{ id: 'slot_none', title: 'Nicio oră liberă' }];
+  }
+  const scopedEmployeeId = employeeId
+    ? (await getEmployeeById(employeeId, business.id))?.id || null
+    : null;
   const slots = await getAvailableSlots({
     business,
     durationMinutes: duration,
     limit: 24,
     excludeDraftId: draftId,
-    employeeId,
+    employeeId: scopedEmployeeId,
     dateKey,
   });
   const times = listTimeWindows(slots, business.timezone || 'Europe/Bucharest');

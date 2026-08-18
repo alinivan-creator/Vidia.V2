@@ -4,6 +4,7 @@ import { persistLastMenu, appendRecentTurn } from '../db/conversationStateServic
 import { toMetaPhone, toTwilioWhatsApp, toE164 } from '../utils/phone.js';
 import { recordFailure, recordSuccess, isCircuitOpen, TECHNICAL_FALLBACK_MESSAGE } from './circuitBreaker.js';
 import { CALENDAR_ANCHOR_TEXT } from '../utils/calendarLink.js';
+import { createFlowToken } from './whatsappFlowService.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -132,8 +133,10 @@ export function formatNumberedMenu(bodyText, options, footerText = null, menuKin
  */
 export function resolveInteractiveChoice(body, buttonPayload, options = []) {
   const payload = String(buttonPayload ?? '').trim();
-  if (payload && options.some((o) => o.id === payload)) return payload;
-  if (payload) return payload;
+  if (payload) {
+    // Never honor an id that is not on the current last_menu (stale WhatsApp history taps).
+    return options.some((o) => o.id === payload) ? payload : null;
+  }
 
   const numbered = resolveNumberedChoice(body, options);
   if (numbered) return numbered;
@@ -1023,7 +1026,7 @@ export async function sendBookingFlow({
   const to = toTwilioWhatsApp(recipientPhone);
   const from = toTwilioWhatsApp(fromNumber);
   const client = createTwilioClient(business);
-  const token = flowToken || `vidia_${business.id.slice(0, 8)}_${Date.now().toString(36)}`;
+  const token = flowToken || createFlowToken(business.id);
 
   try {
     const content = await client.content.v1.contents.create({

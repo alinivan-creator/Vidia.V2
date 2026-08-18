@@ -81,6 +81,7 @@ describe('deterministic date beats LLM today', () => {
       extractTime: null,
       extractServiceId: 'svc1',
       extractServiceName: 'Tuns',
+      now: NOW,
     });
     assert.equal(reduced.draft.date, '2026-08-24');
   });

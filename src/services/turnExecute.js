@@ -23,6 +23,7 @@ import {
   setConversationStep,
   resetConversationState,
   getOrCreateConversationState,
+  readLastMenu,
 } from '../db/conversationStateService.js';
 import {
   getClientByPhone,
@@ -55,7 +56,7 @@ import {
   GRID_PREFIX,
   QUICK_REPLY_MAX,
 } from '../utils/bookingGrid.js';
-import { flowsEnabled, getConfiguredFlowId } from './whatsappFlowService.js';
+import { createFlowToken, flowsEnabled, getConfiguredFlowId } from './whatsappFlowService.js';
 import {
   assertWithinWorkingHours,
   durationMissingClientMessage,
@@ -614,7 +615,7 @@ async function askDateGridResult({
         client_message: body,
         ui: 'whatsapp_flow',
         flow_id: flowId,
-        flow_token: `vidia_${business.id}_${Date.now().toString(36)}`,
+        flow_token: createFlowToken(business.id),
       },
       menu: null,
       machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE,
@@ -635,7 +636,7 @@ async function askDateGridResult({
       user_message_template_key: 'ASK_DATE',
       data: {
         service_name: service?.name,
-        client_message: 'Nu am zile cu ore libere în următoarele 14 zile. Contactează salonul sau încearcă mai târziu.',
+        client_message: `Nu am zile cu ore libere în următoarele 14 zile. Contactează ${business.name || 'locația'} sau încearcă mai târziu.`,
       },
       machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE,
     });
@@ -2013,6 +2014,33 @@ async function executeChat(business) {
   });
 }
 
+function executeStaleChoice({ business, convState }) {
+  const last = readLastMenu(convState);
+  const clientMessage =
+    'Opțiunea dintr-un mesaj mai vechi nu mai e valabilă. Alege din lista actuală sau scrie *programare*.';
+  if (last?.options?.length) {
+    const kind = last.kind || 'generic';
+    return handlerResult({
+      status: 'MISSING_INFO',
+      action_performed: null,
+      next_required_step: kind === 'modify' ? 'CHOOSE_APPOINTMENT' : null,
+      user_message_template_key: 'STALE_CHOICE',
+      data: {
+        client_message: clientMessage,
+        list_button: kind === 'modify' ? 'Programările tale' : 'Alege',
+      },
+      menu: { kind, options: last.options, catalog: last.options },
+    });
+  }
+  return handlerResult({
+    status: 'SUCCESS',
+    action_performed: 'STALE_CHOICE',
+    user_message_template_key: 'STALE_CHOICE',
+    data: { client_message: clientMessage },
+    menu: entryMenu(business),
+  });
+}
+
 /**
  * Answer only from Admin ai_facts lines. Never invent a yes/no.
  * @param {Business} business
@@ -2230,6 +2258,10 @@ async function dispatchExecute({
       convState,
       requestId,
     });
+  }
+
+  if (action === 'stale_choice') {
+    return executeStaleChoice({ business, convState });
   }
 
   if (action === 'clarify_needed') {

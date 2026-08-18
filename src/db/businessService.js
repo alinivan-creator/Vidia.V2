@@ -151,7 +151,7 @@ export async function getBusinessByWhatsAppPhoneNumberId(phoneNumberId, options 
     query = query.eq('status', 'active');
   }
 
-  const { data, error } = await query.maybeSingle();
+  const { data, error } = await query.limit(2);
 
   if (error) {
     return handleQueryError(
@@ -160,7 +160,18 @@ export async function getBusinessByWhatsAppPhoneNumberId(phoneNumberId, options 
     );
   }
 
-  return withServices(hydrateBusiness(/** @type {Record<string, unknown> | null} */ (data)));
+  const rows = Array.isArray(data) ? data : [];
+  if (rows.length !== 1) {
+    if (rows.length > 1) {
+      console.error('[db] Duplicate whatsapp_phone_number_id — fail closed', {
+        phoneNumberId,
+        count: rows.length,
+      });
+    }
+    return null;
+  }
+
+  return withServices(hydrateBusiness(/** @type {Record<string, unknown>} */ (rows[0])));
 }
 
 function sleep(ms) {
@@ -220,6 +231,34 @@ export function getCachedBusinessForWhatsAppTo(toKey) {
 }
 
 /**
+ * Drop the To-number cache after a successful miss or Admin number change.
+ * @param {string | null | undefined} toKey
+ */
+export function invalidateBusinessCacheForWhatsAppTo(toKey) {
+  const key = normalizeBusinessPhoneKey(toKey);
+  if (key) businessByToCache.delete(key);
+}
+
+/**
+ * Pick the tenant for a normalized WhatsApp To key.
+ * Duplicates fail closed — never pick "first match".
+ *
+ * @template {{ whatsapp_phone_number_id?: string | null }} T
+ * @param {T[]} rows
+ * @param {string} targetKey
+ * @returns {{ kind: 'one', row: T } | { kind: 'none' } | { kind: 'duplicate', count: number }}
+ */
+export function matchBusinessRowsByPhoneKey(rows, targetKey) {
+  if (!targetKey) return { kind: 'none' };
+  const matches = (rows || []).filter(
+    (row) => normalizeBusinessPhoneKey(row.whatsapp_phone_number_id) === targetKey,
+  );
+  if (matches.length === 1) return { kind: 'one', row: matches[0] };
+  if (matches.length === 0) return { kind: 'none' };
+  return { kind: 'duplicate', count: matches.length };
+}
+
+/**
  * @param {string} toNumber e.g. "whatsapp:+407..." or "+407..."
  * @param {{ includeInactive?: boolean }} [options]
  * @returns {Promise<Business | null>}
@@ -250,21 +289,29 @@ export async function getBusinessByWhatsAppToNumber(toNumber, options = {}) {
     return null;
   }
 
-  const match = rows.find(
-    (row) => normalizeBusinessPhoneKey(row.whatsapp_phone_number_id) === targetKey,
-  );
+  const picked = matchBusinessRowsByPhoneKey(rows, targetKey);
 
-  if (!match) {
-    console.log('[db] No business matched. Candidates:',
-      rows.map((row) => ({
-        name: row.name,
-        status: row.status,
-        stored: row.whatsapp_phone_number_id,
-        cleaned: normalizeBusinessPhoneKey(row.whatsapp_phone_number_id),
-      })),
-    );
-    return getCachedBusinessForWhatsAppTo(toNumber);
+  if (picked.kind !== 'one') {
+    invalidateBusinessCacheForWhatsAppTo(toNumber);
+    if (picked.kind === 'duplicate') {
+      console.error('[db] Duplicate WhatsApp To numbers across tenants — fail closed', {
+        targetKey,
+        count: picked.count,
+      });
+    } else {
+      console.log('[db] No business matched. Candidates:',
+        rows.map((row) => ({
+          name: row.name,
+          status: row.status,
+          stored: row.whatsapp_phone_number_id,
+          cleaned: normalizeBusinessPhoneKey(row.whatsapp_phone_number_id),
+        })),
+      );
+    }
+    return null;
   }
+
+  const match = picked.row;
 
   const hydrated = await withServices(hydrateBusiness(/** @type {Record<string, unknown>} */ (match)));
   if (hydrated) cacheBusinessForWhatsAppTo(toNumber, hydrated);

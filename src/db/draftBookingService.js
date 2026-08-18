@@ -2,6 +2,7 @@ import { supabase } from '../config/supabase.js';
 import { logError } from './loggerService.js';
 import { reportQueryFailure } from './schemaHealth.js';
 import { toE164 } from '../utils/phone.js';
+import { getEmployeeById } from './employeeService.js';
 
 /** @typedef {'browsing' | 'pending_confirmation' | 'confirmed' | 'cancelled' | 'expired'} DraftBookingState */
 
@@ -219,6 +220,11 @@ export async function setDraftEmployee({
 }) {
   if (!draftId || !businessId) return null;
 
+  if (employeeId) {
+    const employee = await getEmployeeById(employeeId, businessId);
+    if (!employee) return null;
+  }
+
   /** @type {Record<string, unknown>} */
   const patch = { employee_id: employeeId };
   if (context) patch.conversation_context = context;
@@ -299,7 +305,13 @@ export async function startBrowsingFlow({
    */
   async function tryWrite(p, mode) {
     if (mode === 'update' && existing) {
-      return supabase.from('draft_bookings').update(p).eq('id', existing.id).select(columns).single();
+      return supabase
+        .from('draft_bookings')
+        .update(p)
+        .eq('id', existing.id)
+        .eq('business_id', businessId)
+        .select(columns)
+        .single();
     }
     return supabase.from('draft_bookings').insert(p).select(columns).single();
   }

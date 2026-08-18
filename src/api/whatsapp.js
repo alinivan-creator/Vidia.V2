@@ -205,7 +205,7 @@ async function processTwilioWebhook(body, requestId) {
   try {
     const matched = await getBusinessByWhatsAppToNumber(toClean, { includeInactive: true });
     const ctx = matched ? await loadBusinessContext(matched.id) : null;
-    business = ctx?.business ?? matched ?? getCachedBusinessForWhatsAppTo(toClean);
+    business = ctx?.business ?? matched;
 
     console.log('[webhook] Business match:', {
       toClean,
@@ -383,7 +383,7 @@ async function processTwilioWebhook(body, requestId) {
         alert: true,
       },
     });
-    const tenant = business || getCachedBusinessForWhatsAppTo(toClean);
+    const tenant = business;
     if (tenant) {
       await sendTechnicalFallbackMessage({
         business: tenant,

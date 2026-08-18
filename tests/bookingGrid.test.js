@@ -116,5 +116,6 @@ describe('booking grid list picker', () => {
     ];
     assert.equal(resolveInteractiveChoice('Luni, 24 Aug', 'day_2026-08-24', options), 'day_2026-08-24');
     assert.equal(resolveInteractiveChoice('Luni, 24 Aug', null, options), 'day_2026-08-24');
+    assert.equal(resolveInteractiveChoice('09:00', 'slot_old_from_history', options), null);
   });
 });
