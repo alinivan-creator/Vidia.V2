@@ -8,6 +8,7 @@ import { WA_DIVIDER, waField, waFooter, waJoin, waServiceMeta, waTitle } from '.
 import { timeWindowBounds } from '../utils/timeWindow.js';
 import { formatContactMessage } from './contactService.js';
 import { completeTenantChat } from './aiContextLoader.js';
+import { isSupersededTurn } from './turnSequencer.js';
 import {
   sendTextMessage,
   sendMessageWithUrlButton,
@@ -369,8 +370,25 @@ async function polishWithAi(business, result, rendered) {
  * @param {string} params.recipientPhone
  * @param {HandlerResult} params.result
  * @param {string | null} [params.requestId]
+ * @param {number | null} [params.turnStamp] — session timestamp this turn started from
  */
-export async function presentTurn({ business, recipientPhone, result, requestId = null }) {
+export async function presentTurn({
+  business,
+  recipientPhone,
+  result,
+  requestId = null,
+  turnStamp = null,
+}) {
+  // The client already sent another message — replying now would land out of order.
+  if (await isSupersededTurn({ business, recipientPhone, turnStamp })) {
+    console.log('[turn-order] Skip presentation, newer inbound arrived', {
+      businessId: business?.id ?? null,
+      requestId,
+      template: result?.user_message_template_key ?? null,
+    });
+    return;
+  }
+
   const gridKinds = new Set(['day_grid', 'time_grid', 'confirm', 'clarify', 'entry', 'resume', 'service', 'unknown_service', 'modify']);
   if (result.menu?.options?.length && gridKinds.has(String(result.menu.kind || ''))) {
     // Remembered by sendInteractiveButtons (full catalog when provided).

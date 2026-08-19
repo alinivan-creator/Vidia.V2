@@ -9,6 +9,7 @@ import { debugLog } from '../utils/debugLog.js';
 import { extractTurnIntent } from './turnExtract.js';
 import { runExecutionAgent } from './executionAgent.js';
 import { presentTurn } from './turnPresent.js';
+import { readInboundStamp } from './sessionValidator.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -78,6 +79,7 @@ export async function processTurnPipeline({
     recipientPhone,
     result,
     requestId,
+    turnStamp: readInboundStamp(convState),
   });
 
   return { extract, result, envelope };

@@ -62,6 +62,8 @@ import {
   durationMissingClientMessage,
   hasConfiguredOpenDay,
   hoursUnsetClientMessage,
+  outOfHoursNotice,
+  pickAnotherDayNotice,
   resolveServiceDurationMinutes,
   unknownInfoClientMessage,
 } from '../utils/workingHours.js';
@@ -327,16 +329,132 @@ function calendarCta(business, serviceName, start, end) {
   return { url: invite.url, title: invite.buttonTitle || 'Adaugă în calendar' };
 }
 
+/**
+ * Prefixes a recovery notice to a grid body, without duplicating it.
+ * @param {string | null} notice
+ * @param {string} body
+ */
+function withNotice(notice, body) {
+  const head = String(notice ?? '').trim();
+  const text = String(body ?? '').trim();
+  if (!head) return text;
+  if (!text || text.startsWith(head)) return head || text;
+  return `${head}\n\n${text}`;
+}
+
+/**
+ * Terminal hours error — only for cases the client cannot recover from
+ * (hours not configured, invalid range).
+ */
 function hoursError(hoursCheck) {
   return handlerResult({
     status: 'ERROR',
     action_performed: null,
     next_required_step: null,
-    user_message_template_key: hoursCheck.reason === 'closed' ? 'CLOSED_HOURS' : 'CLOSED_HOURS',
+    user_message_template_key: 'CLOSED_HOURS',
     data: {
       reason: hoursCheck.reason,
       client_message: hoursCheck.message,
     },
+  });
+}
+
+/**
+ * Out-of-hours / closed-day recovery.
+ *
+ * Keeps the draft (service + day) and pins the conversation on the sub-step the
+ * client is on, then re-offers valid times for that day — or valid days when the
+ * day itself is closed. Never falls back to the main menu.
+ *
+ * @param {Object} params
+ * @param {Business} params.business
+ * @param {string} params.recipientPhone
+ * @param {Record<string, unknown> | null} params.draft
+ * @param {{ id?: string, name?: string, duration_minutes?: number } | null} params.service
+ * @param {Date} params.slotStart
+ * @param {{ ok: boolean, reason: string | null, message: string | null }} params.hoursCheck
+ * @param {string | null} [params.employeeId]
+ * @param {'book' | 'reschedule'} [params.intent]
+ * @param {Record<string, unknown>} [params.extraContext]
+ * @param {string | null} [params.requestId]
+ * @returns {Promise<HandlerResult>}
+ */
+async function hoursRecoveryResult({
+  business,
+  recipientPhone,
+  draft,
+  service,
+  slotStart,
+  hoursCheck,
+  employeeId = null,
+  intent = 'book',
+  extraContext = {},
+  requestId = null,
+}) {
+  const reason = String(hoursCheck?.reason ?? '');
+  if (reason === 'hours_unset' || reason === 'invalid_range' || !slotStart) {
+    return hoursError(hoursCheck);
+  }
+
+  const isReschedule = intent === 'reschedule';
+  const dateKey = formatDateKey(slotStart, business.timezone);
+  const notice = reason === 'outside_hours'
+    ? outOfHoursNotice(business, slotStart)
+    : null;
+
+  // The rejected hour must not replay on the next turn, otherwise the client
+  // gets the same notice for any reply. The service stays chosen.
+  const keptService = {
+    service_id: service?.id ?? null,
+    service_name: service?.name ?? null,
+    duration: service?.duration_minutes ?? null,
+  };
+
+  if (notice) {
+    return missingSlotsResult({
+      business,
+      recipientPhone,
+      draft,
+      service,
+      employeeId,
+      dateKey,
+      requestId,
+      reasonKey: 'ASK_TIME',
+      conversationStep: isReschedule
+        ? CONVERSATION_STEPS.RESCHEDULING
+        : CONVERSATION_STEPS.WAITING_FOR_TIME,
+      extraContext: {
+        ...extraContext,
+        intent,
+        draft_booking: { ...keptService, date: dateKey, time: null },
+        pending_time_text: null,
+        pending_service_id: keptService.service_id,
+      },
+      notice,
+    });
+  }
+
+  return askDateGridResult({
+    business,
+    recipientPhone,
+    draft,
+    service,
+    requestId,
+    conversationStep: isReschedule
+      ? CONVERSATION_STEPS.RESCHEDULING
+      : CONVERSATION_STEPS.WAITING_FOR_DATE,
+    extraContext: {
+      ...extraContext,
+      intent,
+      draft_booking: { ...keptService, date: null, time: null },
+      pending_date_text: null,
+      pending_time_text: null,
+      pending_service_id: keptService.service_id,
+    },
+    notice:
+      pickAnotherDayNotice(business, slotStart, reason)
+      || hoursCheck.message
+      || null,
   });
 }
 
@@ -587,10 +705,12 @@ async function askDateGridResult({
   clientMessage = null,
   conversationStep = CONVERSATION_STEPS.WAITING_FOR_DATE,
   extraContext = {},
+  notice = null,
 }) {
   const intent = extraContext.intent || 'book';
   // Richer Meta Flow UI when the tenant has published a WhatsApp Flow.
-  if (flowsEnabled(business) && page === 0 && !clientMessage && intent !== 'reschedule') {
+  // A notice must stay visible, so keep the text grid in that case.
+  if (flowsEnabled(business) && page === 0 && !clientMessage && !notice && intent !== 'reschedule') {
     const flowId = getConfiguredFlowId(business);
     const body = service?.name
       ? `🗓️ Deschide calendarul pentru *${service.name}* — alege ziua și ora liberă.`
@@ -639,13 +759,19 @@ async function askDateGridResult({
       user_message_template_key: 'ASK_DATE',
       data: {
         service_name: service?.name,
-        client_message: `Nu am zile cu ore libere în următoarele 14 zile. Contactează ${business.name || 'locația'} sau încearcă mai târziu.`,
+        client_message: withNotice(
+          notice,
+          `Nu am zile cu ore libere în următoarele 14 zile. Contactează ${business.name || 'locația'} sau încearcă mai târziu.`,
+        ),
       },
       machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE,
     });
   }
   const listPage = buildListPickerPage(days, page);
-  const body = clientMessage || formatDayGridMessage(days, business.timezone, service?.name);
+  const body = withNotice(
+    notice,
+    clientMessage || formatDayGridMessage(days, business.timezone, service?.name),
+  );
   await setConversationStep({
     businessId: business.id,
     rawPhone: recipientPhone,
@@ -699,6 +825,7 @@ async function missingSlotsResult({
   extraContext = {},
   timeWindow = null,
   page = 0,
+  notice = null,
 }) {
   const listed = await listSlotsForService({
     business,
@@ -719,7 +846,10 @@ async function missingSlotsResult({
   const times = listTimeWindows(listed.slots, business.timezone);
   const listPage = buildListPickerPage(times, page);
   const datePretty = dateKey ? formatRomanianDate(dateKey, business.timezone) : null;
-  const body = formatTimeGridMessage(times, dateKey, business.timezone, service?.name);
+  const body = withNotice(
+    notice,
+    formatTimeGridMessage(times, dateKey, business.timezone, service?.name),
+  );
   const useQuickReply = times.length > 0 && times.length <= QUICK_REPLY_MAX && listPage.pageCount <= 1;
 
   await setConversationStep({
@@ -754,6 +884,7 @@ async function missingSlotsResult({
         ? CONVERSATION_STEPS.RESCHEDULING
         : CONVERSATION_STEPS.WAITING_FOR_DATE,
       extraContext: extraContext.intent === 'reschedule' ? extraContext : {},
+      notice,
       clientMessage:
         `Nu am găsit ore libere pentru *${service?.name || 'serviciu'}*` +
         (datePretty ? ` pe *${datePretty}*` : '') +
@@ -770,6 +901,7 @@ async function missingSlotsResult({
       occupied_label: occupiedLabel,
       date_label: datePretty,
       time_window: timeWindow,
+      notice: notice || null,
       client_message: body,
       alternatives: listed.slots.map((s) => ({
         id: s.id,
@@ -902,7 +1034,19 @@ async function holdRequestedSlot({
   }
   const slotEnd = new Date(slotStart.getTime() + duration * 60_000);
   const hoursCheck = assertWithinWorkingHours(business, slotStart, slotEnd);
-  if (!hoursCheck.ok) return hoursError(hoursCheck);
+  if (!hoursCheck.ok) {
+    return hoursRecoveryResult({
+      business,
+      recipientPhone,
+      draft,
+      service,
+      slotStart,
+      hoursCheck,
+      employeeId: employeeId || draftEmployeeId(draft),
+      intent: 'book',
+      requestId,
+    });
+  }
 
   const slotId = encodeSlotId(slotStart, business.timezone);
   const { employee } = await resolveStaff(business, { ...draft, employee_id: employeeId || draftEmployeeId(draft) });
@@ -1147,7 +1291,21 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
   const startDate = new Date(slotStart);
   const endDate = new Date(startDate.getTime() + duration * 60_000);
   const hoursCheck = assertWithinWorkingHours(business, startDate, endDate);
-  if (!hoursCheck.ok) return hoursError(hoursCheck);
+  if (!hoursCheck.ok) {
+    // Admin hours changed while the hold was pending — keep the service and
+    // let the client pick a valid hour instead of dead-ending the flow.
+    return hoursRecoveryResult({
+      business,
+      recipientPhone,
+      draft,
+      service,
+      slotStart: startDate,
+      hoursCheck,
+      employeeId: draftEmployeeId(draft),
+      intent: 'book',
+      requestId,
+    });
+  }
 
   const phoneE164 = draft.phone_number;
   const client = await getClientByPhone({ businessId: business.id, rawPhone: recipientPhone, requestId });
@@ -1179,10 +1337,20 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
 
   if (!result.ok || !result.eventId || isMockEvent) {
     if (['closed', 'outside_hours', 'hours_unset', 'invalid_range'].includes(String(result.reason))) {
-      return handlerResult({
-        status: 'ERROR',
-        user_message_template_key: 'CLOSED_HOURS',
-        data: { client_message: result.error || hoursUnsetClientMessage(), reason: result.reason },
+      return hoursRecoveryResult({
+        business,
+        recipientPhone,
+        draft,
+        service,
+        slotStart: startDate,
+        hoursCheck: {
+          ok: false,
+          reason: String(result.reason),
+          message: result.error || hoursUnsetClientMessage(),
+        },
+        employeeId,
+        intent: 'book',
+        requestId,
       });
     }
     return handlerResult({
@@ -1430,7 +1598,26 @@ async function applyReschedule({
   }
   const slotEnd = new Date(slotStart.getTime() + duration * 60_000);
   const hoursCheck = assertWithinWorkingHours(business, slotStart, slotEnd);
-  if (!hoursCheck.ok) return hoursError(hoursCheck);
+  if (!hoursCheck.ok) {
+    return hoursRecoveryResult({
+      business,
+      recipientPhone,
+      draft: appointment,
+      service,
+      slotStart,
+      hoursCheck,
+      employeeId: draftEmployeeId(appointment),
+      intent: 'reschedule',
+      extraContext: {
+        appointment_id: appointment.id,
+        google_event_id: appointment.google_event_id ?? null,
+        employee_id: draftEmployeeId(appointment),
+        slot_start: appointment.selected_slot_start ?? null,
+        slot_end: appointment.selected_slot_end ?? null,
+      },
+      requestId,
+    });
+  }
 
   const { employeeId, calendarId } = await resolveStaff(business, appointment);
   await lazySyncCalendar({ business, requestId, force: true, calendarId, employeeId });

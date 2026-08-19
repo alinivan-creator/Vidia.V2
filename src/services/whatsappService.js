@@ -5,6 +5,7 @@ import { toMetaPhone, toTwilioWhatsApp, toE164 } from '../utils/phone.js';
 import { recordFailure, recordSuccess, isCircuitOpen, TECHNICAL_FALLBACK_MESSAGE } from './circuitBreaker.js';
 import { CALENDAR_ANCHOR_TEXT } from '../utils/calendarLink.js';
 import { createFlowToken } from './whatsappFlowService.js';
+import { isStaleOutboundTurn } from './turnSequencer.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -261,6 +262,15 @@ export function getRememberedMenuOptions(businessId, recipientPhone) {
  * @returns {Promise<SendResult>}
  */
 async function sendTwilioMessage({ business, recipientPhone, body, requestId = null }) {
+  if (isStaleOutboundTurn(business?.id, recipientPhone, requestId)) {
+    console.log('[turn-order] Drop reply from a superseded turn', {
+      businessId: business?.id ?? null,
+      requestId,
+      preview: String(body ?? '').slice(0, 80),
+    });
+    return { ok: false, data: { superseded: true }, status: 0 };
+  }
+
   const mockMode = process.env.WHATSAPP_MOCK_MODE === 'true';
 
   let accountSid;
@@ -517,6 +527,14 @@ export async function sendMessageWithUrlButton({
   /** Extra URL buttons (Twilio CTA allows max 2 total). */
   extraButtons = [],
 }) {
+  if (isStaleOutboundTurn(business?.id, recipientPhone, requestId)) {
+    console.log('[turn-order] Drop CTA message from a superseded turn', {
+      businessId: business?.id ?? null,
+      requestId,
+    });
+    return { ok: false, data: { superseded: true }, status: 0 };
+  }
+
   const title = String(buttonTitle || 'Adaugă în calendar').slice(0, 20);
   const url = String(buttonUrl || '').trim();
   const bodyText = String(text || '').trim();
@@ -741,6 +759,16 @@ export async function sendInteractiveButtons({
   /** Full option catalog to remember (may exceed the 3 visible buttons). */
   rememberOptions = null,
 }) {
+  // Guard before remembering: a stale menu must never overwrite the fresh one.
+  if (isStaleOutboundTurn(business?.id, recipientPhone, requestId)) {
+    console.log('[turn-order] Drop quick-reply menu from a superseded turn', {
+      businessId: business?.id ?? null,
+      requestId,
+      menuKind,
+    });
+    return { ok: false, data: { superseded: true }, status: 0 };
+  }
+
   const visible = buttons.slice(0, 3).map((btn) => ({
     id: String(btn.id).slice(0, 200),
     title: String(btn.title).slice(0, 20),
@@ -869,6 +897,15 @@ export async function sendInteractiveList({
   menuKind = 'list',
   rememberOptions = null,
 }) {
+  if (isStaleOutboundTurn(business?.id, recipientPhone, requestId)) {
+    console.log('[turn-order] Drop list picker from a superseded turn', {
+      businessId: business?.id ?? null,
+      requestId,
+      menuKind,
+    });
+    return { ok: false, data: { superseded: true }, status: 0 };
+  }
+
   const rows = sections
     .flatMap((section) =>
       (section.rows || []).map((row) => ({
@@ -1009,6 +1046,14 @@ export async function sendBookingFlow({
   requestId = null,
   flowToken = null,
 }) {
+  if (isStaleOutboundTurn(business?.id, recipientPhone, requestId)) {
+    console.log('[turn-order] Drop booking flow from a superseded turn', {
+      businessId: business?.id ?? null,
+      requestId,
+    });
+    return { ok: false, data: { superseded: true }, status: 0 };
+  }
+
   const mockMode = process.env.WHATSAPP_MOCK_MODE === 'true';
   if (mockMode) {
     console.log('[vidia-v2][whatsapp-mock][flow]', { flowId, preview: String(bodyText).slice(0, 120) });

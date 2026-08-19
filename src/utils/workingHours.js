@@ -124,6 +124,61 @@ export function assertWithinWorkingHours(business, start, end, lang = 'ro', now 
 }
 
 /**
+ * Polite notice for a time the client picked outside Admin hours.
+ * Keeps the booking going: states the real window and asks for an hour inside it.
+ *
+ * @param {Business} business
+ * @param {Date | string} date — the day the client asked for
+ * @param {'ro' | 'en'} [lang]
+ * @returns {string | null} null when the day has no configured window
+ */
+export function outOfHoursNotice(business, date, lang = 'ro') {
+  const when = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(when.getTime())) return null;
+  const info = getHoursForDate(business, when);
+  if (!info.open || !info.dayHours) return null;
+
+  const weekdayKey = info.weekday != null ? String(info.weekday) : null;
+  const dayName = lang === 'en'
+    ? (weekdayKey ? WEEKDAY_LABELS_EN[/** @type {keyof typeof WEEKDAY_LABELS_EN} */ (weekdayKey)] : null)
+    : info.dayName;
+  const window = `${info.dayHours.open}–${info.dayHours.close}`;
+
+  if (lang === 'en') {
+    return `Our hours ${dayName ? `on *${dayName}*` : 'for that day'} are *${window}*. Please pick a time inside that window.`;
+  }
+  return `Programul nostru pentru *${dayName || 'această zi'}* este *${window}*. Te rog să alegi o oră din acest interval.`;
+}
+
+/**
+ * Notice for a closed day / a time already in the past — the client keeps the
+ * chosen service and only needs another day.
+ *
+ * @param {Business} business
+ * @param {Date | string} date
+ * @param {string} reason — assertWithinWorkingHours reason
+ * @param {'ro' | 'en'} [lang]
+ * @returns {string | null}
+ */
+export function pickAnotherDayNotice(business, date, reason, lang = 'ro') {
+  const when = date instanceof Date ? date : new Date(date);
+  const info = Number.isNaN(when.getTime()) ? null : getHoursForDate(business, when);
+  const dayName = info?.dayName || (lang === 'en' ? 'that day' : 'ziua aleasă');
+
+  if (reason === 'past') {
+    return lang === 'en'
+      ? 'That time has already passed. Please pick another day below.'
+      : 'Ora aleasă a trecut deja. Alege te rog altă zi de mai jos.';
+  }
+  if (reason === 'closed') {
+    return lang === 'en'
+      ? `We are *closed* on *${dayName}*. Please pick another day below.`
+      : `*${dayName}* suntem *închiși*. Alege te rog altă zi de mai jos.`;
+  }
+  return null;
+}
+
+/**
  * Duration from the Admin catalog for this tenant — never a hardcoded 30 min guess.
  *
  * @param {Business} business

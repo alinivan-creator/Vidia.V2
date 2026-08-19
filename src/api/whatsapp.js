@@ -36,6 +36,7 @@ import {
   getSessionTtlMinutes,
   isConversationSessionExpired,
 } from '../services/sessionValidator.js';
+import { beginInboundTurn } from '../services/turnSequencer.js';
 
 /**
  * Twilio WhatsApp inbound webhook.
@@ -263,6 +264,8 @@ async function processTwilioWebhook(body, requestId) {
     if (inboundMessageSid) {
       rememberInboundMessageSid(business.id, recipientPhone, inboundMessageSid);
     }
+    // Anything still running for an earlier message must stop replying now.
+    beginInboundTurn(business.id, recipientPhone, requestId);
     await sendTypingIndicator({
       business,
       recipientPhone,

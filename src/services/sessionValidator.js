@@ -51,6 +51,23 @@ export function readSessionTimestamp(convState) {
   return Number.isFinite(ms) ? ms : 0;
 }
 
+/**
+ * Strictly the last client inbound stamp — no `updated_at` fallback, so backend
+ * writes during a turn can never look like a new client message.
+ *
+ * @param {ConversationState | null | undefined} convState
+ * @returns {number} epoch ms, 0 if never stamped
+ */
+export function readInboundStamp(convState) {
+  const ctx = convState?.context_data && typeof convState.context_data === 'object'
+    ? convState.context_data
+    : {};
+  const raw = ctx.session_timestamp || ctx.last_inbound_at;
+  if (!raw) return 0;
+  const ms = new Date(String(raw)).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
 function hasInFlightContext(convState) {
   const ctx = convState?.context_data && typeof convState.context_data === 'object'
     ? convState.context_data
