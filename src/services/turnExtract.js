@@ -11,7 +11,7 @@ import { looksLikeBusinessFactQuestion } from '../utils/businessInfoLookup.js';
 import { resolveAcceptedOffer } from './pendingOfferService.js';
 import { resolveNumberedChoice, resolveInteractiveChoice } from './whatsappService.js';
 import { GRID_PREFIX } from '../utils/bookingGrid.js';
-import { looksLikeFreeTextBody, looksLikeInteractiveChoiceId } from '../utils/inboundPayload.js';
+import { looksLikeInteractiveChoiceId, shouldPreferTypedTextOverTap } from '../utils/inboundPayload.js';
 import { parseRomanianDateTimeParts } from '../utils/roDateTime.js';
 import { BOOKING_PREFIXES, MOD_PREFIX } from './flowIds.js';
 import {
@@ -857,32 +857,72 @@ async function extractTurnIntentImpl({
     || lastMenu?.kind === 'day_grid'
     || lastMenu?.kind === 'time_grid';
 
-  // Only an actual option id may go stale. Free text — even text that arrived with a
-  // payload attached — is always handed to the language path below.
+  // ── Free-text first (NLU path). Interactive taps are secondary. ──────────
+  // WhatsApp often attaches a stale ButtonPayload to a typed sentence. Prefer
+  // the raw Body whenever it looks like language, never a tap id.
+  const rawTyped = String(typedText ?? '').trim() || String(textBody ?? '').trim();
   let tappedId = looksLikeInteractiveChoiceId(buttonPayload) ? String(buttonPayload).trim() : null;
-  const staleTap = Boolean(tappedId) && !lastMenu?.options?.some((o) => o.id === tappedId);
-  if (staleTap && looksLikeFreeTextBody(typedText) && String(typedText).trim() !== tappedId) {
-    // The client wrote a sentence while WhatsApp attached an old payload — answer the
-    // sentence, never "that option expired".
-    textBody = String(typedText).trim();
+  if (shouldPreferTypedTextOverTap({ typed: rawTyped, tappedId })) {
+    textBody = rawTyped;
     tappedId = null;
+  } else if (tappedId) {
+    // Genuine tap: pipeline reads the stable option id.
+    textBody = tappedId;
+  } else {
+    textBody = rawTyped;
   }
 
-  // Native quick-reply / remembered window id always wins — but only the CURRENT last_menu.
-  if (tappedId && staleTap) {
-    return emptyExtract({
-      action: 'stale_choice',
-      choice_id: tappedId,
+  // Modification / booking intents on free text must beat every menu wall.
+  // "vreau sa reprogramez o programare" must never become stale_choice or reprompt_grid.
+  const earlyModify = !tappedId ? detectModificationIntent(textBody) : null;
+  if (earlyModify === 'cancel') {
+    const dropHoldOnly = isPendingHold && !refersToSavedAppointments(textBody) && !looksLikeCancelAll(textBody);
+    return annotateModifyExtract(emptyExtract({
+      action: dropHoldOnly ? 'cancel_pending' : 'cancel',
+      date_text: extractDateKey(textBody, tz),
       confidence: 'high',
-      source: 'menu',
-    });
+      source: 'keyword',
+    }), textBody);
   }
-  if (lastMenu?.options?.length) {
-    const choiceId = resolveInteractiveChoice(textBody, tappedId, lastMenu.options);
-    if (choiceId) {
-      const fromChoice = extractFromChoiceId(choiceId, {}, business);
-      if (fromChoice.action !== 'unknown') return fromChoice;
-      if (tappedId) {
+  if (earlyModify === 'reschedule') {
+    return annotateModifyExtract(emptyExtract({
+      action: 'reschedule',
+      date_text: extractDateKey(textBody, tz),
+      confidence: 'high',
+      source: 'keyword',
+    }), textBody);
+  }
+  if (!tappedId && looksLikeNewBookingRequest(textBody, { services })) {
+    // Cold-start book without a day/time — fall through when the utterance already
+    // carries a slot so parsers below can fill date_text / time_text.
+    if (!looksLikeDatetimeOrSlot(textBody) && !detectTimeWindowFromText(textBody)) {
+      const named = matchServiceMention(textBody, services);
+      return emptyExtract({
+        action: 'book',
+        service_id: named?.id ?? null,
+        service_name: named?.name ?? null,
+        confidence: 'high',
+        source: 'keyword',
+      });
+    }
+  }
+
+  // Genuine interactive taps only — free text never enters stale_choice.
+  if (tappedId) {
+    const staleTap = !lastMenu?.options?.some((o) => o.id === tappedId);
+    if (staleTap) {
+      return emptyExtract({
+        action: 'stale_choice',
+        choice_id: tappedId,
+        confidence: 'high',
+        source: 'menu',
+      });
+    }
+    if (lastMenu?.options?.length) {
+      const choiceId = resolveInteractiveChoice(textBody, tappedId, lastMenu.options);
+      if (choiceId) {
+        const fromChoice = extractFromChoiceId(choiceId, {}, business);
+        if (fromChoice.action !== 'unknown') return fromChoice;
         return emptyExtract({
           action: 'stale_choice',
           choice_id: tappedId,
@@ -891,11 +931,20 @@ async function extractTurnIntentImpl({
         });
       }
     }
+  } else if (lastMenu?.options?.length) {
+    // Free text: only lone numbered picks map to the current menu — never title fuzzy walls.
+    const loneNumber = /^\d{1,2}$/.test(String(textBody).trim());
+    if (loneNumber) {
+      const choiceId = resolveNumberedChoice(textBody, lastMenu.options);
+      if (choiceId) {
+        const fromChoice = extractFromChoiceId(choiceId, {}, business);
+        if (fromChoice.action !== 'unknown') return fromChoice;
+      }
+    }
   }
 
   // Interactive list/button taps always win (handled above).
   // Free-text NLP still runs during date/time wait (e.g. "mâine la 10").
-  // Soft fallback to the picker only when nothing temporal was understood — see end of this function.
 
   if (looksLikeExistingAppointmentQuery(textBody)) {
     return emptyExtract({ action: 'list_appointments', confidence: 'high', source: 'keyword' });
@@ -1228,7 +1277,7 @@ async function extractTurnIntentImpl({
     );
     const leavePicker = new Set([
       'select_slot', 'grid_nav', 'reprompt_grid', 'confirm', 'cancel', 'cancel_pending',
-      'cancel_all', 'select_appointment', 'stale_choice',
+      'cancel_all', 'select_appointment', 'stale_choice', 'book', 'reschedule',
       'menu', 'contact', 'list_appointments', 'callback', 'hours', 'services', 'hours_and_services',
       'missing_info', 'resolve_clarification', 'clarify_needed', 'abort', 'set_name',
       'select_service', 'select_employee', 'accept_offer', 'resume_yes', 'resume_no',

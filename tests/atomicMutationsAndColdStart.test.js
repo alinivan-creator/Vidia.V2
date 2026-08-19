@@ -24,7 +24,10 @@ describe('Cold-start unrestricted intent parsing', () => {
 
   it('parses reschedule intent without a greeting', () => {
     assert.equal(detectModificationIntent('vreau sa reprogramez'), 'reschedule');
+    assert.equal(detectModificationIntent('vreau sa reprogramez o programare'), 'reschedule');
+    assert.equal(looksLikeNewBookingRequest('vreau sa reprogramez o programare'), false);
     assert.equal(triageUserIntent('reprogramare').intent, 'reschedule');
+    assert.equal(triageUserIntent('vreau sa reprogramez o programare').intent, 'reschedule');
   });
 
   it('still treats bare salut as menu, not a hard gate for later intents', () => {

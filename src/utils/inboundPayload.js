@@ -73,15 +73,25 @@ export function looksLikeInteractiveChoiceId(value) {
 }
 
 /**
- * Text no WhatsApp option title could be: titles are capped at 24 chars and none of
- * ours carry a question mark. Used where there is no title to compare against.
+ * Text that cannot be a WhatsApp option title — questions, over-cap length, or
+ * clear intent sentences. Short list-row titles like "Luni, 24 Aug" must still
+ * count as taps when a day_/slot_ payload is present.
  *
  * @param {string | null | undefined} body
  */
 export function looksLikeFreeTextBody(body) {
   const typed = String(body ?? '').trim();
   if (!typed) return false;
-  return typed.length > MAX_TITLE_LENGTH || /[?]/.test(typed);
+  if (typed.length > MAX_TITLE_LENGTH) return true;
+  if (/[?]/.test(typed)) return true;
+  const n = normalize(typed);
+  // Intent verbs / booking phrases that never appear as our option titles.
+  if (/\b(vreau|as vrea|doresc|anulez|anuleaza|anulare|reprogram|modific|schimb|muta|programare|rezervare|programez|programeaza)\b/.test(n)) {
+    return true;
+  }
+  // Four+ tokens is a sentence, not a 24-char list row.
+  if (typed.split(/\s+/).filter(Boolean).length >= 4) return true;
+  return false;
 }
 
 /**
@@ -99,7 +109,30 @@ function looksLikeTypedText(typed, title, payload) {
   if (t === normalize(title) || t === normalize(payload)) return false;
   // Twilio echoes the tapped title in Body, so a mismatch against a known title is typing.
   if (title) return true;
+  // No ButtonText: our own option ids (day_/slot_/…) still win for short row titles.
+  // Intent sentences with a stray payload must not.
+  if (looksLikeInteractiveChoiceId(payload)) {
+    return looksLikeFreeTextBody(typed);
+  }
   return looksLikeFreeTextBody(typed);
+}
+
+/**
+ * Prefer the raw typed Body over a button payload whenever the Body is a real sentence.
+ * Used by the extract layer as a second defense after classifyInboundMessage.
+ *
+ * @param {Object} params
+ * @param {string | null | undefined} params.typed
+ * @param {string | null | undefined} params.tappedId
+ * @returns {boolean}
+ */
+export function shouldPreferTypedTextOverTap({ typed, tappedId }) {
+  const body = String(typed ?? '').trim();
+  if (!body) return false;
+  const tap = String(tappedId ?? '').trim();
+  if (!tap) return looksLikeFreeTextBody(body);
+  if (normalize(body) === normalize(tap)) return false;
+  return looksLikeFreeTextBody(body) || normalize(body) !== normalize(tap);
 }
 
 /**

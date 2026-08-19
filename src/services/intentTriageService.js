@@ -305,6 +305,8 @@ export function looksLikeExistingAppointmentQuery(text) {
 export function looksLikeNewBookingRequest(text, opts = {}) {
   const n = normalize(text);
   if (!n) return false;
+  // Never steal cancel/reschedule phrases that also contain "programare".
+  if (detectModificationIntent(text)) return false;
   if (looksLikeExistingAppointmentQuery(n)) return false;
   if (looksLikeBusinessFactQuestion(n)) return false;
   if (looksLikeOffTopicChat(n)) return false;

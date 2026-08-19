@@ -8,10 +8,11 @@
  *     → sweepStalePendingForPhone (hold TTL) + conversation session TTL check
  *     → if session idle > session_ttl_minutes: silently purge active draft and reset to IDLE,
  *       then process inbound message on a clean slate
- *     → classifyInboundMessage: only a real option id (ButtonPayload / ListId) counts as
- *       a tap; typed text keeps its own body and never hits the stale-option path
+ *     → classifyInboundMessage: free-text Body always wins over a stray ButtonPayload;
+ *       only a real option id (ButtonPayload / ListId) that matches the tap title counts
+ *       as interactive — typed sentences go straight to NLU
  *     → routeInboundTurn → turnPipeline
- *          1. Dialogue Agent — turnExtract (keywords first; Gemini JSON parse, OpenAI fallback)
+ *          1. Dialogue Agent — turnExtract (free-text intents FIRST; Gemini JSON; taps secondary)
  *          2. Execution Agent — State Machine Engine (turnExecute + stateMachine.js):
  *             - Atomic context pivots: date/time/service updates in-place without flow drop
  *             - Out-of-bounds handling: polite recovery keeping active date/service
@@ -22,7 +23,8 @@
  *
  * Cold-start:
  *   First inbound text is parsed for NEW_BOOKING / RESCHEDULE / CANCEL / FAQ immediately.
- *   No greeting gate — "vreau să fac o programare" and "vreau să anulez" run without "Salut".
+ *   No greeting gate — "vreau să fac o programare" / "vreau să reprogramez" run without "Salut".
+ *   Stale button walls never intercept free-text mid-flow.
  *
  * TTLs (independent):
  *   pending_ttl_minutes (default 5) — calendar hold for pending_confirmation only
@@ -43,4 +45,4 @@
  *   Confirmation + Adaugă în calendar URL button.
  *   Name is never asked when Twilio ProfileName / display_name exists.
  */
-export const BOOKING_ARCHITECTURE_VERSION = 'dual-ai-atomic-mutations-v9';
+export const BOOKING_ARCHITECTURE_VERSION = 'dual-ai-text-first-nlu-v10';

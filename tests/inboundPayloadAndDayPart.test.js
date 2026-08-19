@@ -62,15 +62,26 @@ describe('inbound payload classification', () => {
     assert.equal(inbound.buttonPayload, 'day_2026-08-24');
   });
 
-  it('keeps a typed sentence as text when a stale payload rides along', () => {
+  it('keeps short reschedule free-text as text even with a stale payload and no ButtonText', () => {
     const inbound = classifyInboundMessage({
-      body: 'Aveti liber maine seara?',
-      buttonPayload: 'day_2026-08-20',
+      body: 'vreau sa reprogramez',
+      buttonPayload: 'slot_2026-08-19_10:00',
       buttonText: '',
     });
     assert.equal(inbound.kind, 'text');
     assert.equal(inbound.buttonPayload, null);
-    assert.equal(inbound.textBody, 'Aveti liber maine seara?');
+    assert.equal(inbound.textBody, 'vreau sa reprogramez');
+  });
+
+  it('keeps "vreau sa reprogramez o programare" as text with a stray day payload', () => {
+    const inbound = classifyInboundMessage({
+      body: 'vreau sa reprogramez o programare',
+      buttonPayload: 'day_2026-08-24',
+      buttonText: 'Luni, 24 Aug',
+    });
+    assert.equal(inbound.kind, 'text');
+    assert.equal(inbound.textBody, 'vreau sa reprogramez o programare');
+    assert.equal(inbound.buttonPayload, null);
   });
 
   it('keeps a typed sentence as text when the payload echoes another button', () => {
