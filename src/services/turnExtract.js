@@ -10,7 +10,7 @@ import { CONVERSATION_STEPS, readLastMenu } from '../db/conversationStateService
 import { looksLikeBusinessFactQuestion } from '../utils/businessInfoLookup.js';
 import { resolveAcceptedOffer } from './pendingOfferService.js';
 import { resolveNumberedChoice, resolveInteractiveChoice } from './whatsappService.js';
-import { GRID_PREFIX } from '../utils/bookingGrid.js';
+import { GRID_PREFIX, isGridNavChoiceId } from '../utils/bookingGrid.js';
 import { looksLikeInteractiveChoiceId, shouldPreferTypedTextOverTap } from '../utils/inboundPayload.js';
 import { parseRomanianDateTimeParts } from '../utils/roDateTime.js';
 import { BOOKING_PREFIXES, MOD_PREFIX } from './flowIds.js';
@@ -817,6 +817,7 @@ function applyParsedDateTime(next, text, timezone, opts = {}) {
  * @param {Business} params.business
  * @param {string} params.textBody
  * @param {string | null} [params.buttonPayload]
+ * @param {string | null} [params.buttonTitle] — ButtonText / ListTitle from Twilio
  * @param {string | null} [params.typedText] — raw Body, kept apart from tapped ids
  * @param {import('../db/conversationStateService.js').ConversationState} params.convState
  * @param {import('../db/draftBookingService.js').DraftBooking | null} [params.activeDraft]
@@ -827,6 +828,7 @@ async function extractTurnIntentImpl({
   business,
   textBody,
   buttonPayload = null,
+  buttonTitle = null,
   typedText = null,
   convState,
   activeDraft = null,
@@ -862,7 +864,11 @@ async function extractTurnIntentImpl({
   // the raw Body whenever it looks like language, never a tap id.
   const rawTyped = String(typedText ?? '').trim() || String(textBody ?? '').trim();
   let tappedId = looksLikeInteractiveChoiceId(buttonPayload) ? String(buttonPayload).trim() : null;
-  if (shouldPreferTypedTextOverTap({ typed: rawTyped, tappedId })) {
+  if (shouldPreferTypedTextOverTap({
+    typed: rawTyped,
+    tappedId,
+    buttonTitle,
+  })) {
     textBody = rawTyped;
     tappedId = null;
   } else if (tappedId) {
@@ -909,6 +915,29 @@ async function extractTurnIntentImpl({
 
   // Genuine interactive taps only — free text never enters stale_choice.
   if (tappedId) {
+    // Pager controls are always live during a grid flow — never "stale history".
+    if (isGridNavChoiceId(tappedId)) {
+      return extractFromChoiceId(tappedId, {}, business);
+    }
+    const onGridFlow = lastMenu?.kind === 'day_grid'
+      || lastMenu?.kind === 'time_grid'
+      || wait === BOOKING_WAIT.DATE
+      || wait === BOOKING_WAIT.TIME
+      || wait === BOOKING_WAIT.DATE_TIME
+      || step === CONVERSATION_STEPS.WAITING_FOR_DATE
+      || step === CONVERSATION_STEPS.WAITING_FOR_TIME
+      || step === CONVERSATION_STEPS.WAITING_FOR_DATE_TIME
+      || step === CONVERSATION_STEPS.RESCHEDULING
+      || step === CONVERSATION_STEPS.SELECTING_SLOT;
+    // Day/slot ids during an active picker: accept and let execute validate availability.
+    if (
+      onGridFlow
+      && (tappedId.startsWith('slot_') || tappedId.startsWith(GRID_PREFIX.DAY))
+    ) {
+      const fromGrid = extractFromChoiceId(tappedId, {}, business);
+      if (fromGrid.action !== 'unknown') return fromGrid;
+    }
+
     const staleTap = !lastMenu?.options?.some((o) => o.id === tappedId);
     if (staleTap) {
       return emptyExtract({

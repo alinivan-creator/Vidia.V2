@@ -23,6 +23,7 @@ import { MACHINE_ACTIONS } from '../lib/booking/stateMachine.js';
 import { unknownInfoClientMessage } from '../utils/workingHours.js';
 import { missingBusinessInfoMessage } from '../utils/businessInfoLookup.js';
 import { formatServiceAskMessage, bookingExamplePhrase } from '../utils/serviceMatch.js';
+import { mergeMenuOptions } from '../utils/bookingGrid.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 /** @typedef {import('./handlerResult.js').HandlerResult} HandlerResult */
@@ -318,7 +319,7 @@ export function renderHandlerResult(business, result) {
           : 'Din păcate nu oferim acest serviciu. Te rog alege din listă.');
     case 'STALE_CHOICE':
       return (typeof d.client_message === 'string' && d.client_message.trim())
-        || 'Opțiunea dintr-un mesaj mai vechi nu mai e valabilă. Alege din lista actuală sau scrie *programare*.';
+        || 'Opțiunea aia nu mai e pe lista curentă. Te rog alege din mesajul cel mai recent (sau scrie *programare*).';
     case 'MISSING_INFO':
       return d.client_message
         || missingBusinessInfoMessage(d.topic_label || null, lang)
@@ -518,7 +519,10 @@ export async function presentTurn({
         }],
         footerText: business.name,
         menuKind: 'day_grid',
-        rememberOptions: days.map((day) => ({ id: day.id, title: day.title, description: day.description })),
+        rememberOptions: mergeMenuOptions(
+          listPage.items.map((i) => ({ id: i.id, title: i.title, description: i.description })),
+          days.map((day) => ({ id: day.id, title: day.title, description: day.description })),
+        ),
       });
       return;
     }
@@ -550,7 +554,7 @@ export async function presentTurn({
         buttons: result.menu.options,
         footerText: business.name,
         menuKind: result.menu.kind || 'entry',
-        rememberOptions: result.menu.catalog || result.menu.options,
+        rememberOptions: mergeMenuOptions(result.menu.options, result.menu.catalog || []),
       });
       return;
     }
@@ -582,7 +586,8 @@ export async function presentTurn({
         }],
         footerText: business.name,
         menuKind: kind || 'list',
-        rememberOptions: result.menu.catalog || result.menu.options,
+        // Must include page nav ids (grid_next / grid_prev) + full catalog for this picker.
+        rememberOptions: mergeMenuOptions(result.menu.options, result.menu.catalog || []),
       });
       return;
     }
@@ -595,7 +600,7 @@ export async function presentTurn({
       buttons: result.menu.options,
       footerText: business.name,
       menuKind: kind || 'generic',
-      rememberOptions: result.menu.catalog || result.menu.options,
+      rememberOptions: mergeMenuOptions(result.menu.options, result.menu.catalog || []),
     });
     return;
   }

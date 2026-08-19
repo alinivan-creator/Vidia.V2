@@ -300,7 +300,7 @@ export async function persistLastMenu({
   options = [],
   requestId = null,
 }) {
-  const slim = (Array.isArray(options) ? options : []).slice(0, 12).map((o) => ({
+  const slim = (Array.isArray(options) ? options : []).slice(0, 40).map((o) => ({
     id: String(o.id),
     title: String(o.title || '').slice(0, 48),
   }));

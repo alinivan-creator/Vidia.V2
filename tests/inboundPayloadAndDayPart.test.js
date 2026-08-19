@@ -4,6 +4,7 @@ import {
   classifyInboundMessage,
   looksLikeFreeTextBody,
   looksLikeInteractiveChoiceId,
+  shouldPreferTypedTextOverTap,
 } from '../src/utils/inboundPayload.js';
 import {
   timeWindowForDate,
@@ -186,5 +187,58 @@ describe('day-part clipped to Admin hours', () => {
     const notice = timeWindowFullNotice(BIZ, MONDAY, 'evening');
     assert.match(notice, /\*Luni\* seara nu mai am ore libere/);
     assert.match(notice, /restul intervalelor/);
+  });
+});
+
+describe('list/button taps vs free-text (no false stale)', () => {
+  it('keeps Alte opțiuni › + grid_next as a tap (title ≠ id is normal)', () => {
+    assert.equal(
+      shouldPreferTypedTextOverTap({
+        typed: 'Alte opțiuni ›',
+        tappedId: 'grid_next',
+        buttonTitle: 'Alte opțiuni ›',
+      }),
+      false,
+    );
+    assert.equal(
+      shouldPreferTypedTextOverTap({
+        typed: 'Alte opțiuni ›',
+        tappedId: 'grid_next',
+      }),
+      false,
+    );
+  });
+
+  it('keeps a day list row as a tap when Body is the title', () => {
+    assert.equal(
+      shouldPreferTypedTextOverTap({
+        typed: 'Vineri, 28 Aug',
+        tappedId: 'day_2026-08-28',
+        buttonTitle: 'Vineri, 28 Aug',
+      }),
+      false,
+    );
+  });
+
+  it('still prefers a typed booking sentence over a stray payload', () => {
+    assert.equal(
+      shouldPreferTypedTextOverTap({
+        typed: 'vreau sa reprogramez o programare',
+        tappedId: 'grid_next',
+        buttonTitle: 'Alte opțiuni ›',
+      }),
+      true,
+    );
+  });
+
+  it('classifies Alte opțiuni list pick as interactive grid_next', () => {
+    const inbound = classifyInboundMessage({
+      body: 'Alte opțiuni ›',
+      buttonPayload: 'grid_next',
+      buttonText: 'Alte opțiuni ›',
+    });
+    assert.equal(inbound.kind, 'interactive');
+    assert.equal(inbound.buttonPayload, 'grid_next');
+    assert.equal(inbound.textBody, 'grid_next');
   });
 });

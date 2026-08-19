@@ -73,13 +73,13 @@ export async function routeInboundTurn({
   void lastIntent;
   void pendingDismissed;
   void pendingExpired;
-  void buttonText;
 
   await processTurnPipeline({
     business,
     recipientPhone,
     textBody,
     buttonPayload,
+    buttonTitle,
     typedText,
     clientId,
     requestId,

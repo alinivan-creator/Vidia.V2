@@ -56,6 +56,7 @@ import {
   formatTimeGridMessage,
   GRID_PREFIX,
   QUICK_REPLY_MAX,
+  mergeMenuOptions,
 } from '../utils/bookingGrid.js';
 import { createFlowToken, flowsEnabled, getConfiguredFlowId } from './whatsappFlowService.js';
 import {
@@ -786,6 +787,13 @@ async function askDateGridResult({
     notice,
     clientMessage || formatDayGridMessage(days, business.timezone, service?.name),
   );
+  const pageOptions = listPage.items.map((i) => ({
+    id: i.id,
+    title: i.title,
+    description: i.description,
+  }));
+  const catalog = days.map((d) => ({ id: d.id, title: d.title, description: d.description }));
+  const menuOptions = mergeMenuOptions(pageOptions, catalog);
   await setConversationStep({
     businessId: business.id,
     rawPhone: recipientPhone,
@@ -800,7 +808,7 @@ async function askDateGridResult({
       intent,
       last_menu: {
         kind: 'day_grid',
-        options: days.map((d) => ({ id: d.id, title: d.title })),
+        options: menuOptions,
       },
     },
     requestId,
@@ -818,8 +826,8 @@ async function askDateGridResult({
     },
     menu: {
       kind: 'day_grid',
-      options: listPage.items.map((i) => ({ id: i.id, title: i.title, description: i.description })),
-      catalog: days.map((d) => ({ id: d.id, title: d.title, description: d.description })),
+      options: pageOptions,
+      catalog,
     },
     machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE,
   });
@@ -894,6 +902,11 @@ async function missingSlotsResult({
     formatTimeGridMessage(times, dateKey, business.timezone, service?.name),
   );
   const useQuickReply = times.length > 0 && times.length <= QUICK_REPLY_MAX && listPage.pageCount <= 1;
+  const pageOptions = useQuickReply
+    ? times.map((t) => ({ id: t.id, title: t.title }))
+    : listPage.items.map((i) => ({ id: i.id, title: i.title, description: i.description }));
+  const catalog = times.map((t) => ({ id: t.id, title: t.title, description: t.description }));
+  const menuOptions = mergeMenuOptions(pageOptions, catalog);
 
   await setConversationStep({
     businessId: business.id,
@@ -909,7 +922,7 @@ async function missingSlotsResult({
       grid_page: listPage.page,
       last_menu: {
         kind: 'time_grid',
-        options: times.map((t) => ({ id: t.id, title: t.title })),
+        options: menuOptions,
       },
       ...extraContext,
       pending_date_text: dateKey || extraContext.pending_date_text || null,
@@ -957,10 +970,8 @@ async function missingSlotsResult({
     },
     menu: {
       kind: 'time_grid',
-      options: useQuickReply
-        ? times.map((t) => ({ id: t.id, title: t.title }))
-        : listPage.items.map((i) => ({ id: i.id, title: i.title, description: i.description })),
-      catalog: times.map((t) => ({ id: t.id, title: t.title, description: t.description })),
+      options: pageOptions,
+      catalog,
     },
     machine_action: reasonKey === 'SLOT_UNAVAILABLE'
       ? MACHINE_ACTIONS.ACTION_SLOT_UNAVAILABLE
@@ -2442,9 +2453,18 @@ async function executeChat(business, textBody = '', lang = 'ro') {
 function executeStaleChoice({ business, convState }) {
   const last = readLastMenu(convState);
   const clientMessage =
-    'Opțiunea dintr-un mesaj mai vechi nu mai e valabilă. Alege din lista actuală sau scrie *programare*.';
+    'Opțiunea aia nu mai e pe lista curentă. Te rog alege din mesajul cel mai recent (sau scrie *programare*).';
   if (last?.options?.length) {
     const kind = last.kind || 'generic';
+    const listButton = kind === 'day_grid'
+      ? 'Zile disponibile'
+      : kind === 'time_grid'
+        ? 'Ore libere'
+        : kind === 'modify'
+          ? 'Programările tale'
+          : kind === 'service'
+            ? 'Servicii'
+            : 'Alege';
     return handlerResult({
       status: 'MISSING_INFO',
       action_performed: null,
@@ -2452,7 +2472,7 @@ function executeStaleChoice({ business, convState }) {
       user_message_template_key: 'STALE_CHOICE',
       data: {
         client_message: clientMessage,
-        list_button: kind === 'modify' ? 'Programările tale' : 'Alege',
+        list_button: listButton,
       },
       menu: { kind, options: last.options, catalog: last.options },
     });

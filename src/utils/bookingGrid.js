@@ -18,6 +18,40 @@ export const GRID_PREFIX = {
   PREV: 'grid_prev',
 };
 
+/**
+ * Merge the page actually sent to WhatsApp (may include grid_next / grid_prev)
+ * with the full catalog so taps from any page of this picker stay valid.
+ *
+ * @param {{ id: string, title?: string, description?: string }[]} pageItems
+ * @param {{ id: string, title?: string, description?: string }[]} catalog
+ * @returns {{ id: string, title?: string, description?: string }[]}
+ */
+export function mergeMenuOptions(pageItems = [], catalog = []) {
+  /** @type {Map<string, { id: string, title?: string, description?: string }>} */
+  const byId = new Map();
+  for (const row of [...(pageItems || []), ...(catalog || [])]) {
+    if (!row?.id) continue;
+    const id = String(row.id);
+    if (!byId.has(id)) {
+      byId.set(id, {
+        id,
+        title: row.title != null ? String(row.title) : undefined,
+        description: row.description != null ? String(row.description) : undefined,
+      });
+    }
+  }
+  return [...byId.values()];
+}
+
+/**
+ * True when this id is a grid pager control (never treat as stale history).
+ * @param {string | null | undefined} id
+ */
+export function isGridNavChoiceId(id) {
+  const value = String(id ?? '').trim();
+  return value === GRID_PREFIX.NEXT || value === GRID_PREFIX.PREV;
+}
+
 const WEEKDAY_SHORT = ['Du', 'Lu', 'Ma', 'Mi', 'Jo', 'Vi', 'Sâ'];
 const WEEKDAY_LONG = ['Duminică', 'Luni', 'Marți', 'Miercuri', 'Joi', 'Vineri', 'Sâmbătă'];
 const MONTHS_SHORT = ['Ian', 'Feb', 'Mar', 'Apr', 'Mai', 'Iun', 'Iul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

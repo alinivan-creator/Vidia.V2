@@ -121,18 +121,41 @@ function looksLikeTypedText(typed, title, payload) {
  * Prefer the raw typed Body over a button payload whenever the Body is a real sentence.
  * Used by the extract layer as a second defense after classifyInboundMessage.
  *
+ * IMPORTANT: Twilio list/quick-reply taps put the *visible title* in Body and the
+ * stable id in ListId/ButtonPayload. Title ≠ id is normal — that must NOT discard
+ * the tap (or "Alte opțiuni ›" / grid_next becomes free text / stale walls).
+ *
  * @param {Object} params
  * @param {string | null | undefined} params.typed
  * @param {string | null | undefined} params.tappedId
+ * @param {string | null | undefined} [params.buttonTitle] — ButtonText / ListTitle
  * @returns {boolean}
  */
-export function shouldPreferTypedTextOverTap({ typed, tappedId }) {
+export function shouldPreferTypedTextOverTap({ typed, tappedId, buttonTitle = null }) {
   const body = String(typed ?? '').trim();
   if (!body) return false;
   const tap = String(tappedId ?? '').trim();
   if (!tap) return looksLikeFreeTextBody(body);
-  if (normalize(body) === normalize(tap)) return false;
-  return looksLikeFreeTextBody(body) || normalize(body) !== normalize(tap);
+
+  const nBody = normalize(body);
+  const nTap = normalize(tap);
+  const nTitle = normalize(buttonTitle);
+
+  // Provider echoed the id itself.
+  if (nBody === nTap) return false;
+  // Normal Twilio tap: Body matches the visible button/list title.
+  if (nTitle && nBody === nTitle) return false;
+  // Short list-row title + known option id → keep the tap (≤ WhatsApp title cap).
+  if (
+    looksLikeInteractiveChoiceId(tap)
+    && body.length <= MAX_TITLE_LENGTH
+    && !looksLikeFreeTextBody(body)
+  ) {
+    return false;
+  }
+
+  // Real typed sentence while a stray payload rode along.
+  return looksLikeFreeTextBody(body);
 }
 
 /**

@@ -10,6 +10,8 @@ import {
   buildQuickReplyPage,
   listOpenDayWindows,
   listTimeWindows,
+  mergeMenuOptions,
+  isGridNavChoiceId,
   GRID_PREFIX,
   LIST_PAGE_SIZE,
 } from '../src/utils/bookingGrid.js';
@@ -117,5 +119,20 @@ describe('booking grid list picker', () => {
     assert.equal(resolveInteractiveChoice('Luni, 24 Aug', 'day_2026-08-24', options), 'day_2026-08-24');
     assert.equal(resolveInteractiveChoice('Luni, 24 Aug', null, options), 'day_2026-08-24');
     assert.equal(resolveInteractiveChoice('09:00', 'slot_old_from_history', options), null);
+  });
+
+  it('mergeMenuOptions keeps grid_next from the page plus full catalog', () => {
+    const catalog = Array.from({ length: 12 }, (_, i) => ({
+      id: `slot_${i}`,
+      title: `${9 + i}:00`,
+    }));
+    const page = buildListPickerPage(catalog, 0);
+    const merged = mergeMenuOptions(page.items, catalog);
+    assert.ok(merged.some((o) => o.id === GRID_PREFIX.NEXT));
+    assert.ok(merged.some((o) => o.id === 'slot_0'));
+    assert.ok(merged.some((o) => o.id === 'slot_11'));
+    assert.equal(isGridNavChoiceId(GRID_PREFIX.NEXT), true);
+    assert.equal(isGridNavChoiceId(GRID_PREFIX.PREV), true);
+    assert.equal(isGridNavChoiceId('slot_0'), false);
   });
 });
