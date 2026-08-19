@@ -242,3 +242,13 @@ describe('list/button taps vs free-text (no false stale)', () => {
     assert.equal(inbound.textBody, 'grid_next');
   });
 });
+
+describe('inbound router wiring', () => {
+  it('maps buttonText to buttonTitle without ReferenceError', async () => {
+    const src = await import('node:fs/promises').then((fs) =>
+      fs.readFile(new URL('../src/services/inboundTurnService.js', import.meta.url), 'utf8'),
+    );
+    assert.match(src, /buttonTitle:\s*buttonText/);
+    assert.doesNotMatch(src, /buttonTitle,\s*\n\s*typedText/);
+  });
+});

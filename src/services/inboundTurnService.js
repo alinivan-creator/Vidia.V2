@@ -79,7 +79,7 @@ export async function routeInboundTurn({
     recipientPhone,
     textBody,
     buttonPayload,
-    buttonTitle,
+    buttonTitle: buttonText,
     typedText,
     clientId,
     requestId,
