@@ -11,6 +11,7 @@ import { looksLikeBusinessFactQuestion } from '../utils/businessInfoLookup.js';
 import { resolveAcceptedOffer } from './pendingOfferService.js';
 import { resolveNumberedChoice, resolveInteractiveChoice } from './whatsappService.js';
 import { GRID_PREFIX } from '../utils/bookingGrid.js';
+import { looksLikeFreeTextBody, looksLikeInteractiveChoiceId } from '../utils/inboundPayload.js';
 import { parseRomanianDateTimeParts } from '../utils/roDateTime.js';
 import { BOOKING_PREFIXES, MOD_PREFIX } from './flowIds.js';
 import {
@@ -816,6 +817,7 @@ function applyParsedDateTime(next, text, timezone, opts = {}) {
  * @param {Business} params.business
  * @param {string} params.textBody
  * @param {string | null} [params.buttonPayload]
+ * @param {string | null} [params.typedText] — raw Body, kept apart from tapped ids
  * @param {import('../db/conversationStateService.js').ConversationState} params.convState
  * @param {import('../db/draftBookingService.js').DraftBooking | null} [params.activeDraft]
  * @param {string | null} [params.requestId]
@@ -825,6 +827,7 @@ async function extractTurnIntentImpl({
   business,
   textBody,
   buttonPayload = null,
+  typedText = null,
   convState,
   activeDraft = null,
   requestId = null,
@@ -854,27 +857,35 @@ async function extractTurnIntentImpl({
     || lastMenu?.kind === 'day_grid'
     || lastMenu?.kind === 'time_grid';
 
+  // Only an actual option id may go stale. Free text — even text that arrived with a
+  // payload attached — is always handed to the language path below.
+  let tappedId = looksLikeInteractiveChoiceId(buttonPayload) ? String(buttonPayload).trim() : null;
+  const staleTap = Boolean(tappedId) && !lastMenu?.options?.some((o) => o.id === tappedId);
+  if (staleTap && looksLikeFreeTextBody(typedText) && String(typedText).trim() !== tappedId) {
+    // The client wrote a sentence while WhatsApp attached an old payload — answer the
+    // sentence, never "that option expired".
+    textBody = String(typedText).trim();
+    tappedId = null;
+  }
+
   // Native quick-reply / remembered window id always wins — but only the CURRENT last_menu.
-  if (buttonPayload) {
-    const inMenu = Boolean(lastMenu?.options?.some((o) => o.id === buttonPayload));
-    if (!inMenu) {
-      return emptyExtract({
-        action: 'stale_choice',
-        choice_id: buttonPayload,
-        confidence: 'high',
-        source: 'menu',
-      });
-    }
+  if (tappedId && staleTap) {
+    return emptyExtract({
+      action: 'stale_choice',
+      choice_id: tappedId,
+      confidence: 'high',
+      source: 'menu',
+    });
   }
   if (lastMenu?.options?.length) {
-    const choiceId = resolveInteractiveChoice(textBody, buttonPayload, lastMenu.options);
+    const choiceId = resolveInteractiveChoice(textBody, tappedId, lastMenu.options);
     if (choiceId) {
       const fromChoice = extractFromChoiceId(choiceId, {}, business);
       if (fromChoice.action !== 'unknown') return fromChoice;
-      if (buttonPayload) {
+      if (tappedId) {
         return emptyExtract({
           action: 'stale_choice',
-          choice_id: buttonPayload,
+          choice_id: tappedId,
           confidence: 'high',
           source: 'menu',
         });

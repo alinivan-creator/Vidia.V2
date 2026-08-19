@@ -111,6 +111,7 @@ describe('in-flight correction: luni la 17 → nu 17, 18', () => {
       },
       text: 'Vreau o programare luni la 17',
       timezone: TZ,
+      now: SATURDAY,
       extractDate: firstParse.dateKey,
       extractTime: firstParse.timeHHmm,
       extractServiceId: 'svc-tuns',
@@ -136,6 +137,7 @@ describe('in-flight correction: luni la 17 → nu 17, 18', () => {
       },
       text: 'Ah scuze, nu 17, 18',
       timezone: TZ,
+      now: SATURDAY,
     });
     const confirmed = afterSlotCheck(afterCorrection, { available: true });
 

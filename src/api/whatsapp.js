@@ -24,6 +24,7 @@ import {
   sendInteractiveButtons,
   clearRememberedMenuOptions,
 } from '../services/whatsappService.js';
+import { classifyInboundMessage } from '../utils/inboundPayload.js';
 import { toE164, toMetaPhone } from '../utils/phone.js';
 import { debugLog } from '../utils/debugLog.js';
 import { continueAfterResponse } from '../utils/afterResponse.js';
@@ -162,12 +163,20 @@ function sanitizeTwilioBody(body) {
 async function processTwilioWebhook(body, requestId) {
   const fromRaw = String(body?.From ?? '');
   const toRaw = String(body?.To ?? '');
-  const buttonPayload = String(body?.ButtonPayload ?? body?.ListId ?? '').trim() || null;
-  const buttonText = String(body?.ButtonText ?? body?.ListTitle ?? '').trim() || null;
   const flowSubmission = body?.InteractiveData || body?.FlowData || null;
   // Quick-reply taps: ButtonPayload is the stable id; Body/ButtonText are the visible title.
   // Flow complete: InteractiveData carries appointment_date + appointment_slot.
-  let textBody = (buttonPayload || String(body?.Body ?? '')).trim();
+  // A typed sentence keeps its own text even when a payload rides along, so free text
+  // never lands on the stale-option path.
+  const inbound = classifyInboundMessage({
+    body: body?.Body,
+    buttonPayload: body?.ButtonPayload ?? body?.ListId,
+    buttonText: body?.ButtonText ?? body?.ListTitle,
+    flowSubmission: Boolean(flowSubmission),
+  });
+  const buttonPayload = inbound.buttonPayload;
+  const buttonText = String(body?.ButtonText ?? body?.ListTitle ?? '').trim() || null;
+  let textBody = inbound.textBody;
   if (flowSubmission) {
     try {
       const { parseFlowSubmission } = await import('../services/whatsappFlowService.js');
@@ -189,6 +198,7 @@ async function processTwilioWebhook(body, requestId) {
     fromClean,
     toClean,
     body: textBody.slice(0, 120),
+    inboundKind: inbound.kind,
     buttonPayload: buttonPayload?.slice(0, 80) || null,
     buttonText: buttonText?.slice(0, 40) || null,
   });
@@ -302,23 +312,7 @@ async function processTwilioWebhook(body, requestId) {
       });
       convState = restarted.conv || convState;
       activeDraft = restarted.draft;
-      await sendTextMessage({
-        business,
-        recipientPhone,
-        requestId,
-        text: restarted.message,
-      });
-      const menuButtons = buildInteractiveButtons(business);
-      if (menuButtons.length) {
-        await sendInteractiveButtons({
-          business,
-          recipientPhone,
-          requestId,
-          bodyText: 'Alege o opțiune sau scrie ce ai nevoie.',
-          buttons: menuButtons,
-        });
-      }
-      console.log('[webhook] Session TTL reset — processing inbound on a clean slate', {
+      console.log('[webhook] Session TTL reset — silently purged active draft and reset to IDLE', {
         sessionTtl,
         idleExpired: Boolean(swept.idleExpired),
         pendingExpired: Boolean(swept.expired),
@@ -350,31 +344,6 @@ async function processTwilioWebhook(body, requestId) {
       });
     }
 
-    const normalized = textBody.toLowerCase().trim();
-
-    if (isNew) {
-      console.log('[webhook] New client — AI transparency welcome');
-      const earlyTriage = triageUserIntent(textBody, {
-        businessType: business.business_type,
-        services: getBookingConfig(business).services,
-      });
-      const actionable = ['book', 'faq', 'contact', 'cancel', 'reschedule', 'callback', 'list_appointments'].includes(
-        earlyTriage.intent,
-      );
-      await sendAiTransparencyWelcome({
-        business,
-        recipientPhone,
-        requestId,
-        withMenu: !actionable,
-      });
-      if (!actionable) {
-        const isGreeting = /^(salut|buna|bună|hello|hi|hey|servus|seara buna|buna ziua)[\s!.]*$/i.test(
-          normalized,
-        );
-        if (isGreeting || earlyTriage.intent === 'menu' || !textBody.trim()) return;
-      }
-    }
-
     const pendingDismissed = Boolean(convState.context_data?.pending_dismissed);
     const lastIntent = pendingDismissed
       ? null
@@ -390,6 +359,7 @@ async function processTwilioWebhook(body, requestId) {
       textBody,
       buttonPayload,
       buttonText,
+      typedText: String(body?.Body ?? '').trim() || null,
       clientId,
       requestId,
       convState,

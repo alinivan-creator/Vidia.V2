@@ -12,6 +12,7 @@ import {
   WEEKDAY_LABELS_EN,
   getBookingConfig,
 } from './datetime.js';
+import { normalizeTimeWindow, timeWindowBounds, timeWindowLabel } from './timeWindow.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -176,6 +177,134 @@ export function pickAnotherDayNotice(business, date, reason, lang = 'ro') {
       : `*${dayName}* suntem *închiși*. Alege te rog altă zi de mai jos.`;
   }
   return null;
+}
+
+/**
+ * @param {Business} business
+ * @param {Date | string} date — Date or YYYY-MM-DD in business timezone
+ * @returns {Date | null}
+ */
+function toBusinessDate(business, date) {
+  if (date instanceof Date) return Number.isNaN(date.getTime()) ? null : date;
+  const raw = String(date ?? '');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return localToUtc(raw, '12:00', business.timezone);
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/**
+ * @param {string | null | undefined} hhmm
+ * @returns {number | null} minutes from midnight
+ */
+function toMinutes(hhmm) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm ?? '').trim());
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+function fromMinutes(minutes) {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+/**
+ * Clips a soft day-part ("seara") to the Admin hours of one date, so a request like
+ * "mâine seara" becomes that day's real evening window instead of a generic 17–23.
+ *
+ * @param {Business} business
+ * @param {Date | string} date
+ * @param {import('./timeWindow.js').TimeWindow | string | null | undefined} window
+ * @returns {{
+ *   window: import('./timeWindow.js').TimeWindow,
+ *   label: string,
+ *   dayName: string,
+ *   open: boolean,
+ *   overlaps: boolean,
+ *   startHHmm: string | null,
+ *   endHHmm: string | null,
+ *   dayOpen: string | null,
+ *   dayClose: string | null,
+ * } | null} null when the text carried no day-part
+ */
+export function timeWindowForDate(business, date, window) {
+  const key = normalizeTimeWindow(window);
+  if (!key) return null;
+  const bounds = timeWindowBounds(key);
+  const label = timeWindowLabel(key) || '';
+  const when = toBusinessDate(business, date);
+  const info = when ? getHoursForDate(business, when) : null;
+  const base = {
+    window: key,
+    label,
+    dayName: info?.dayName || 'ziua aleasă',
+    open: Boolean(info?.open),
+    overlaps: false,
+    startHHmm: null,
+    endHHmm: null,
+    dayOpen: info?.dayHours?.open ?? null,
+    dayClose: info?.dayHours?.close ?? null,
+  };
+  if (!bounds || !info?.open || !info.dayHours) return base;
+
+  const dayOpen = toMinutes(info.dayHours.open);
+  const dayClose = toMinutes(info.dayHours.close);
+  if (dayOpen == null || dayClose == null || dayClose <= dayOpen) return base;
+
+  const start = Math.max(dayOpen, bounds.startHour * 60);
+  const end = Math.min(dayClose, bounds.endHour * 60);
+  if (end <= start) return base;
+
+  return {
+    ...base,
+    overlaps: true,
+    startHHmm: fromMinutes(start),
+    endHHmm: fromMinutes(end),
+  };
+}
+
+/**
+ * The client asked for a day-part the business does not work in — state the real
+ * window for that day and keep the booking on the same date.
+ *
+ * @param {Business} business
+ * @param {Date | string} date
+ * @param {import('./timeWindow.js').TimeWindow | string | null | undefined} window
+ * @param {'ro' | 'en'} [lang]
+ * @returns {string | null}
+ */
+export function timeWindowOutsideHoursNotice(business, date, window, lang = 'ro') {
+  const info = timeWindowForDate(business, date, window);
+  if (!info || info.overlaps) return null;
+  const label = timeWindowLabel(info.window, lang) || info.label;
+  if (!info.open || !info.dayOpen || !info.dayClose) {
+    return lang === 'en'
+      ? `We are *closed* on *${info.dayName}*. Please pick another day below.`
+      : `*${info.dayName}* suntem *închiși*. Alege te rog altă zi de mai jos.`;
+  }
+  const hours = `${info.dayOpen}–${info.dayClose}`;
+  return lang === 'en'
+    ? `We do not work in ${label} on *${info.dayName}* — our hours are *${hours}*. Here are the free times inside that window.`
+    : `*${info.dayName}* nu lucrăm ${label} — programul este *${hours}*. Îți arăt orele libere din acest interval.`;
+}
+
+/**
+ * The day-part exists but is fully booked — offer the rest of the same day instead of
+ * bouncing the client back to the day picker.
+ *
+ * @param {Business} business
+ * @param {Date | string} date
+ * @param {import('./timeWindow.js').TimeWindow | string | null | undefined} window
+ * @param {'ro' | 'en'} [lang]
+ * @returns {string | null}
+ */
+export function timeWindowFullNotice(business, date, window, lang = 'ro') {
+  const info = timeWindowForDate(business, date, window);
+  if (!info) return null;
+  const label = timeWindowLabel(info.window, lang) || info.label;
+  return lang === 'en'
+    ? `No free times left in ${label} on *${info.dayName}*. Here is the rest of that day.`
+    : `*${info.dayName}* ${label} nu mai am ore libere. Îți arăt restul intervalelor din acea zi.`;
 }
 
 /**

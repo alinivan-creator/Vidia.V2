@@ -407,9 +407,20 @@ export function reduceBookingTurn({
   if (intent === 'change_time') {
     if (timeValue) nextDraft.time = timeValue;
   } else if (intent === 'change_date') {
-    if (dateValue) nextDraft.date = dateValue;
+    if (dateValue) {
+      nextDraft.date = dateValue;
+      if (!timeValue && !uttered.timeHHmm) {
+        nextDraft.time = null;
+      }
+    }
   } else {
-    if (dateValue) nextDraft.date = dateValue;
+    if (dateValue) {
+      const dateChanged = nextDraft.date && nextDraft.date !== dateValue;
+      nextDraft.date = dateValue;
+      if (dateChanged && !timeValue && !uttered.timeHHmm) {
+        nextDraft.time = null;
+      }
+    }
     if (timeValue) nextDraft.time = timeValue;
   }
 

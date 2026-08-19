@@ -65,8 +65,12 @@ import {
   outOfHoursNotice,
   pickAnotherDayNotice,
   resolveServiceDurationMinutes,
+  timeWindowFullNotice,
+  timeWindowForDate,
+  timeWindowOutsideHoursNotice,
   unknownInfoClientMessage,
 } from '../utils/workingHours.js';
+import { normalizeTimeWindow, timeWindowLabel } from '../utils/timeWindow.js';
 import {
   lookupBusinessInfo,
   formatBusinessInfoReply,
@@ -164,10 +168,16 @@ export function hydrateExtract(extract, convState, timezone) {
     next.date_text = ctx.pending_date_text;
   }
   if (!turnHasTime && typeof ctx.pending_time_text === 'string' && ctx.pending_time_text) {
-    next.time_text = ctx.pending_time_text;
+    const dateChanged = turnHasDate && typeof ctx.pending_date_text === 'string' && extract.date_text !== ctx.pending_date_text;
+    if (!dateChanged) {
+      next.time_text = ctx.pending_time_text;
+    }
   }
   if (!turnHasWindow && !next.time_text && typeof ctx.pending_time_window === 'string') {
-    next.time_window = ctx.pending_time_window;
+    const dateChanged = turnHasDate && typeof ctx.pending_date_text === 'string' && extract.date_text !== ctx.pending_date_text;
+    if (!dateChanged) {
+      next.time_window = ctx.pending_time_window;
+    }
   }
   if (next.time_text) next.time_window = null;
   if (!next.service_id && keepService && typeof ctx.pending_service_id === 'string') {
@@ -215,6 +225,7 @@ async function persistPendingExtract({ business, recipientPhone, extract, reques
     context.pending_datetime = extract.datetime.toISOString();
   } else if (extract.date_text && !extract.time_text) {
     context.pending_datetime = null;
+    context.pending_time_text = null;
   }
   if (freshMenuStart || extract.service_id || extract.service_name || extract.date_text || extract.time_text) {
     const latestDraft = await getOrCreateConversationState(business.id, recipientPhone);
@@ -827,15 +838,44 @@ async function missingSlotsResult({
   page = 0,
   notice = null,
 }) {
-  const listed = await listSlotsForService({
+  // "mâine seara" is a day-part, not a clock time: clip it to the Admin hours of that
+  // date, and when nothing free is left inside it fall back to the whole day with a
+  // notice instead of dropping the client back to the day picker.
+  let windowFilter = normalizeTimeWindow(timeWindow);
+  let windowNotice = null;
+  if (windowFilter && dateKey) {
+    const clipped = timeWindowForDate(business, dateKey, windowFilter);
+    if (clipped && !clipped.overlaps) {
+      windowNotice = timeWindowOutsideHoursNotice(business, dateKey, windowFilter);
+      windowFilter = null;
+    }
+  }
+  let listed = await listSlotsForService({
     business,
     service,
     draftId: draft?.id,
     employeeId,
     requestId,
     dateKey,
-    timeWindow,
+    timeWindow: windowFilter,
   });
+  if (!listed.error && windowFilter && !listed.slots.length) {
+    const wholeDay = await listSlotsForService({
+      business,
+      service,
+      draftId: draft?.id,
+      employeeId,
+      requestId,
+      dateKey,
+      timeWindow: null,
+    });
+    if (!wholeDay.error && wholeDay.slots.length) {
+      windowNotice = timeWindowFullNotice(business, dateKey, windowFilter);
+      windowFilter = null;
+      listed = wholeDay;
+    }
+  }
+  const bodyNotice = notice || windowNotice;
   if (listed.error) {
     return handlerResult({
       status: 'ERROR',
@@ -847,7 +887,7 @@ async function missingSlotsResult({
   const listPage = buildListPickerPage(times, page);
   const datePretty = dateKey ? formatRomanianDate(dateKey, business.timezone) : null;
   const body = withNotice(
-    notice,
+    bodyNotice,
     formatTimeGridMessage(times, dateKey, business.timezone, service?.name),
   );
   const useQuickReply = times.length > 0 && times.length <= QUICK_REPLY_MAX && listPage.pageCount <= 1;
@@ -860,8 +900,8 @@ async function missingSlotsResult({
       draft_id: draft?.id,
       intent: extraContext.intent || 'book',
       service,
-      booking_wait: dateKey || timeWindow ? BOOKING_WAIT.TIME : BOOKING_WAIT.DATE,
-      pending_time_window: timeWindow || null,
+      booking_wait: dateKey || windowFilter ? BOOKING_WAIT.TIME : BOOKING_WAIT.DATE,
+      pending_time_window: windowFilter || null,
       grid_kind: 'time',
       grid_page: listPage.page,
       last_menu: {
@@ -884,7 +924,7 @@ async function missingSlotsResult({
         ? CONVERSATION_STEPS.RESCHEDULING
         : CONVERSATION_STEPS.WAITING_FOR_DATE,
       extraContext: extraContext.intent === 'reschedule' ? extraContext : {},
-      notice,
+      notice: bodyNotice,
       clientMessage:
         `Nu am găsit ore libere pentru *${service?.name || 'serviciu'}*` +
         (datePretty ? ` pe *${datePretty}*` : '') +
@@ -900,8 +940,8 @@ async function missingSlotsResult({
       service_name: service?.name,
       occupied_label: occupiedLabel,
       date_label: datePretty,
-      time_window: timeWindow,
-      notice: notice || null,
+      time_window: windowFilter,
+      notice: bodyNotice || null,
       client_message: body,
       alternatives: listed.slots.map((s) => ({
         id: s.id,
@@ -1220,7 +1260,8 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
         requestId,
         clientMessage:
           formatDayGridMessage(listOpenDayWindows(business), business.timezone, service.name)
-          + `\n\nInterval preferat: *${extract.time_window}*. Alege ziua, apoi ora.`,
+          + `\n\nInterval preferat: *${timeWindowLabel(extract.time_window) || extract.time_window}*.`
+          + ' Alege ziua, apoi ora.',
       });
     }
     return askDateGridResult({
@@ -1688,42 +1729,52 @@ async function applyReschedule({
     requestId,
   });
 
+  let activeEventId = eventId;
   if (!isBusinessMockMode(business)) {
-    if (!eventId) {
-      return handlerResult({
-        status: 'ERROR',
-        user_message_template_key: 'ERROR_CALENDAR',
-        data: {
-          client_message:
-            'Din păcate nu am putut reprograma. Te rog încearcă din nou.',
+    if (!activeEventId) {
+      const created = await createCalendarEvent({
+        business,
+        calendarId,
+        employeeId,
+        event: {
+          summary: `${service.name || 'Programare'} — ${appointment.phone_number || recipientPhone}`,
+          start: { dateTime: slotStart.toISOString(), timeZone: business.timezone },
+          end: { dateTime: slotEnd.toISOString(), timeZone: business.timezone },
         },
+        requestId,
       });
-    }
-    const calResult = await updateCalendarEvent({
-      business,
-      eventId,
-      calendarId,
-      updates: {
-        summary: `${service.name || 'Programare'} — ${appointment.phone_number || recipientPhone}`,
-        start: { dateTime: slotStart.toISOString(), timeZone: business.timezone },
-        end: { dateTime: slotEnd.toISOString(), timeZone: business.timezone },
-      },
-      requestId,
-    });
-    if (!calResult?.ok) {
-      return handlerResult({
-        status: 'ERROR',
-        user_message_template_key: 'ERROR_CALENDAR',
-        data: {
-          client_message:
-            'Din păcate nu am putut reprograma. Te rog încearcă din nou.',
+      activeEventId = created?.id || null;
+    } else {
+      const calResult = await updateCalendarEvent({
+        business,
+        eventId: activeEventId,
+        calendarId,
+        updates: {
+          summary: `${service.name || 'Programare'} — ${appointment.phone_number || recipientPhone}`,
+          start: { dateTime: slotStart.toISOString(), timeZone: business.timezone },
+          end: { dateTime: slotEnd.toISOString(), timeZone: business.timezone },
         },
+        requestId,
       });
+      if (!calResult?.ok) {
+        const created = await createCalendarEvent({
+          business,
+          calendarId,
+          employeeId,
+          event: {
+            summary: `${service.name || 'Programare'} — ${appointment.phone_number || recipientPhone}`,
+            start: { dateTime: slotStart.toISOString(), timeZone: business.timezone },
+            end: { dateTime: slotEnd.toISOString(), timeZone: business.timezone },
+          },
+          requestId,
+        });
+        activeEventId = created?.id || null;
+      }
     }
-  } else if (eventId) {
+  } else if (activeEventId) {
     await updateCalendarEvent({
       business,
-      eventId,
+      eventId: activeEventId,
       calendarId,
       updates: {
         summary: `${service.name || 'Programare'} — ${appointment.id.slice(0, 8)}`,
@@ -1739,12 +1790,12 @@ async function applyReschedule({
     businessId: business.id,
     slotStart,
     slotEnd,
-    googleEventId: eventId || undefined,
+    googleEventId: activeEventId || undefined,
     context: {
       step: 'rescheduled',
       previous_slot_start: convState.context_data?.slot_start,
       rescheduled_at: new Date().toISOString(),
-      google_event_id: eventId,
+      google_event_id: activeEventId,
       employee_id: employeeId,
     },
     requestId,
@@ -1757,7 +1808,7 @@ async function applyReschedule({
       last_action: 'rescheduled',
       appointment_id: appointment.id,
       slot_start: slotStart.toISOString(),
-      google_event_id: eventId,
+      google_event_id: activeEventId,
     },
     mergeContext: false,
     requestId,

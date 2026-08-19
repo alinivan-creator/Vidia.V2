@@ -5,11 +5,11 @@
 
 /** @typedef {'morning' | 'afternoon' | 'evening'} TimeWindow */
 
-/** @type {Record<TimeWindow, { startHour: number, endHour: number, labelRo: string }>} */
+/** @type {Record<TimeWindow, { startHour: number, endHour: number, labelRo: string, labelEn: string }>} */
 export const TIME_WINDOW_HOURS = {
-  morning: { startHour: 6, endHour: 12, labelRo: 'dimineața' },
-  afternoon: { startHour: 12, endHour: 17, labelRo: 'după-amiază' },
-  evening: { startHour: 17, endHour: 23, labelRo: 'seara' },
+  morning: { startHour: 6, endHour: 12, labelRo: 'dimineața', labelEn: 'the morning' },
+  afternoon: { startHour: 12, endHour: 17, labelRo: 'după-amiază', labelEn: 'the afternoon' },
+  evening: { startHour: 17, endHour: 23, labelRo: 'seara', labelEn: 'the evening' },
 };
 
 function normalize(text) {
@@ -87,6 +87,18 @@ export function looksLikeAvailabilityQuestion(text) {
 export function timeWindowBounds(window) {
   const key = normalizeTimeWindow(window);
   return key ? TIME_WINDOW_HOURS[key] : null;
+}
+
+/**
+ * Client-facing name of a day-part — never leak the internal key ("evening").
+ * @param {TimeWindow | string | null | undefined} window
+ * @param {'ro' | 'en'} [lang]
+ * @returns {string | null}
+ */
+export function timeWindowLabel(window, lang = 'ro') {
+  const bounds = timeWindowBounds(window);
+  if (!bounds) return null;
+  return lang === 'en' ? bounds.labelEn : bounds.labelRo;
 }
 
 /**

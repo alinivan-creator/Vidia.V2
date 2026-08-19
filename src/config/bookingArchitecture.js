@@ -3,13 +3,19 @@
  *
  * Flow:
  *   POST /webhook/whatsapp
- *     → tenant by Twilio To → businesses.whatsapp_phone_number_id (Supabase)
+ *     → tenant by Twilio To → businesses.whatsapp_phone_number_id (Supabase strict isolation)
  *     → ProfileName → clients.display_name (if empty)
  *     → sweepStalePendingForPhone (hold TTL) + conversation session TTL check
- *     → if session idle > session_ttl_minutes: greeting + hardReset, then process inbound
+ *     → if session idle > session_ttl_minutes: silently purge active draft and reset to IDLE,
+ *       then process inbound message on a clean slate
+ *     → classifyInboundMessage: only a real option id (ButtonPayload / ListId) counts as
+ *       a tap; typed text keeps its own body and never hits the stale-option path
  *     → routeInboundTurn → turnPipeline
  *          1. Dialogue Agent — turnExtract (keywords first; Gemini JSON parse, OpenAI fallback)
- *          2. Execution Agent — turnExecute (catalog / hours / calendar_cache). No LLM.
+ *          2. Execution Agent — State Machine Engine (turnExecute + stateMachine.js):
+ *             - Atomic context pivots: date/time/service updates in-place without flow drop
+ *             - Out-of-bounds handling: polite recovery keeping active date/service
+ *             - Rescheduling integrity: Target Booking → New Date → New Slot → Confirmation
  *          3. turnPresent — templates from Execution JSON only (optional Gemini polish)
  *
  * TTLs (independent):
@@ -22,11 +28,13 @@
  *
  * Date/time UX:
  *   Hybrid: Twilio list-picker / quick-reply + free-text NLP.
- *   Invented services rejected. Availability only from backend. No „Data de 0”.
+ *   Day-parts („mâine seara”) are clipped to that date's Admin hours, then filter slots;
+ *   an empty window widens to the whole day with a notice instead of a dead end.
+ *   Context Pivots: changing date or service in-flight updates draft and presents matching slots.
  *   After successful booking: hardReset session.
  *
  * Confirm UX:
  *   Confirmation + Adaugă în calendar URL button.
  *   Name is never asked when Twilio ProfileName / display_name exists.
  */
-export const BOOKING_ARCHITECTURE_VERSION = 'dual-ai-session-ttl-v6';
+export const BOOKING_ARCHITECTURE_VERSION = 'dual-ai-state-machine-v8';
