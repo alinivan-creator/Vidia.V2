@@ -74,7 +74,12 @@ export async function getBusyIntervalsFromCache({
   timeMax,
   employeeId = null,
   requestId = null,
+  excludeGoogleEventIds = null,
 }) {
+  const excludeIds = Array.isArray(excludeGoogleEventIds)
+    ? [...new Set(excludeGoogleEventIds.filter((id) => typeof id === 'string' && id.trim()))]
+    : [];
+
   let query = supabase
     .from('calendar_cache')
     .select('slot_start, slot_end, status, google_event_id, employee_id')
@@ -92,6 +97,14 @@ export async function getBusyIntervalsFromCache({
 
   const { data, error } = await query;
 
+  const mapRows = (rows) => (rows ?? [])
+    .filter((row) => !excludeIds.length || !excludeIds.includes(row.google_event_id))
+    .map((row) => ({
+      start: new Date(row.slot_start),
+      end: new Date(row.slot_end),
+      google_event_id: row.google_event_id || null,
+    }));
+
   if (error) {
     // Pre-migration: column missing — fall back to business-wide cache
     if (/employee_id|PGRST204/i.test(error.message ?? '')) {
@@ -102,10 +115,7 @@ export async function getBusyIntervalsFromCache({
         .in('status', ['busy', 'blocked'])
         .gte('slot_end', timeMin.toISOString())
         .lte('slot_start', timeMax.toISOString());
-      return (fallback.data ?? []).map((row) => ({
-        start: new Date(row.slot_start),
-        end: new Date(row.slot_end),
-      }));
+      return mapRows(fallback.data);
     }
     await logError({
       message: 'getBusyIntervalsFromCache failed',
@@ -117,10 +127,7 @@ export async function getBusyIntervalsFromCache({
     return [];
   }
 
-  return (data ?? []).map((row) => ({
-    start: new Date(row.slot_start),
-    end: new Date(row.slot_end),
-  }));
+  return mapRows(data);
 }
 
 /**
@@ -326,6 +333,7 @@ export async function getAvailableSlots({
   employeeId = null,
   dateKey = null,
   timeWindow = null,
+  excludeGoogleEventIds = null,
 }) {
   const duration = Number(durationMinutes);
   if (!Number.isFinite(duration) || duration <= 0) return [];
@@ -344,6 +352,7 @@ export async function getAvailableSlots({
     timeMin: now,
     timeMax: horizonEnd,
     employeeId,
+    excludeGoogleEventIds,
   });
 
   const softLocks = await getSoftLockIntervals({
@@ -424,6 +433,7 @@ export async function isSlotAvailable({
   durationMinutes,
   excludeDraftId = null,
   employeeId = null,
+  excludeGoogleEventIds = null,
 }) {
   const duration = Number(durationMinutes);
   if (!Number.isFinite(duration) || duration <= 0) return false;
@@ -442,6 +452,7 @@ export async function isSlotAvailable({
     timeMin: start,
     timeMax: end,
     employeeId,
+    excludeGoogleEventIds,
   });
   const softLocks = await getSoftLockIntervals({
     businessId: business.id,

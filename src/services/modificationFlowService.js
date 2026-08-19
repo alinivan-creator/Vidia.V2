@@ -798,25 +798,6 @@ export async function applyRescheduleSlot({
     employeeId,
   });
 
-  const available = await isSlotAvailable({
-    business,
-    slotId,
-    durationMinutes: duration,
-    excludeDraftId: appointmentId,
-    employeeId,
-  });
-
-  if (!available) {
-    await sendTextMessage({
-      business,
-      recipientPhone,
-      requestId,
-      text: 'Slotul nu mai e liber. Alege altă oră:',
-    });
-    await sendRescheduleSlotPicker({ business, recipientPhone, appointment, requestId });
-    return true;
-  }
-
   const eventId = await resolveCalendarEventId({
     business,
     eventId: storedEventId || appointment.google_event_id,
@@ -826,55 +807,31 @@ export async function applyRescheduleSlot({
     calendarId,
     requestId,
   });
+  const excludeEventIds = [eventId, appointment.google_event_id, storedEventId]
+    .filter((id) => typeof id === 'string' && id && !isMockEventId(id));
 
-  let activeEventId = eventId || null;
-  if (!isBusinessMockMode(business)) {
-    const summary = `${service.name || 'Programare'} — ${appointment.phone_number || recipientPhone}`;
-    if (activeEventId) {
-      const calResult = await updateCalendarEvent({
-        business,
-        eventId: activeEventId,
-        calendarId,
-        updates: {
-          summary,
-          start: { dateTime: slotStart.toISOString(), timeZone: business.timezone },
-          end: { dateTime: slotEnd.toISOString(), timeZone: business.timezone },
-        },
-        requestId,
-      });
-      if (!calResult?.ok) {
-        console.error('Eroare detalii:', calResult);
-        await sendTextMessage({
-          business,
-          recipientPhone,
-          requestId,
-          text: 'Din păcate nu am putut reprograma. Te rog încearcă din nou.',
-        });
-        return true;
-      }
-    } else {
-      await sendTextMessage({
-        business,
-        recipientPhone,
-        requestId,
-        text: 'Din păcate nu am putut reprograma. Te rog încearcă din nou.',
-      });
-      return true;
-    }
-  } else if (activeEventId) {
-    await updateCalendarEvent({
+  const available = await isSlotAvailable({
+    business,
+    slotId,
+    durationMinutes: duration,
+    excludeDraftId: appointmentId,
+    excludeGoogleEventIds: excludeEventIds,
+    employeeId,
+  });
+
+  if (!available) {
+    await sendTextMessage({
       business,
-      eventId: activeEventId,
-      calendarId,
-      updates: {
-        summary: `${service.name || 'Programare'} — ${appointmentId.slice(0, 8)}`,
-        start: { dateTime: slotStart.toISOString(), timeZone: business.timezone },
-        end: { dateTime: slotEnd.toISOString(), timeZone: business.timezone },
-      },
+      recipientPhone,
       requestId,
+      text: 'Înțeleg, ora asta nu mai e liberă. Te rog alege altă oră din listă:',
     });
+    await sendRescheduleSlotPicker({ business, recipientPhone, appointment, requestId });
+    return true;
   }
 
+  // DB first — never move Google before the confirmed row is updated.
+  let activeEventId = eventId || null;
   const mutated = await rescheduleConfirmedBookingAtomic({
     draftId: appointmentId,
     businessId: business.id,
@@ -898,13 +855,46 @@ export async function applyRescheduleSlot({
       recipientPhone,
       requestId,
       text: mutated.reason === 'slot_taken'
-        ? 'Slotul nu mai e liber. Alege altă oră.'
-        : 'Din păcate nu am putut salva reprogramarea în sistem. Te rog încearcă din nou.',
+        ? 'Înțeleg, ora asta nu mai e liberă. Te rog alege altă oră din listă.'
+        : 'Îmi pare rău, nu am putut salva reprogramarea acum. Te rog încearcă din nou peste un moment.',
     });
     if (mutated.reason === 'slot_taken') {
       await sendRescheduleSlotPicker({ business, recipientPhone, appointment, requestId });
     }
     return true;
+  }
+
+  if (!isBusinessMockMode(business)) {
+    const summary = `${service.name || 'Programare'} — ${appointment.phone_number || recipientPhone}`;
+    if (activeEventId && !isMockEventId(activeEventId)) {
+      const calResult = await updateCalendarEvent({
+        business,
+        eventId: activeEventId,
+        calendarId,
+        updates: {
+          summary,
+          start: { dateTime: slotStart.toISOString(), timeZone: business.timezone },
+          end: { dateTime: slotEnd.toISOString(), timeZone: business.timezone },
+        },
+        requestId,
+      });
+      if (!calResult?.ok) {
+        console.error('Eroare detalii:', calResult);
+        // Booking already saved — still confirm to the client.
+      }
+    }
+  } else if (activeEventId) {
+    await updateCalendarEvent({
+      business,
+      eventId: activeEventId,
+      calendarId,
+      updates: {
+        summary: `${service.name || 'Programare'} — ${appointmentId.slice(0, 8)}`,
+        start: { dateTime: slotStart.toISOString(), timeZone: business.timezone },
+        end: { dateTime: slotEnd.toISOString(), timeZone: business.timezone },
+      },
+      requestId,
+    });
   }
 
   await setConversationStep({
@@ -939,14 +929,12 @@ export async function applyRescheduleSlot({
   });
 
   const updateBody = waJoin(
-    waTitle('Programare actualizată'),
+    waTitle('Gata, am mutat programarea'),
     '',
     waField('Serviciu', service.name || 'Serviciu'),
-    waField('Când', formatSlotLabel(slotStart, business.timezone)),
+    waField('Noua dată', formatSlotLabel(slotStart, business.timezone)),
     '',
-    WA_DIVIDER,
-    '',
-    'Te așteptăm. Pentru anulare, scrie *anulează*.',
+    'Te așteptăm cu drag! Dacă mai schimbi ceva, scrie *reprogramare* sau *anulează*.',
   );
 
   if (calendarInvite.url) {

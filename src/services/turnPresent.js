@@ -179,20 +179,25 @@ export function renderHandlerResult(business, result) {
       );
     }
     case 'SLOT_UNAVAILABLE': {
-      const occupied = d.occupied_label
-        ? `*${d.occupied_label}* tocmai s-a ocupat.`
-        : (d.client_message || 'Intervalul nu e disponibil.');
       if (typeof d.client_message === 'string' && d.client_message.trim()) {
-        return d.client_message;
+        return d.client_message.trim();
       }
-      return waJoin(waTitle('Indisponibil'), occupied, '', 'Alege altă zi din listă.');
+      const occupied = d.occupied_label
+        ? `Înțeleg — *${d.occupied_label}* nu mai e liber.`
+        : 'Înțeleg, intervalul ăsta nu mai e liber.';
+      return waJoin(
+        waTitle('Hai să alegem altceva'),
+        occupied,
+        '',
+        'Te rog alege altă oră din listă (sau altă zi, dacă preferi).',
+      );
     }
     case 'MISSING_APPOINTMENT': {
-      const intent = d.intent === 'cancel' ? 'anulezi' : 'reprogramezi';
+      const intent = d.intent === 'cancel' ? 'anulăm' : 'mutăm';
       const custom = typeof d.client_message === 'string' && d.client_message.trim()
         ? d.client_message.trim()
-        : `Care programare vrei să ${intent}?`;
-      return waJoin(waTitle('Programări'), custom);
+        : `Am găsit câteva programări. Pe care o ${intent}?`;
+      return waJoin(waTitle('Programările tale'), custom);
     }
     case 'CONFIRM_CANCEL':
       if (typeof d.client_message === 'string' && d.client_message.trim()) {

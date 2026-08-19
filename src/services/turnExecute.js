@@ -601,6 +601,7 @@ async function listSlotsForService({
   timeWindow = null,
   /** Per-day: fetch the full free day (not a short preview). */
   limit = 8,
+  excludeGoogleEventIds = null,
 }) {
   if (!hasConfiguredOpenDay(business)) return { error: hoursUnsetClientMessage(), slots: [] };
   const duration = catalogDuration(business, service);
@@ -623,6 +624,7 @@ async function listSlotsForService({
     employeeId,
     dateKey: dateKey || null,
     timeWindow: timeWindow || null,
+    excludeGoogleEventIds,
   });
   return { error: null, slots: slots.slice(0, fetchLimit), duration };
 }
@@ -1690,12 +1692,146 @@ async function applyReschedule({
     calendarId,
     requestId,
   });
+  const excludeEventIds = [priorEventId, appointment.google_event_id, storedEventId]
+    .filter((id) => typeof id === 'string' && id && !isMockEventId(id));
 
-  // Calendar: update the SAME event in place. Never spawn a parallel event beside an old one.
-  let activeEventId = priorEventId || null;
+  // Check free BEFORE any calendar write. Exclude this booking's own event so a
+  // move to a new slot is never rejected as "self busy".
+  const slotId = encodeSlotId(slotStart, business.timezone);
+  const available = await isSlotAvailable({
+    business,
+    slotId,
+    durationMinutes: duration,
+    excludeDraftId: appointment.id,
+    excludeGoogleEventIds: excludeEventIds,
+    employeeId,
+  });
+  if (!available) {
+    const listed = await listSlotsForService({
+      business,
+      service,
+      draftId: appointment.id,
+      employeeId,
+      requestId,
+      dateKey: formatDateKey(slotStart, business.timezone),
+      excludeGoogleEventIds: excludeEventIds,
+    });
+    await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: CONVERSATION_STEPS.RESCHEDULING,
+      context: {
+        intent: 'reschedule',
+        appointment_id: appointment.id,
+        service,
+        google_event_id: appointment.google_event_id,
+        slot_start: appointment.selected_slot_start,
+        slot_end: appointment.selected_slot_end,
+        employee_id: employeeId,
+      },
+      mergeContext: false,
+      requestId,
+    });
+    return handlerResult({
+      status: 'MISSING_INFO',
+      next_required_step: 'CHOOSE_SLOT',
+      user_message_template_key: 'SLOT_UNAVAILABLE',
+      data: {
+        occupied_label: formatSlotLabel(slotStart, business.timezone),
+        client_message:
+          `Înțeleg, *${formatSlotLabel(slotStart, business.timezone)}* nu mai e liber. ` +
+          'Te rog alege altă oră din listă — păstrăm același serviciu.',
+        alternatives: (listed.slots || []).map((s) => ({
+          id: s.id,
+          label: formatSlotLabel(s.start, business.timezone),
+        })),
+      },
+      menu: listed.slots?.length ? slotMenu(listed.slots, business.timezone) : null,
+      machine_action: MACHINE_ACTIONS.ACTION_SLOT_UNAVAILABLE,
+    });
+  }
+
+  // DB first — never write Google before the confirmed row is updated.
+  // (Old order wrote calendar first → cache saw self as busy → false "tocmai s-a ocupat"
+  // while the event was already moved, then retries spawned duplicate calendar events.)
+  const mutated = await rescheduleConfirmedBookingAtomic({
+    draftId: appointment.id,
+    businessId: business.id,
+    slotStart,
+    slotEnd,
+    employeeId,
+    googleEventId: priorEventId || appointment.google_event_id || null,
+    context: {
+      step: 'rescheduled',
+      previous_slot_start: convState.context_data?.slot_start || appointment.selected_slot_start,
+      rescheduled_at: new Date().toISOString(),
+      google_event_id: priorEventId || appointment.google_event_id || null,
+      employee_id: employeeId,
+    },
+    requestId,
+  });
+
+  if (!mutated.ok || !mutated.draft) {
+    if (mutated.reason === 'slot_taken') {
+      const listed = await listSlotsForService({
+        business,
+        service,
+        draftId: appointment.id,
+        employeeId,
+        requestId,
+        dateKey: formatDateKey(slotStart, business.timezone),
+        excludeGoogleEventIds: excludeEventIds,
+      });
+      await setConversationStep({
+        businessId: business.id,
+        rawPhone: recipientPhone,
+        step: CONVERSATION_STEPS.RESCHEDULING,
+        context: {
+          intent: 'reschedule',
+          appointment_id: appointment.id,
+          service,
+          google_event_id: appointment.google_event_id,
+          slot_start: appointment.selected_slot_start,
+          slot_end: appointment.selected_slot_end,
+          employee_id: employeeId,
+        },
+        mergeContext: false,
+        requestId,
+      });
+      return handlerResult({
+        status: 'MISSING_INFO',
+        next_required_step: 'CHOOSE_SLOT',
+        user_message_template_key: 'SLOT_UNAVAILABLE',
+        data: {
+          occupied_label: formatSlotLabel(slotStart, business.timezone),
+          client_message:
+            `Înțeleg, *${formatSlotLabel(slotStart, business.timezone)}* nu mai e liber. ` +
+            'Te rog alege altă oră din listă — păstrăm același serviciu.',
+          alternatives: (listed.slots || []).map((s) => ({
+            id: s.id,
+            label: formatSlotLabel(s.start, business.timezone),
+          })),
+        },
+        menu: listed.slots?.length ? slotMenu(listed.slots, business.timezone) : null,
+        machine_action: MACHINE_ACTIONS.ACTION_SLOT_UNAVAILABLE,
+      });
+    }
+    return handlerResult({
+      status: 'ERROR',
+      user_message_template_key: 'ERROR_GENERIC',
+      data: {
+        client_message:
+          'Îmi pare rău, nu am putut salva reprogramarea acum. Te rog încearcă din nou peste un moment.',
+      },
+    });
+  }
+
+  // Calendar second: update the SAME event in place. On failure, booking is still saved —
+  // never tell the client the slot was taken after a successful DB update.
+  let activeEventId = priorEventId || appointment.google_event_id || null;
   if (!isBusinessMockMode(business)) {
     const summary = `${service.name || 'Programare'} — ${appointment.phone_number || recipientPhone}`;
-    if (activeEventId) {
+    if (activeEventId && !isMockEventId(activeEventId)) {
       const calResult = await updateCalendarEvent({
         business,
         eventId: activeEventId,
@@ -1720,24 +1856,17 @@ async function applyReschedule({
           requestId,
         });
         const newId = created?.ok ? (created.eventId || null) : null;
-        if (!newId) {
-          return handlerResult({
-            status: 'ERROR',
-            user_message_template_key: 'ERROR_CALENDAR',
-            data: {
-              client_message:
-                'Din păcate nu am putut reprograma în calendar. Te rog încearcă din nou.',
-            },
-          });
+        if (newId) {
+          if (activeEventId && activeEventId !== newId) {
+            await deleteCalendarEvent({
+              business,
+              eventId: activeEventId,
+              calendarId,
+              requestId,
+            });
+          }
+          activeEventId = newId;
         }
-        // Remove the orphaned prior event so we never leave ghost duplicates.
-        await deleteCalendarEvent({
-          business,
-          eventId: activeEventId,
-          calendarId,
-          requestId,
-        });
-        activeEventId = newId;
       }
     } else {
       const created = await createCalendarEvent({
@@ -1752,20 +1881,13 @@ async function applyReschedule({
         requestId,
       });
       activeEventId = created?.ok ? (created.eventId || null) : null;
-      if (!activeEventId) {
-        return handlerResult({
-          status: 'ERROR',
-          user_message_template_key: 'ERROR_CALENDAR',
-          data: {
-            client_message:
-              'Din păcate nu am putut reprograma în calendar. Te rog încearcă din nou.',
-          },
-        });
-      }
-      // Old Google event may still exist under the stored id — remove it so the
-      // original slot does not stay busy beside the new one.
       const orphanId = appointment.google_event_id || storedEventId;
-      if (orphanId && orphanId !== activeEventId && !isMockEventId(orphanId)) {
+      if (
+        activeEventId
+        && orphanId
+        && orphanId !== activeEventId
+        && !isMockEventId(orphanId)
+      ) {
         await deleteCalendarEvent({
           business,
           eventId: orphanId,
@@ -1773,6 +1895,24 @@ async function applyReschedule({
           requestId,
         });
       }
+    }
+
+    if (activeEventId && activeEventId !== mutated.draft.google_event_id) {
+      await rescheduleConfirmedBookingAtomic({
+        draftId: appointment.id,
+        businessId: business.id,
+        slotStart,
+        slotEnd,
+        employeeId,
+        googleEventId: activeEventId,
+        context: {
+          step: 'rescheduled',
+          google_event_id: activeEventId,
+          employee_id: employeeId,
+          calendar_linked_at: new Date().toISOString(),
+        },
+        requestId,
+      });
     }
   } else if (activeEventId) {
     await updateCalendarEvent({
@@ -1788,75 +1928,6 @@ async function applyReschedule({
     });
   }
 
-  // Atomic DB mutation: UPDATE the same confirmed row — never INSERT a twin booking.
-  const mutated = await rescheduleConfirmedBookingAtomic({
-    draftId: appointment.id,
-    businessId: business.id,
-    slotStart,
-    slotEnd,
-    employeeId,
-    googleEventId: activeEventId,
-    context: {
-      step: 'rescheduled',
-      previous_slot_start: convState.context_data?.slot_start || appointment.selected_slot_start,
-      rescheduled_at: new Date().toISOString(),
-      google_event_id: activeEventId,
-      employee_id: employeeId,
-    },
-    requestId,
-  });
-
-  if (!mutated.ok || !mutated.draft) {
-    if (mutated.reason === 'slot_taken') {
-      const listed = await listSlotsForService({
-        business,
-        service,
-        draftId: appointment.id,
-        employeeId,
-        requestId,
-        dateKey: formatDateKey(slotStart, business.timezone),
-      });
-      await setConversationStep({
-        businessId: business.id,
-        rawPhone: recipientPhone,
-        step: CONVERSATION_STEPS.RESCHEDULING,
-        context: {
-          intent: 'reschedule',
-          appointment_id: appointment.id,
-          service,
-          google_event_id: appointment.google_event_id,
-          slot_start: appointment.selected_slot_start,
-          slot_end: appointment.selected_slot_end,
-          employee_id: employeeId,
-        },
-        mergeContext: false,
-        requestId,
-      });
-      return handlerResult({
-        status: 'MISSING_INFO',
-        next_required_step: 'CHOOSE_SLOT',
-        user_message_template_key: 'SLOT_UNAVAILABLE',
-        data: {
-          occupied_label: formatSlotLabel(slotStart, business.timezone),
-          alternatives: (listed.slots || []).map((s) => ({
-            id: s.id,
-            label: formatSlotLabel(s.start, business.timezone),
-          })),
-        },
-        menu: listed.slots?.length ? slotMenu(listed.slots, business.timezone) : null,
-      });
-    }
-    return handlerResult({
-      status: 'ERROR',
-      user_message_template_key: 'ERROR_GENERIC',
-      data: {
-        client_message:
-          'Din păcate nu am putut salva reprogramarea în sistem. Te rog încearcă din nou.',
-      },
-    });
-  }
-
-  // Drop any leftover browsing/pending drafts so a twin booking cannot linger.
   try {
     await cancelActiveDraftsForPhone({
       businessId: business.id,
@@ -1884,7 +1955,7 @@ async function applyReschedule({
       service_name: service.name || 'Programare',
       slot_label: formatSlotLabel(slotStart, business.timezone),
       client_message:
-        `Am mutat programarea ta la *${service.name || 'serviciu'}* pe *${formatSlotLabel(slotStart, business.timezone)}*. ` +
+        `Gata — am mutat programarea ta la *${service.name || 'serviciu'}* pe *${formatSlotLabel(slotStart, business.timezone)}*. ` +
         'Te așteptăm cu drag! Dacă mai schimbi ceva, scrie *reprogramare*.',
     },
     calendar_cta: calendarCta(business, service.name, slotStart, slotEnd),

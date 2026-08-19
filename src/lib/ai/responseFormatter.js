@@ -105,15 +105,15 @@ export function formatMachineAction({
     }
     case MACHINE_ACTIONS.ACTION_SLOT_UNAVAILABLE: {
       const occupied = occupiedLabel
-        ? (en ? `*${occupiedLabel}* is not available.` : `*${occupiedLabel}* nu e disponibil.`)
+        ? (en ? `*${occupiedLabel}* is no longer free.` : `Înțeleg — *${occupiedLabel}* nu mai e liber.`)
         : (en
-          ? `*${timeLabel}* is not available${dateLabel ? ` — ${dateLabel}` : ''}.`
-          : `*${timeLabel}* nu e disponibil${dateLabel ? ` — ${dateLabel}` : ''}.`);
+          ? `*${timeLabel}* is no longer free${dateLabel ? ` — ${dateLabel}` : ''}.`
+          : `Înțeleg — *${timeLabel}* nu mai e liber${dateLabel ? ` — ${dateLabel}` : ''}.`);
       return waJoin(
-        waTitle(en ? 'Unavailable' : 'Indisponibil'),
+        waTitle(en ? "Let's pick another time" : 'Hai să alegem altceva'),
         occupied,
         '',
-        en ? 'Pick another day from the list.' : 'Alege altă zi din listă.',
+        en ? 'Please choose another time from the list.' : 'Te rog alege altă oră din listă.',
       );
     }
     case MACHINE_ACTIONS.ACTION_ASK_SERVICE:

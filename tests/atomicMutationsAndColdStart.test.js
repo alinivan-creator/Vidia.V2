@@ -36,6 +36,34 @@ describe('Cold-start unrestricted intent parsing', () => {
   });
 });
 
+describe('Reschedule false-busy regression guards', () => {
+  it('SQL migration excludes own google_event_id from calendar_cache conflicts', async () => {
+    const fs = await import('node:fs/promises');
+    const sql = await fs.readFile(
+      new URL('../supabase/migrations/020_reschedule_exclude_own_event.sql', import.meta.url),
+      'utf8',
+    );
+    assert.match(sql, /google_event_id IS DISTINCT FROM v_own_event/);
+    assert.match(sql, /reschedule_confirmed_booking/);
+  });
+
+  it('applyReschedule persists DB before calendar writes', async () => {
+    const fs = await import('node:fs/promises');
+    const src = await fs.readFile(
+      new URL('../src/services/turnExecute.js', import.meta.url),
+      'utf8',
+    );
+    const fnStart = src.indexOf('async function applyReschedule({');
+    const fnEnd = src.indexOf('async function executeReschedule({');
+    const body = src.slice(fnStart, fnEnd);
+    const dbIdx = body.indexOf('rescheduleConfirmedBookingAtomic');
+    const calIdx = body.indexOf('updateCalendarEvent');
+    assert.ok(dbIdx > 0 && calIdx > 0, 'expected both DB and calendar calls');
+    assert.ok(dbIdx < calIdx, 'DB mutation must run before calendar update');
+    assert.match(body, /excludeGoogleEventIds/);
+  });
+});
+
 describe('Atomic mutation integrity contract', () => {
   it('reschedule helpers expose ok/draft envelope shape', async () => {
     // Importing verifies the module graph; runtime RPC is covered by fallback path shape.
