@@ -319,6 +319,11 @@ export function looksLikeNewBookingRequest(text, opts = {}) {
     return true;
   }
   if (/\b(sa ma programez|programeaza-ma|programeaza ma|o programare noua)\b/.test(n)) return true;
+  // Cold-start: no greeting required — jump straight into booking.
+  if (/\b(vreau sa fac|vreau sa facem|as vrea sa fac|doresc sa fac|hai sa fac)\b/.test(n)
+    && /\b(programar|rezervar)/.test(n)) {
+    return true;
+  }
   if (/\b(i want to book|want to book|book a|book an)\b/.test(n)) return true;
   if (/\b(appointment)\b/.test(n) && /\b(want|book|need|please)\b/.test(n)) return true;
   if (/\b(vreau|as vrea|doresc|hai|fac|face|faceti)\b/.test(n) && /\b(programar|rezervar)/.test(n)) {

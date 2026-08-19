@@ -16,7 +16,13 @@
  *             - Atomic context pivots: date/time/service updates in-place without flow drop
  *             - Out-of-bounds handling: polite recovery keeping active date/service
  *             - Rescheduling integrity: Target Booking → New Date → New Slot → Confirmation
+ *             - Atomic DB mutations: reschedule UPDATEs the same row; cancel marks cancelled
+ *               before any WhatsApp success copy (no ghost duplicate bookings)
  *          3. turnPresent — templates from Execution JSON only (optional Gemini polish)
+ *
+ * Cold-start:
+ *   First inbound text is parsed for NEW_BOOKING / RESCHEDULE / CANCEL / FAQ immediately.
+ *   No greeting gate — "vreau să fac o programare" and "vreau să anulez" run without "Salut".
  *
  * TTLs (independent):
  *   pending_ttl_minutes (default 5) — calendar hold for pending_confirmation only
@@ -37,4 +43,4 @@
  *   Confirmation + Adaugă în calendar URL button.
  *   Name is never asked when Twilio ProfileName / display_name exists.
  */
-export const BOOKING_ARCHITECTURE_VERSION = 'dual-ai-state-machine-v8';
+export const BOOKING_ARCHITECTURE_VERSION = 'dual-ai-atomic-mutations-v9';

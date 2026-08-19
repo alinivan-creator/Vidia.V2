@@ -933,6 +933,208 @@ export async function updateConfirmedBookingSlot({
   return /** @type {DraftBooking} */ (data);
 }
 
+/** @type {boolean | null} */
+let rescheduleRpcAvailable = null;
+/** @type {boolean | null} */
+let cancelRpcAvailable = null;
+
+/**
+ * Atomic reschedule: UPDATE the same confirmed row in place (never INSERT a twin booking).
+ * Prefers reschedule_confirmed_booking RPC; falls back to claim_booking_slot + update.
+ *
+ * @param {Object} params
+ * @param {string} params.draftId
+ * @param {string} params.businessId
+ * @param {Date | string} params.slotStart
+ * @param {Date | string} params.slotEnd
+ * @param {string | null} [params.employeeId]
+ * @param {string | null} [params.googleEventId]
+ * @param {Record<string, unknown>} [params.context]
+ * @param {string | null} [params.requestId]
+ * @returns {Promise<{ ok: boolean, draft: DraftBooking | null, reason: string | null }>}
+ */
+export async function rescheduleConfirmedBookingAtomic({
+  draftId,
+  businessId,
+  slotStart,
+  slotEnd,
+  employeeId = null,
+  googleEventId = null,
+  context = {},
+  requestId = null,
+}) {
+  if (!draftId || !businessId) {
+    return { ok: false, draft: null, reason: 'error' };
+  }
+
+  const startIso = slotStart instanceof Date ? slotStart.toISOString() : String(slotStart);
+  const endIso = slotEnd instanceof Date ? slotEnd.toISOString() : String(slotEnd);
+
+  if (rescheduleRpcAvailable !== false) {
+    const { data, error } = await supabase.rpc('reschedule_confirmed_booking', {
+      p_draft_id: draftId,
+      p_business_id: businessId,
+      p_slot_start: startIso,
+      p_slot_end: endIso,
+      p_context: context,
+      p_employee_id: employeeId,
+      p_google_event_id: googleEventId || null,
+    });
+
+    if (error && /PGRST202|could not find the function|reschedule_confirmed_booking/i.test(error.message ?? '')) {
+      rescheduleRpcAvailable = false;
+    } else if (error) {
+      await logError({
+        message: 'reschedule_confirmed_booking RPC failed',
+        source: 'database',
+        requestId,
+        draftBookingId: draftId,
+        businessId,
+        error,
+      });
+      if (isSlotTakenDbError(error)) {
+        return { ok: false, draft: null, reason: 'slot_taken' };
+      }
+      return { ok: false, draft: null, reason: 'error' };
+    } else {
+      rescheduleRpcAvailable = true;
+      const payload = /** @type {{ ok?: boolean, reason?: string | null, draft?: DraftBooking | null }} */ (data || {});
+      if (payload.ok && payload.draft) {
+        return { ok: true, draft: payload.draft, reason: null };
+      }
+      const reason = payload.reason === 'slot_taken' || payload.reason === 'not_found' || payload.reason === 'invalid_range'
+        ? payload.reason
+        : 'error';
+      return { ok: false, draft: null, reason };
+    }
+  }
+
+  const claimed = await claimSlotForDraft({
+    draftId,
+    businessId,
+    slotStart,
+    slotEnd,
+    employeeId,
+    mode: 'reschedule',
+    context,
+    requestId,
+  });
+  if (!claimed.ok) {
+    return { ok: false, draft: null, reason: claimed.reason || 'error' };
+  }
+
+  const updated = await updateConfirmedBookingSlot({
+    draftId,
+    businessId,
+    slotStart,
+    slotEnd,
+    googleEventId: googleEventId || undefined,
+    context,
+    requestId,
+  });
+  if (!updated) {
+    return { ok: false, draft: null, reason: 'error' };
+  }
+  return { ok: true, draft: updated, reason: null };
+}
+
+/**
+ * Atomic cancel: mark the confirmed booking cancelled (never leaves an orphaned active slot).
+ *
+ * @param {Object} params
+ * @param {string} params.draftId
+ * @param {string} params.businessId
+ * @param {Record<string, unknown>} [params.context]
+ * @param {string | null} [params.requestId]
+ * @returns {Promise<{ ok: boolean, draft: DraftBooking | null, reason: string | null }>}
+ */
+export async function cancelConfirmedBookingAtomic({
+  draftId,
+  businessId,
+  context = {},
+  requestId = null,
+}) {
+  if (!draftId || !businessId) {
+    return { ok: false, draft: null, reason: 'error' };
+  }
+
+  if (cancelRpcAvailable !== false) {
+    const { data, error } = await supabase.rpc('cancel_confirmed_booking', {
+      p_draft_id: draftId,
+      p_business_id: businessId,
+      p_context: context,
+    });
+
+    if (error && /PGRST202|could not find the function|cancel_confirmed_booking/i.test(error.message ?? '')) {
+      cancelRpcAvailable = false;
+    } else if (error) {
+      await logError({
+        message: 'cancel_confirmed_booking RPC failed',
+        source: 'database',
+        requestId,
+        draftBookingId: draftId,
+        businessId,
+        error,
+      });
+      return { ok: false, draft: null, reason: 'error' };
+    } else {
+      cancelRpcAvailable = true;
+      const payload = /** @type {{ ok?: boolean, reason?: string | null, draft?: DraftBooking | null }} */ (data || {});
+      if (payload.ok && payload.draft) {
+        return { ok: true, draft: payload.draft, reason: null };
+      }
+      return { ok: false, draft: null, reason: payload.reason === 'not_found' ? 'not_found' : 'error' };
+    }
+  }
+
+  /** @type {Record<string, unknown>} */
+  const updates = {
+    state: 'cancelled',
+    locked_until: null,
+    cancelled_at: new Date().toISOString(),
+    conversation_context: context,
+  };
+  if (pendingExpiresColumnAvailable !== false) {
+    updates.pending_expires_at = null;
+  }
+
+  let { data, error } = await supabase
+    .from('draft_bookings')
+    .update(updates)
+    .eq('id', draftId)
+    .eq('business_id', businessId)
+    .eq('state', 'confirmed')
+    .select(await draftSelectColumns())
+    .single();
+
+  if (error && /pending_expires_at/i.test(error.message ?? '')) {
+    pendingExpiresColumnAvailable = false;
+    const { pending_expires_at: _p, ...without } = updates;
+    ({ data, error } = await supabase
+      .from('draft_bookings')
+      .update(without)
+      .eq('id', draftId)
+      .eq('business_id', businessId)
+      .eq('state', 'confirmed')
+      .select(DRAFT_COLUMNS_NO_PENDING_EXPIRES)
+      .single());
+  }
+
+  if (error) {
+    await logError({
+      message: 'cancelConfirmedBookingAtomic fallback failed',
+      source: 'database',
+      requestId,
+      draftBookingId: draftId,
+      businessId,
+      error,
+    });
+    return { ok: false, draft: null, reason: 'error' };
+  }
+
+  return { ok: true, draft: /** @type {DraftBooking} */ (data), reason: null };
+}
+
 /**
  * @param {string} businessId
  * @returns {Promise<DraftBooking[]>}
