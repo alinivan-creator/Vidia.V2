@@ -5,6 +5,8 @@ import {
   SESSION_STATES,
   MACHINE_ACTIONS,
   emptyDraft,
+  mapSessionState,
+  sessionKeepsChosenService,
 } from '../src/lib/booking/stateMachine.js';
 import { hydrateExtract } from '../src/services/turnExecute.js';
 import {
@@ -13,7 +15,7 @@ import {
 } from '../src/services/sessionValidator.js';
 import { classifyInboundMessage } from '../src/utils/inboundPayload.js';
 import { CONVERSATION_STEPS } from '../src/db/conversationStateService.js';
-
+import { BOOKING_ARCHITECTURE_VERSION } from '../src/config/bookingArchitecture.js';
 describe('State Machine & Atomic Context Pivots', () => {
   const SATURDAY = new Date('2026-08-15T12:00:00.000Z');
 
@@ -182,5 +184,37 @@ describe('Silent Session TTL Check & NLU Classification', () => {
     assert.equal(inbound.textBody, 'Aveti liber maine seara dupa 18?');
     assert.equal(inbound.buttonPayload, null);
     assert.equal(inbound.isInteractive, false);
+  });
+
+  it('RESCHEDULING maps to WAITING_FOR_DATE and keeps chosen service (never ASK_SERVICE)', () => {
+    assert.equal(mapSessionState(CONVERSATION_STEPS.RESCHEDULING), SESSION_STATES.WAITING_FOR_DATE);
+    assert.equal(mapSessionState(CONVERSATION_STEPS.MODIFYING), SESSION_STATES.WAITING_FOR_DATE);
+    assert.equal(mapSessionState(CONVERSATION_STEPS.MODIFIED), SESSION_STATES.CONFIRMED);
+    assert.equal(sessionKeepsChosenService(mapSessionState(CONVERSATION_STEPS.RESCHEDULING)), true);
+
+    // Mid-reschedule free-text date must not drop service or ask for catalog again.
+    const now = new Date('2026-08-15T12:00:00.000Z');
+    const reduced = reduceBookingTurn({
+      state: mapSessionState(CONVERSATION_STEPS.RESCHEDULING),
+      draft: {
+        service_id: 'srv_cut',
+        service_name: 'Tuns',
+        date: null,
+        time: null,
+        duration: 30,
+      },
+      text: 'mâine la 11',
+      timezone: 'Europe/Bucharest',
+      extractDate: '2026-08-20',
+      extractTime: '11:00',
+      now,
+    });
+    assert.equal(reduced.draft.service_id, 'srv_cut');
+    assert.equal(reduced.draft.service_name, 'Tuns');
+    assert.notEqual(reduced.action, MACHINE_ACTIONS.ACTION_ASK_SERVICE);
+  });
+
+  it('architecture version is bumped for deploy verification', () => {
+    assert.match(BOOKING_ARCHITECTURE_VERSION, /^dual-ai-text-first-nlu-v1[1-9]/);
   });
 });

@@ -99,27 +99,25 @@ export function renderHandlerResult(business, result) {
         includeGdpr: false,
       });
     case 'CONFIRMATION_RESCHEDULE': {
+      if (typeof d.client_message === 'string' && d.client_message.trim()) {
+        return d.client_message.trim();
+      }
       return waJoin(
-        waTitle('Programare actualizată'),
+        waTitle('Gata, am mutat programarea'),
         '',
         waField('Serviciu', d.service_name || 'Serviciu'),
-        waField('Când', d.slot_label || ''),
+        waField('Noua dată', d.slot_label || ''),
         '',
-        WA_DIVIDER,
-        '',
-        waFooter(['*reprogramare*', '*anulează*']),
+        'Te așteptăm! Dacă mai schimbi ceva, scrie *reprogramare* sau *anulează*.',
       );
     }
     case 'CONFIRMATION_CANCELLED':
       if (typeof d.client_message === 'string' && d.client_message.trim()) {
-        return waJoin(
-          waTitle('Programări anulate'),
-          d.client_message.trim(),
-        );
+        return d.client_message.trim();
       }
       return waJoin(
-        waTitle('Programare anulată'),
-        'Te așteptăm oricând dorești o nouă programare.',
+        waTitle('Am anulat programarea'),
+        'Când vrei din nou, scrie *programare* — te ajut eu.',
       );
     case 'CANCEL_PENDING':
       return waJoin(
@@ -328,18 +326,41 @@ export function renderHandlerResult(business, result) {
 }
 
 /**
- * Optional polish: rephrase JSON only. Never add hours/availability/confirmations.
+ * Optional polish: rephrase rendered copy only. Never add hours/availability/confirmations.
  * @returns {Promise<string | null>}
  */
 async function polishWithAi(business, result, rendered) {
+  if (!business?.id || !rendered?.trim()) return null;
+
   const action = result.machine_action;
-  const allow = action === MACHINE_ACTIONS.ACTION_SHOW_CONFIRMATION
-    || action === MACHINE_ACTIONS.ACTION_ASK_CLARIFICATION;
-  if (!allow || !business?.id) return null;
+  const templateKey = result.user_message_template_key;
+  const allowByMachine = action === MACHINE_ACTIONS.ACTION_SHOW_CONFIRMATION
+    || action === MACHINE_ACTIONS.ACTION_ASK_CLARIFICATION
+    || action === MACHINE_ACTIONS.ACTION_ASK_DATE
+    || action === MACHINE_ACTIONS.ACTION_ASK_TIME
+    || action === MACHINE_ACTIONS.ACTION_ASK_DATE_TIME
+    || action === MACHINE_ACTIONS.ACTION_ASK_SERVICE;
+  const allowByTemplate = templateKey === 'CONFIRMATION_BOOKED'
+    || templateKey === 'CONFIRMATION_RESCHEDULE'
+    || templateKey === 'CONFIRMATION_CANCELLED'
+    || templateKey === 'CANCEL_PENDING'
+    || templateKey === 'FLOW_ABORTED'
+    || templateKey === 'OUT_OF_HOURS'
+    || templateKey === 'CLARIFY'
+    || templateKey === 'ASK_WHICH_BOOKING'
+    || templateKey === 'WELCOME'
+    || templateKey === 'MENU'
+    || templateKey === 'CHAT'
+    || templateKey === 'OFF_TOPIC'
+    || templateKey === 'ERROR_NO_APPOINTMENT'
+    || templateKey === 'ERROR_GENERIC'
+    || templateKey === 'ERROR_CALENDAR';
+  if (!allowByMachine && !allowByTemplate) return null;
 
   const payload = {
     status: result.status,
     action_performed: result.action_performed,
+    template_key: templateKey,
     data: result.data,
     next_required_step: result.next_required_step,
     template: rendered,
@@ -347,19 +368,15 @@ async function polishWithAi(business, result, rendered) {
 
   const extraSystem = action
     ? formatterSystemHint(action)
-    : (
-      'SARCINĂ FORMATTER WhatsApp: reformulează politicos în română textul din JSON-ul backend. ' +
-      'NU inventa ore, prețuri, disponibilitate sau confirmări. ' +
-      'NU spune că o programare e confirmată. Folosește doar câmpurile din JSON.'
-    );
+    : formatterSystemHint(templateKey || 'default');
 
   const chat = await completeTenantChat({
     businessId: business.id,
     parserMode: true,
     extraSystem,
     userContent: JSON.stringify(payload).slice(0, 2500),
-    temperature: 0.2,
-    maxTokens: 280,
+    temperature: 0.45,
+    maxTokens: 320,
   });
   return chat.ok && chat.text ? chat.text : null;
 }

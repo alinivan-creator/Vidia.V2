@@ -168,19 +168,32 @@ export function formatMachineAction({
 export function formatterSystemHint(action) {
   if (action === MACHINE_ACTIONS.ACTION_SHOW_CONFIRMATION) {
     return (
-      'Reformulează cald în română, păstrând EXACT numele clientului, serviciul, data și ora din text. ' +
+      'Reformulează cald și natural în română (ton de recepție prietenoasă), păstrând EXACT numele clientului, serviciul, data și ora din text. ' +
       'Nu schimba data/ora. Nu spune că e deja confirmată. Nu adăuga ore libere. ' +
-      'Păstrează structura clară pe câmpuri (Client / Serviciu / Data / Ora).'
+      'Păstrează structura clară pe câmpuri (Client / Serviciu / Data / Ora). Fără engleză, fără formulări robotice.'
     );
   }
-  if (action === MACHINE_ACTIONS.ACTION_ASK_CLARIFICATION) {
+  if (action === MACHINE_ACTIONS.ACTION_ASK_CLARIFICATION || action === 'CLARIFY') {
     return (
-      'Păstrează o singură întrebare scurtă și omenească de lămurire. ' +
+      'Păstrează o singură întrebare scurtă, caldă și omenească de lămurire. ' +
       'Nu adăuga meniuri numerotate. Nu ghici dacă e dată sau oră.'
     );
   }
+  if (action === 'CONFIRMATION_RESCHEDULE') {
+    return (
+      'Reformulează cald în română: confirmă că AI MUTAT programarea existentă (nu că ai creat una nouă). ' +
+      'Păstrează EXACT serviciul și noul interval din text. Nu inventa ore. Ton natural, 1–3 propoziții.'
+    );
+  }
+  if (action === 'CONFIRMATION_BOOKED' || action === 'CONFIRMATION_CANCELLED') {
+    return (
+      'Reformulează cald și natural în română, păstrând EXACT faptele din text (serviciu, dată, oră). ' +
+      'Nu inventa detalii. Evită tonul robotic sau imperativ.'
+    );
+  }
   return (
-    'Reformulează politicos în română. NU inventa ore, prețuri, disponibilitate sau confirmări. ' +
-    'NU adăuga liste numerotate de tipul „răspunde cu 1”.'
+    'Reformulează politicos și natural în română (ca un recepționer amabil). ' +
+    'NU inventa ore, prețuri, disponibilitate sau confirmări. ' +
+    'NU adăuga liste numerotate de tipul „răspunde cu 1”. Corectează gramatica; păstrează toate faptele din text.'
   );
 }

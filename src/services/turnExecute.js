@@ -1762,6 +1762,17 @@ async function applyReschedule({
           },
         });
       }
+      // Old Google event may still exist under the stored id — remove it so the
+      // original slot does not stay busy beside the new one.
+      const orphanId = appointment.google_event_id || storedEventId;
+      if (orphanId && orphanId !== activeEventId && !isMockEventId(orphanId)) {
+        await deleteCalendarEvent({
+          business,
+          eventId: orphanId,
+          calendarId,
+          requestId,
+        });
+      }
     }
   } else if (activeEventId) {
     await updateCalendarEvent({
@@ -1845,17 +1856,22 @@ async function applyReschedule({
     });
   }
 
-  await setConversationStep({
+  // Drop any leftover browsing/pending drafts so a twin booking cannot linger.
+  try {
+    await cancelActiveDraftsForPhone({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      context: { step: 'cancelled_after_reschedule', kept_appointment_id: appointment.id },
+      requestId,
+    });
+  } catch (error) {
+    console.warn('[reschedule] cancel leftover drafts failed', error);
+  }
+
+  await resetConversationState({
     businessId: business.id,
     rawPhone: recipientPhone,
-    step: CONVERSATION_STEPS.MODIFIED,
-    context: {
-      last_action: 'rescheduled',
-      appointment_id: appointment.id,
-      slot_start: slotStart.toISOString(),
-      google_event_id: activeEventId,
-    },
-    mergeContext: false,
+    hardReset: true,
     requestId,
   });
 
@@ -1867,6 +1883,9 @@ async function applyReschedule({
     data: {
       service_name: service.name || 'Programare',
       slot_label: formatSlotLabel(slotStart, business.timezone),
+      client_message:
+        `Am mutat programarea ta la *${service.name || 'serviciu'}* pe *${formatSlotLabel(slotStart, business.timezone)}*. ` +
+        'Te așteptăm cu drag! Dacă mai schimbi ceva, scrie *reprogramare*.',
     },
     calendar_cta: calendarCta(business, service.name, slotStart, slotEnd),
   });
@@ -2669,6 +2688,16 @@ async function dispatchExecute({
     const kind = ctx.grid_kind || (ctx.pending_date_text ? 'time' : 'day');
 
     if (!service) {
+      if (ctx.intent === 'reschedule' || convState.current_step === CONVERSATION_STEPS.RESCHEDULING) {
+        return executeReschedule({
+          business,
+          recipientPhone,
+          extract: { ...extract, action: 'reschedule' },
+          activeDraft: draft,
+          convState,
+          requestId,
+        });
+      }
       return executeBook({
         business,
         recipientPhone,
@@ -2972,6 +3001,14 @@ function bookingMachineHandles(action) {
  */
 async function runBookingMachine(params) {
   const { business, recipientPhone, extract, convState, activeDraft, requestId, textBody } = params;
+  // Defense in depth: never collect a new service / draft while modify is active.
+  const modifyGuard = convState?.context_data?.intent === 'reschedule'
+    || convState?.context_data?.intent === 'cancel'
+    || convState?.current_step === CONVERSATION_STEPS.RESCHEDULING
+    || convState?.current_step === CONVERSATION_STEPS.MODIFYING
+    || convState?.current_step === CONVERSATION_STEPS.CONFIRMING_CANCEL;
+  if (modifyGuard) return null;
+
   let draft = hydrateCatalogService(readDraftBooking(convState, activeDraft), business);
   const namedThisTurn = Boolean(extract.service_id || extract.service_name);
   const keepLeftoverService = namedThisTurn
@@ -3150,7 +3187,21 @@ export async function executeTurn(params) {
   }
   const extract = hydrateExtract(params.extract, params.convState, params.business?.timezone);
 
-  if (bookingMachineHandles(extract.action)) {
+  // Never run the new-booking state machine during modify/reschedule — it maps
+  // RESCHEDULING→INIT, clears service_id, and asks for the service again while the
+  // confirmed appointment stays put (duplicate bookings).
+  const modifyFlow = params.convState?.context_data?.intent === 'reschedule'
+    || params.convState?.context_data?.intent === 'cancel'
+    || params.convState?.current_step === CONVERSATION_STEPS.RESCHEDULING
+    || params.convState?.current_step === CONVERSATION_STEPS.MODIFYING
+    || params.convState?.current_step === CONVERSATION_STEPS.CONFIRMING_CANCEL
+    || extract.action === 'reschedule'
+    || extract.action === 'cancel'
+    || extract.action === 'cancel_all'
+    || extract.action === 'select_appointment'
+    || extract.action === 'confirm_cancel';
+
+  if (!modifyFlow && bookingMachineHandles(extract.action)) {
     const handled = await runBookingMachine({ ...params, extract });
     if (handled) return handled;
     extract.action = 'book';

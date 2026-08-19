@@ -19,7 +19,8 @@
  *             - Rescheduling integrity: Target Booking → New Date → New Slot → Confirmation
  *             - Atomic DB mutations: reschedule UPDATEs the same row; cancel marks cancelled
  *               before any WhatsApp success copy (no ghost duplicate bookings)
- *          3. turnPresent — templates from Execution JSON only (optional Gemini polish)
+ *          3. turnPresent — templates from Execution JSON; Gemini soft-polish for
+ *             confirm / reschedule / cancel / chat (facts unchanged)
  *
  * Cold-start:
  *   First inbound text is parsed for NEW_BOOKING / RESCHEDULE / CANCEL / FAQ immediately.
@@ -45,4 +46,4 @@
  *   Confirmation + Adaugă în calendar URL button.
  *   Name is never asked when Twilio ProfileName / display_name exists.
  */
-export const BOOKING_ARCHITECTURE_VERSION = 'dual-ai-text-first-nlu-v10';
+export const BOOKING_ARCHITECTURE_VERSION = 'dual-ai-text-first-nlu-v11';
