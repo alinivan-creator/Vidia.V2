@@ -108,6 +108,73 @@ describe('Reschedule false-busy regression guards', () => {
     assert.ok(dbIdx < calIdx, 'DB mutation must run before calendar update');
     assert.match(body, /excludeGoogleEventIds/);
   });
+
+  it('executeReviseDraft never falls through to saved-appointment reschedule', async () => {
+    const fs = await import('node:fs/promises');
+    const src = await fs.readFile(
+      new URL('../src/services/turnExecute.js', import.meta.url),
+      'utf8',
+    );
+    const fnStart = src.indexOf('async function executeReviseDraft({');
+    const fnEnd = src.indexOf('function executeThanks(');
+    assert.ok(fnStart > 0 && fnEnd > fnStart);
+    const body = src.slice(fnStart, fnEnd);
+    assert.equal(body.includes('executeReschedule'), false);
+    assert.match(body, /startBrowsingFlow/);
+    assert.match(body, /serviceFromInFlightContext/);
+  });
+});
+
+describe('Confirm-card in-flight session', () => {
+  it('treats confirm menu / draft_id as in-flight even without a live draft', async () => {
+    const { isInFlightBookingContext, serviceFromInFlightContext } = await import(
+      '../src/services/inFlightBookingSession.js'
+    );
+    const { CONVERSATION_STEPS } = await import('../src/db/conversationStateService.js');
+    const { BOOKING_WAIT } = await import('../src/services/bookingWaitState.js');
+
+    assert.equal(
+      isInFlightBookingContext({
+        step: CONVERSATION_STEPS.WAITING_FOR_CONFIRMATION,
+        wait: BOOKING_WAIT.CONFIRMATION,
+        activeDraft: { state: 'pending_confirmation' },
+        context: { intent: 'book', last_menu: { kind: 'confirm' } },
+      }),
+      true,
+    );
+
+    // After hold TTL wipe: IDLE step but confirm memory remains.
+    assert.equal(
+      isInFlightBookingContext({
+        step: CONVERSATION_STEPS.IDLE,
+        wait: BOOKING_WAIT.CONFIRMATION,
+        activeDraft: null,
+        context: {
+          intent: 'book',
+          booking_wait: BOOKING_WAIT.CONFIRMATION,
+          last_menu: { kind: 'confirm' },
+          draft_booking: { service_id: 's1', service_name: 'Tuns', duration: 30 },
+        },
+      }),
+      true,
+    );
+
+    assert.equal(
+      isInFlightBookingContext({
+        step: CONVERSATION_STEPS.IDLE,
+        wait: null,
+        activeDraft: null,
+        context: { intent: 'reschedule', last_menu: { kind: 'confirm' } },
+      }),
+      false,
+    );
+
+    const service = serviceFromInFlightContext({
+      draft_booking: { service_id: 's1', service_name: 'Tuns', duration: 30 },
+    });
+    assert.equal(service?.name, 'Tuns');
+    assert.equal(service?.id, 's1');
+  });
 });
 
 describe('Atomic mutation integrity contract', () => {

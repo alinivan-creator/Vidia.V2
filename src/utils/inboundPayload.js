@@ -16,6 +16,10 @@
 
 import { BOOKING_PREFIXES, MOD_PREFIX } from '../services/flowIds.js';
 import { GRID_PREFIX } from './bookingGrid.js';
+import {
+  looksLikeGratitude,
+  looksLikeInFlightRevision,
+} from '../services/intentTriageService.js';
 
 /** WhatsApp caps button titles at 20 chars and list row titles at 24. */
 const MAX_TITLE_LENGTH = 24;
@@ -82,11 +86,12 @@ export function looksLikeInteractiveChoiceId(value) {
 export function looksLikeFreeTextBody(body) {
   const typed = String(body ?? '').trim();
   if (!typed) return false;
+  if (looksLikeGratitude(typed) || looksLikeInFlightRevision(typed)) return true;
   if (typed.length > MAX_TITLE_LENGTH) return true;
   if (/[?]/.test(typed)) return true;
   const n = normalize(typed);
   // Intent verbs / booking phrases that never appear as our option titles.
-  if (/\b(vreau|as vrea|doresc|anulez|anuleaza|anulare|reprogram|modific|schimb|muta|programare|rezervare|programez|programeaza)\b/.test(n)) {
+  if (/\b(vreau|as vrea|doresc|anulez|anuleaza|anulare|reprogram|modific|schimb|muta|programare|rezervare|programez|programeaza|multumesc|mersi)\b/.test(n)) {
     return true;
   }
   // Four+ tokens is a sentence, not a 24-char list row.
@@ -145,6 +150,10 @@ export function shouldPreferTypedTextOverTap({ typed, tappedId, buttonTitle = nu
   if (nBody === nTap) return false;
   // Normal Twilio tap: Body matches the visible button/list title.
   if (nTitle && nBody === nTitle) return false;
+
+  // Courtesy / mid-flow revise typed over a stray confirm-button payload.
+  if (looksLikeGratitude(body) || looksLikeInFlightRevision(body)) return true;
+
   // Short list-row title + known option id → keep the tap (≤ WhatsApp title cap).
   if (
     looksLikeInteractiveChoiceId(tap)

@@ -48,6 +48,7 @@ import {
   looksLikePluralAppointments,
   triageUserIntent,
 } from './intentTriageService.js';
+import { isInFlightBookingContext } from './inFlightBookingSession.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -84,54 +85,6 @@ function normalize(text) {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
-}
-
-/**
- * True while the client is building a NEW booking (draft / confirm card),
- * not while already in a saved-appointment reschedule/cancel flow.
- *
- * @param {Object} params
- * @param {string} [params.step]
- * @param {string} [params.wait]
- * @param {{ state?: string } | null} [params.activeDraft]
- * @param {Record<string, unknown> | null | undefined} [params.context]
- */
-function isInFlightBookingContext({ step, wait, activeDraft, context }) {
-  const intent = context?.intent;
-  if (intent === 'reschedule' || intent === 'cancel') return false;
-  if (
-    step === CONVERSATION_STEPS.RESCHEDULING
-    || step === CONVERSATION_STEPS.MODIFYING
-    || step === CONVERSATION_STEPS.CONFIRMING_CANCEL
-  ) {
-    return false;
-  }
-  if (activeDraft && ['browsing', 'pending_confirmation'].includes(String(activeDraft.state || ''))) {
-    return true;
-  }
-  const bookingSteps = new Set([
-    CONVERSATION_STEPS.WAITING_FOR_SERVICE,
-    CONVERSATION_STEPS.CHOOSING_SERVICE,
-    CONVERSATION_STEPS.WAITING_FOR_DATE,
-    CONVERSATION_STEPS.WAITING_FOR_TIME,
-    CONVERSATION_STEPS.WAITING_FOR_DATE_TIME,
-    CONVERSATION_STEPS.WAITING_FOR_CONFIRMATION,
-    CONVERSATION_STEPS.CONFIRMING,
-    CONVERSATION_STEPS.SELECTING_SLOT,
-    CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
-    CONVERSATION_STEPS.ASKING_NAME,
-  ]);
-  if (bookingSteps.has(step)) return true;
-  if (
-    wait === BOOKING_WAIT.SERVICE
-    || wait === BOOKING_WAIT.DATE
-    || wait === BOOKING_WAIT.TIME
-    || wait === BOOKING_WAIT.DATE_TIME
-    || wait === BOOKING_WAIT.CONFIRMATION
-  ) {
-    return true;
-  }
-  return false;
 }
 
 /**
@@ -949,7 +902,8 @@ async function extractTurnIntentImpl({
   // Modification / booking intents on free text must beat every menu wall.
   // "vreau sa reprogramez o programare" must never become stale_choice or reprompt_grid.
   // Mid-flow "modific" revises the draft being built — not a saved appointment.
-  if (!tappedId && looksLikeGratitude(textBody)) {
+  // Gratitude wins even if a stray confirm payload somehow survived — never confirm on "Mulțumesc".
+  if (looksLikeGratitude(rawTyped) || (!tappedId && looksLikeGratitude(textBody))) {
     return emptyExtract({ action: 'thanks', confidence: 'high', source: 'keyword' });
   }
   const earlyModify = !tappedId ? detectModificationIntent(textBody) : null;

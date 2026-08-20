@@ -125,6 +125,43 @@ describe('inbound payload classification', () => {
     assert.equal(looksLikeFreeTextBody('Luni, 24 Aug'), false);
     assert.equal(looksLikeFreeTextBody('16:00'), false);
   });
+
+  it('prefers Multumesc / Modific over a stray confirm_booking payload', () => {
+    assert.equal(
+      shouldPreferTypedTextOverTap({
+        typed: 'Multumesc',
+        tappedId: 'confirm_booking',
+        buttonTitle: 'Confirmă',
+      }),
+      true,
+    );
+    assert.equal(
+      shouldPreferTypedTextOverTap({
+        typed: 'Modific',
+        tappedId: 'confirm_booking',
+        buttonTitle: 'Confirmă',
+      }),
+      true,
+    );
+
+    const thanks = classifyInboundMessage({
+      body: 'Multumesc',
+      buttonPayload: 'confirm_booking',
+      buttonText: 'Confirmă',
+    });
+    assert.equal(thanks.kind, 'text');
+    assert.equal(thanks.buttonPayload, null);
+    assert.equal(thanks.textBody, 'Multumesc');
+
+    const revise = classifyInboundMessage({
+      body: 'Modific',
+      buttonPayload: 'confirm_booking',
+      buttonText: 'Confirmă',
+    });
+    assert.equal(revise.kind, 'text');
+    assert.equal(revise.buttonPayload, null);
+    assert.equal(revise.textBody, 'Modific');
+  });
 });
 
 describe('day-part parsing', () => {

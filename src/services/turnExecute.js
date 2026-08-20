@@ -87,6 +87,10 @@ import {
   looksLikeInFlightRevision,
   looksLikeTimeOnlyRevision,
 } from './intentTriageService.js';
+import {
+  isInFlightBookingContext,
+  serviceFromInFlightContext,
+} from './inFlightBookingSession.js';
 import { getPendingTtlMinutes } from '../config/conversationConfig.js';
 import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
 import { buildContactLinkButtons } from '../utils/businessMessages.js';
@@ -1509,6 +1513,7 @@ async function executeCancelPending({ business, recipientPhone, requestId }) {
 /**
  * Mid-flow revision: client said "modific" / "am greșit" while building a booking.
  * Keep the chosen service; clear the hold and re-ask day (or only time).
+ * NEVER falls through to saved-appointment reschedule — that was the confirm-card bug.
  */
 async function executeReviseDraft({
   business,
@@ -1518,80 +1523,141 @@ async function executeReviseDraft({
   convState,
   requestId,
   textBody = '',
+  clientId = null,
 }) {
-  const draft = activeDraft && ['browsing', 'pending_confirmation'].includes(activeDraft.state)
+  const ctx = convState?.context_data || {};
+  let draft = activeDraft && ['browsing', 'pending_confirmation'].includes(activeDraft.state)
     ? activeDraft
     : null;
+
   if (!draft) {
-    return executeReschedule({
-      business,
-      recipientPhone,
-      extract: { ...extract, action: 'reschedule' },
-      activeDraft,
-      convState,
-      requestId,
-    });
+    const live = await getActiveDraftBooking(business.id, recipientPhone);
+    if (live && ['browsing', 'pending_confirmation'].includes(live.state)) {
+      draft = live;
+    }
+  }
+  if (!draft && typeof ctx.draft_id === 'string' && ctx.draft_id) {
+    const byId = await getDraftBookingById(ctx.draft_id, business.id);
+    if (byId && ['browsing', 'pending_confirmation'].includes(byId.state)) {
+      draft = byId;
+    }
   }
 
-  const service = draft.selected_service
-    ? /** @type {{ id?: string, name?: string, duration_minutes?: number }} */ (draft.selected_service)
-    : null;
-  const priorStart = draft.selected_slot_start ? new Date(draft.selected_slot_start) : null;
+  const serviceFromDraftOrCtx = serviceFromInFlightContext(ctx, draft);
   const keepDate = extract.time_text === '__keep_date__'
     || looksLikeTimeOnlyRevision(textBody);
-  const dateKey = keepDate && priorStart && !Number.isNaN(priorStart.getTime())
-    ? formatDateKey(priorStart, business.timezone)
-    : null;
 
-  const reset = await cancelOrResetDraft({
-    draftId: draft.id,
-    businessId: business.id,
-    state: 'browsing',
-    context: {
-      ...draft.conversation_context,
-      step: 'revised_in_flight',
-      revised_at: new Date().toISOString(),
-      keep_service: true,
-    },
-    requestId,
-  });
-  const working = reset || draft;
+  if (draft) {
+    const service = draft.selected_service
+      ? /** @type {{ id?: string, name?: string, duration_minutes?: number }} */ (draft.selected_service)
+      : serviceFromDraftOrCtx;
+    const priorStart = draft.selected_slot_start ? new Date(draft.selected_slot_start) : null;
+    const dateKey = keepDate && priorStart && !Number.isNaN(priorStart.getTime())
+      ? formatDateKey(priorStart, business.timezone)
+      : null;
 
-  if (!service?.id && !service?.name) {
-    return missingService(business, recipientPhone, working, requestId);
-  }
+    const reset = await cancelOrResetDraft({
+      draftId: draft.id,
+      businessId: business.id,
+      state: 'browsing',
+      context: {
+        ...draft.conversation_context,
+        step: 'revised_in_flight',
+        revised_at: new Date().toISOString(),
+        keep_service: true,
+      },
+      requestId,
+    });
+    const working = reset || draft;
 
-  if (dateKey) {
-    return missingSlotsResult({
+    if (!service?.id && !service?.name) {
+      return missingService(business, recipientPhone, working, requestId);
+    }
+
+    if (dateKey) {
+      return missingSlotsResult({
+        business,
+        recipientPhone,
+        draft: working,
+        service,
+        employeeId: draftEmployeeId(working),
+        dateKey,
+        requestId,
+        reasonKey: 'ASK_TIME',
+        conversationStep: CONVERSATION_STEPS.WAITING_FOR_TIME,
+        extraContext: {
+          intent: 'book',
+          service,
+          draft_id: working.id,
+        },
+        notice: `Ok, schimbăm ora pentru *${service.name || 'serviciu'}*. Alege un alt interval:`,
+      });
+    }
+
+    return askDateGridResult({
       business,
       recipientPhone,
       draft: working,
       service,
-      employeeId: draftEmployeeId(working),
-      dateKey,
       requestId,
-      reasonKey: 'ASK_TIME',
-      conversationStep: CONVERSATION_STEPS.WAITING_FOR_TIME,
+      conversationStep: CONVERSATION_STEPS.WAITING_FOR_DATE,
       extraContext: {
         intent: 'book',
         service,
         draft_id: working.id,
       },
-      notice: `Ok, schimbăm ora pentru *${service.name || 'serviciu'}*. Alege un alt interval:`,
+      clientMessage:
+        `Ok, modificăm. Păstrăm *${service.name || 'serviciul'}* — alege din nou *ziua* (apoi ora).`,
     });
   }
+
+  // Draft already TTL-expired or missing — reopen with remembered service. Never list saved appts.
+  const service = serviceFromDraftOrCtx;
+  const browsing = await startBrowsingFlow({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    clientId: clientId || null,
+    context: { step: 'revised_after_expired_hold', intent: 'book' },
+    requestId,
+  });
+  if (!browsing) {
+    return handlerResult({
+      status: 'ERROR',
+      user_message_template_key: 'ERROR_GENERIC',
+      data: {
+        client_message:
+          'Nu am putut redeschide programarea în curs. Scrie din nou serviciul dorit ca să o luăm de la capăt.',
+      },
+    });
+  }
+
+  if (!service?.id && !service?.name) {
+    return missingService(business, recipientPhone, browsing, requestId);
+  }
+
+  const withService = await setSelectedService({
+    draftId: browsing.id,
+    businessId: business.id,
+    service,
+    context: {
+      ...(browsing.conversation_context || {}),
+      intent: 'book',
+      revised_in_flight: true,
+    },
+    requestId,
+  }) || browsing;
 
   return askDateGridResult({
     business,
     recipientPhone,
-    draft: working,
+    draft: withService,
     service,
     requestId,
     conversationStep: CONVERSATION_STEPS.WAITING_FOR_DATE,
     extraContext: {
       intent: 'book',
       service,
-      draft_id: working.id,
+      draft_id: withService.id,
     },
     clientMessage:
       `Ok, modificăm. Păstrăm *${service.name || 'serviciul'}* — alege din nou *ziua* (apoi ora).`,
@@ -2787,15 +2853,23 @@ async function dispatchExecute({
   activeDraft,
   textBody = '',
 }) {
+  const action = extract.action;
+  const lang = detectClientLanguage(textBody, convState?.context_data?.client_language);
+
+  // Courtesy must never confirm a hold (stray confirm_booking payload + "Mulțumesc").
+  if (action === 'thanks') {
+    return executeThanks(business, lang);
+  }
+
   let draft = activeDraft;
-  if (draft?.state === 'pending_confirmation') {
+  // Keep the live pending draft for mid-flow "Modific" — TTL expiry here used to
+  // null the draft and the old revise path fell through to saved-appointment lists.
+  const keepDraftForRevise = action === 'revise_draft'
+    || looksLikeInFlightRevision(textBody);
+  if (draft?.state === 'pending_confirmation' && !keepDraftForRevise) {
     const expiry = await expirePendingIfNeeded({ business, draft, recipientPhone, requestId });
     if (expiry.expired) draft = null;
   }
-
-  const action = extract.action;
-  const intent = convState.context_data?.intent;
-  const lang = detectClientLanguage(textBody, convState?.context_data?.client_language);
 
   const stolenMod = rerouteModification(textBody, extract, {
     step: convState.current_step,
@@ -2827,6 +2901,7 @@ async function dispatchExecute({
       convState,
       requestId,
       textBody,
+      clientId,
     });
   }
   if (stolenMod === 'reschedule') {
@@ -3132,6 +3207,7 @@ async function dispatchExecute({
       convState,
       requestId,
       textBody,
+      clientId,
     });
   }
   if (action === 'thanks') {
@@ -3240,40 +3316,12 @@ function rerouteModification(textBody, extract, ctx = {}) {
 
   if (looksLikeExplicitSavedReschedule(textBody)) return 'reschedule';
 
-  const inFlight = (() => {
-    const intent = ctx.context?.intent;
-    if (intent === 'reschedule' || intent === 'cancel') return false;
-    const step = ctx.step;
-    if (
-      step === CONVERSATION_STEPS.RESCHEDULING
-      || step === CONVERSATION_STEPS.MODIFYING
-      || step === CONVERSATION_STEPS.CONFIRMING_CANCEL
-    ) {
-      return false;
-    }
-    if (ctx.activeDraft && ['browsing', 'pending_confirmation'].includes(String(ctx.activeDraft.state || ''))) {
-      return true;
-    }
-    const bookingSteps = new Set([
-      CONVERSATION_STEPS.WAITING_FOR_SERVICE,
-      CONVERSATION_STEPS.CHOOSING_SERVICE,
-      CONVERSATION_STEPS.WAITING_FOR_DATE,
-      CONVERSATION_STEPS.WAITING_FOR_TIME,
-      CONVERSATION_STEPS.WAITING_FOR_DATE_TIME,
-      CONVERSATION_STEPS.WAITING_FOR_CONFIRMATION,
-      CONVERSATION_STEPS.CONFIRMING,
-      CONVERSATION_STEPS.SELECTING_SLOT,
-      CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
-      CONVERSATION_STEPS.ASKING_NAME,
-    ]);
-    if (bookingSteps.has(step)) return true;
-    const wait = ctx.wait;
-    return wait === BOOKING_WAIT.SERVICE
-      || wait === BOOKING_WAIT.DATE
-      || wait === BOOKING_WAIT.TIME
-      || wait === BOOKING_WAIT.DATE_TIME
-      || wait === BOOKING_WAIT.CONFIRMATION;
-  })();
+  const inFlight = isInFlightBookingContext({
+    step: ctx.step,
+    wait: ctx.wait,
+    activeDraft: ctx.activeDraft,
+    context: ctx.context,
+  });
 
   if (inFlight && looksLikeInFlightRevision(textBody)) return 'revise_draft';
   if (mod === 'reschedule') return 'reschedule';
