@@ -79,7 +79,14 @@ import {
   missingBusinessInfoMessage,
 } from '../utils/businessInfoLookup.js';
 import { detectClientLanguage } from '../utils/clientLanguage.js';
-import { detectModificationIntent, refersToSavedAppointments, looksLikeCancelAll } from './intentTriageService.js';
+import {
+  detectModificationIntent,
+  refersToSavedAppointments,
+  looksLikeCancelAll,
+  looksLikeExplicitSavedReschedule,
+  looksLikeInFlightRevision,
+  looksLikeTimeOnlyRevision,
+} from './intentTriageService.js';
 import { getPendingTtlMinutes } from '../config/conversationConfig.js';
 import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
 import { buildContactLinkButtons } from '../utils/businessMessages.js';
@@ -1499,6 +1506,114 @@ async function executeCancelPending({ business, recipientPhone, requestId }) {
   });
 }
 
+/**
+ * Mid-flow revision: client said "modific" / "am greșit" while building a booking.
+ * Keep the chosen service; clear the hold and re-ask day (or only time).
+ */
+async function executeReviseDraft({
+  business,
+  recipientPhone,
+  extract,
+  activeDraft,
+  convState,
+  requestId,
+  textBody = '',
+}) {
+  const draft = activeDraft && ['browsing', 'pending_confirmation'].includes(activeDraft.state)
+    ? activeDraft
+    : null;
+  if (!draft) {
+    return executeReschedule({
+      business,
+      recipientPhone,
+      extract: { ...extract, action: 'reschedule' },
+      activeDraft,
+      convState,
+      requestId,
+    });
+  }
+
+  const service = draft.selected_service
+    ? /** @type {{ id?: string, name?: string, duration_minutes?: number }} */ (draft.selected_service)
+    : null;
+  const priorStart = draft.selected_slot_start ? new Date(draft.selected_slot_start) : null;
+  const keepDate = extract.time_text === '__keep_date__'
+    || looksLikeTimeOnlyRevision(textBody);
+  const dateKey = keepDate && priorStart && !Number.isNaN(priorStart.getTime())
+    ? formatDateKey(priorStart, business.timezone)
+    : null;
+
+  const reset = await cancelOrResetDraft({
+    draftId: draft.id,
+    businessId: business.id,
+    state: 'browsing',
+    context: {
+      ...draft.conversation_context,
+      step: 'revised_in_flight',
+      revised_at: new Date().toISOString(),
+      keep_service: true,
+    },
+    requestId,
+  });
+  const working = reset || draft;
+
+  if (!service?.id && !service?.name) {
+    return missingService(business, recipientPhone, working, requestId);
+  }
+
+  if (dateKey) {
+    return missingSlotsResult({
+      business,
+      recipientPhone,
+      draft: working,
+      service,
+      employeeId: draftEmployeeId(working),
+      dateKey,
+      requestId,
+      reasonKey: 'ASK_TIME',
+      conversationStep: CONVERSATION_STEPS.WAITING_FOR_TIME,
+      extraContext: {
+        intent: 'book',
+        service,
+        draft_id: working.id,
+      },
+      notice: `Ok, schimbăm ora pentru *${service.name || 'serviciu'}*. Alege un alt interval:`,
+    });
+  }
+
+  return askDateGridResult({
+    business,
+    recipientPhone,
+    draft: working,
+    service,
+    requestId,
+    conversationStep: CONVERSATION_STEPS.WAITING_FOR_DATE,
+    extraContext: {
+      intent: 'book',
+      service,
+      draft_id: working.id,
+    },
+    clientMessage:
+      `Ok, modificăm. Păstrăm *${service.name || 'serviciul'}* — alege din nou *ziua* (apoi ora).`,
+  });
+}
+
+function executeThanks(business, lang = 'ro') {
+  return handlerResult({
+    status: 'SUCCESS',
+    action_performed: 'THANKS',
+    next_required_step: null,
+    user_message_template_key: 'THANKS',
+    data: {
+      business_name: business.name,
+      client_language: lang,
+      client_message: lang === 'en'
+        ? `You're welcome! If you need anything else — a booking, hours, or contact — just write here.`
+        : `Cu plăcere! Dacă mai ai nevoie — o programare, orarul sau contact — scrie-mi oricând.`,
+    },
+  });
+}
+
 async function executeCancelAppointment({
   business,
   recipientPhone,
@@ -2682,12 +2797,32 @@ async function dispatchExecute({
   const intent = convState.context_data?.intent;
   const lang = detectClientLanguage(textBody, convState?.context_data?.client_language);
 
-  const stolenMod = rerouteModification(textBody, extract);
+  const stolenMod = rerouteModification(textBody, extract, {
+    step: convState.current_step,
+    wait: getBookingWait(convState),
+    activeDraft: draft,
+    context: convState.context_data,
+  });
   if (stolenMod === 'cancel') {
     return executeCancel({
       business,
       recipientPhone,
       extract: { ...extract, action: 'cancel' },
+      activeDraft: draft,
+      convState,
+      requestId,
+      textBody,
+    });
+  }
+  if (stolenMod === 'revise_draft') {
+    return executeReviseDraft({
+      business,
+      recipientPhone,
+      extract: {
+        ...extract,
+        action: 'revise_draft',
+        time_text: looksLikeTimeOnlyRevision(textBody) ? '__keep_date__' : extract.time_text,
+      },
       activeDraft: draft,
       convState,
       requestId,
@@ -2988,6 +3123,20 @@ async function dispatchExecute({
   if (action === 'list_appointments') {
     return executeListAppointments({ business, recipientPhone, activeDraft: draft });
   }
+  if (action === 'revise_draft') {
+    return executeReviseDraft({
+      business,
+      recipientPhone,
+      extract,
+      activeDraft: draft,
+      convState,
+      requestId,
+      textBody,
+    });
+  }
+  if (action === 'thanks') {
+    return executeThanks(business, lang);
+  }
   if (action === 'book') {
     return executeBook({ business, recipientPhone, extract, clientId, requestId, activeDraft: draft, convState });
   }
@@ -3065,17 +3214,70 @@ async function dispatchExecute({
 
 /**
  * Last-resort: never show "Nu am înțeles" when the client clearly wants cancel/reschedule.
+ * Mid-flow "modific" must revise the draft — not jump to saved appointments.
+ *
+ * @returns {'cancel' | 'reschedule' | 'revise_draft' | null}
  */
-function rerouteModification(textBody, extract) {
+function rerouteModification(textBody, extract, ctx = {}) {
   const action = extract?.action;
-  const steal = new Set(['chat', 'off_topic', 'missing_info', 'clarify_needed', 'unknown_service', 'show_services', 'book']);
-  if (action === 'cancel' || action === 'cancel_all' || action === 'reschedule' || action === 'select_appointment') {
+  if (
+    action === 'cancel'
+    || action === 'cancel_all'
+    || action === 'reschedule'
+    || action === 'revise_draft'
+    || action === 'select_appointment'
+    || action === 'thanks'
+    || action === 'confirm'
+    || action === 'cancel_pending'
+  ) {
     return null;
   }
+  const steal = new Set(['chat', 'off_topic', 'missing_info', 'clarify_needed', 'unknown_service', 'show_services', 'book']);
   if (!steal.has(String(action || ''))) return null;
+
   const mod = detectModificationIntent(textBody);
-  if (!mod) return null;
-  return mod;
+  if (mod === 'cancel') return 'cancel';
+
+  if (looksLikeExplicitSavedReschedule(textBody)) return 'reschedule';
+
+  const inFlight = (() => {
+    const intent = ctx.context?.intent;
+    if (intent === 'reschedule' || intent === 'cancel') return false;
+    const step = ctx.step;
+    if (
+      step === CONVERSATION_STEPS.RESCHEDULING
+      || step === CONVERSATION_STEPS.MODIFYING
+      || step === CONVERSATION_STEPS.CONFIRMING_CANCEL
+    ) {
+      return false;
+    }
+    if (ctx.activeDraft && ['browsing', 'pending_confirmation'].includes(String(ctx.activeDraft.state || ''))) {
+      return true;
+    }
+    const bookingSteps = new Set([
+      CONVERSATION_STEPS.WAITING_FOR_SERVICE,
+      CONVERSATION_STEPS.CHOOSING_SERVICE,
+      CONVERSATION_STEPS.WAITING_FOR_DATE,
+      CONVERSATION_STEPS.WAITING_FOR_TIME,
+      CONVERSATION_STEPS.WAITING_FOR_DATE_TIME,
+      CONVERSATION_STEPS.WAITING_FOR_CONFIRMATION,
+      CONVERSATION_STEPS.CONFIRMING,
+      CONVERSATION_STEPS.SELECTING_SLOT,
+      CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
+      CONVERSATION_STEPS.ASKING_NAME,
+    ]);
+    if (bookingSteps.has(step)) return true;
+    const wait = ctx.wait;
+    return wait === BOOKING_WAIT.SERVICE
+      || wait === BOOKING_WAIT.DATE
+      || wait === BOOKING_WAIT.TIME
+      || wait === BOOKING_WAIT.DATE_TIME
+      || wait === BOOKING_WAIT.CONFIRMATION;
+  })();
+
+  if (inFlight && looksLikeInFlightRevision(textBody)) return 'revise_draft';
+  if (mod === 'reschedule') return 'reschedule';
+  return null;
 }
 
 function bookingMachineHandles(action) {

@@ -5,6 +5,10 @@ import {
   looksLikeNewBookingRequest,
   detectModificationIntent,
   looksLikeGreeting,
+  looksLikeGratitude,
+  looksLikeExplicitSavedReschedule,
+  looksLikeInFlightRevision,
+  looksLikeTimeOnlyRevision,
 } from '../src/services/intentTriageService.js';
 
 describe('Cold-start unrestricted intent parsing', () => {
@@ -33,6 +37,48 @@ describe('Cold-start unrestricted intent parsing', () => {
   it('still treats bare salut as menu, not a hard gate for later intents', () => {
     assert.equal(triageUserIntent('salut').intent, 'menu');
     assert.equal(triageUserIntent('programare').intent, 'book');
+  });
+});
+
+describe('In-flight revise vs saved reschedule', () => {
+  it('treats bare modific/schimb/am gresit as in-flight revision language', () => {
+    assert.equal(looksLikeInFlightRevision('Modific'), true);
+    assert.equal(looksLikeInFlightRevision('modifica'), true);
+    assert.equal(looksLikeInFlightRevision('am gresit ora'), true);
+    assert.equal(looksLikeInFlightRevision('am gresit ziua'), true);
+    assert.equal(looksLikeInFlightRevision('schimbam'), true);
+    assert.equal(looksLikeTimeOnlyRevision('am gresit ora'), true);
+    assert.equal(looksLikeTimeOnlyRevision('am gresit ziua'), false);
+  });
+
+  it('keeps explicit reprogramare as saved-appointment reschedule', () => {
+    assert.equal(looksLikeExplicitSavedReschedule('vreau sa reprogramez'), true);
+    assert.equal(looksLikeExplicitSavedReschedule('reprogramare'), true);
+    assert.equal(looksLikeInFlightRevision('vreau sa reprogramez'), false);
+    assert.equal(looksLikeInFlightRevision('reprogramare'), false);
+  });
+
+  it('still keyword-detects modific as modification (context decides revise vs reschedule)', () => {
+    assert.equal(detectModificationIntent('Modific'), 'reschedule');
+    assert.equal(detectModificationIntent('reprogramare'), 'reschedule');
+  });
+});
+
+describe('Gratitude / thanks', () => {
+  it('recognises mulțumesc / mersi / thanks', () => {
+    assert.equal(looksLikeGratitude('Multumesc'), true);
+    assert.equal(looksLikeGratitude('mulțumesc'), true);
+    assert.equal(looksLikeGratitude('mersi'), true);
+    assert.equal(looksLikeGratitude('mersi frumos'), true);
+    assert.equal(looksLikeGratitude('thanks'), true);
+    assert.equal(looksLikeGratitude('thank you'), true);
+    assert.equal(looksLikeGratitude('vreau o programare'), false);
+  });
+
+  it('triages gratitude as thanks, not menu or unknown', () => {
+    assert.equal(triageUserIntent('Multumesc').intent, 'thanks');
+    assert.equal(triageUserIntent('mersi').intent, 'thanks');
+    assert.equal(detectModificationIntent('Multumesc'), null);
   });
 });
 

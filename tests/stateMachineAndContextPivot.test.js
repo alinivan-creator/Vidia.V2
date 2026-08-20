@@ -215,6 +215,6 @@ describe('Silent Session TTL Check & NLU Classification', () => {
   });
 
   it('architecture version is bumped for deploy verification', () => {
-    assert.match(BOOKING_ARCHITECTURE_VERSION, /^dual-ai-text-first-nlu-v1[3-9]/);
+    assert.match(BOOKING_ARCHITECTURE_VERSION, /^dual-ai-text-first-nlu-v1[4-9]/);
   });
 });

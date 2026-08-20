@@ -130,6 +130,9 @@ export function renderHandlerResult(business, result) {
         waTitle('Ok, m-am oprit'),
         'Cu ce te mai pot ajuta?',
       );
+    case 'THANKS':
+      return (typeof d.client_message === 'string' && d.client_message.trim())
+        || 'Cu plăcere! Dacă mai ai nevoie — o programare, orarul sau contact — scrie-mi oricând.';
     case 'MISSING_EMPLOYEE': {
       const names = (d.services || []).map((e) => e.name).filter(Boolean);
       const intro = d.client_message || 'Nu am găsit specialistul. Alege din echipă:';
@@ -358,6 +361,7 @@ async function polishWithAi(business, result, rendered) {
     || templateKey === 'MENU'
     || templateKey === 'CHAT'
     || templateKey === 'OFF_TOPIC'
+    || templateKey === 'THANKS'
     || templateKey === 'ERROR_NO_APPOINTMENT'
     || templateKey === 'ERROR_GENERIC'
     || templateKey === 'ERROR_CALENDAR';

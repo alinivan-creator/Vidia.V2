@@ -5,7 +5,7 @@ import { detectTimeWindowFromText, looksLikeAvailabilityQuestion } from '../util
 export { looksLikeAvailabilityQuestion, detectTimeWindowFromText };
 
 /**
- * @typedef {'cancel' | 'reschedule' | 'book' | 'list_appointments' | 'faq' | 'contact' | 'menu' | 'callback' | 'sms_opt_in' | 'sms_opt_out' | 'unknown'} TriageIntent
+ * @typedef {'cancel' | 'reschedule' | 'book' | 'list_appointments' | 'faq' | 'contact' | 'menu' | 'callback' | 'sms_opt_in' | 'sms_opt_out' | 'thanks' | 'unknown'} TriageIntent
  *
  * @typedef {Object} TriageResult
  * @property {TriageIntent} intent
@@ -58,6 +58,72 @@ export function refersToSavedAppointments(text) {
 }
 
 /**
+ * Clear "thank you" / courtesy — not a booking, not off-topic.
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function looksLikeGratitude(text) {
+  const n = normalize(text);
+  if (!n) return false;
+  if (/^(multumesc|multumesc frumos|multumesc mult|mersi|mersi frumos|merci|thanks|thank you|thx|ty|ms|ms frumos)[\s!.❤️🙏]*$/i.test(n)) {
+    return true;
+  }
+  if (/^(iti|va)\s+multumesc[\s!.❤️🙏]*$/i.test(n)) return true;
+  if (/^thanks?\s+(a\s+lot|so\s+much)?[\s!.]*$/i.test(n)) return true;
+  return false;
+}
+
+/**
+ * Explicit wish to move an already-saved appointment (not the draft being built).
+ * "reprogramare" / "vreau să reprogramez" always count.
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function looksLikeExplicitSavedReschedule(text) {
+  const n = normalize(text);
+  if (!n) return false;
+  if (/\breprogram\w*/.test(n) || /\breschedule\b/.test(n)) return true;
+  if (/\bmove my appointment\b/.test(n) || /\bchange my appointment\b/.test(n)) return true;
+  if (/\b(mut|muta)\w*\s+(programar|rezervar)/.test(n)) return true;
+  if (/\b(programar|rezervar)\w*\s+(mea|existenta|confirmata|deja)\b/.test(n)
+    && /\b(modific|schimb|mut)\w*/.test(n)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Client wants to change the booking currently being built (wrong day/time, "modific").
+ * Distinct from moving a confirmed appointment.
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function looksLikeInFlightRevision(text) {
+  const n = normalize(text);
+  if (!n) return false;
+  if (looksLikeExplicitSavedReschedule(n)) return false;
+  if (looksLikeHoursOrPriceFaq(n)) return false;
+  if (/\bam gresit\b/.test(n) || /\bgresesc\b/.test(n) || /\bgresit\b/.test(n)) return true;
+  if (/\b(alta|alt)\s+(zi|ziua|ora|data|slot|interval)\b/.test(n)) return true;
+  if (/\b(schimb|schimba|schimbam|schimbati)\w*/.test(n)) return true;
+  if (/\b(modific|modifica|modificam|modificati)\w*/.test(n)) return true;
+  if (/\b(vreau|as vrea|doresc)\s+(sa\s+)?(modific|schimb)\w*/.test(n)) return true;
+  return false;
+}
+
+/**
+ * Prefer keeping date and only re-picking time.
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function looksLikeTimeOnlyRevision(text) {
+  const n = normalize(text);
+  if (!n) return false;
+  if (/\b(ziua|data|zi)\b/.test(n) && !/\b(ora|orei|timpul|slot|interval)\b/.test(n)) return false;
+  return /\b(ora|orei|timpul|slot|interval)\b/.test(n);
+}
+
+/**
  * Detect cancel / reschedule intent from free text.
  * Stems + colloquial Romanian — must beat NLU book/clarify misreads.
  * @param {string} text
@@ -67,6 +133,7 @@ export function detectModificationIntent(text) {
   const n = normalize(text);
   if (!n) return null;
   if (looksLikeDataDeletion(n)) return null;
+  if (looksLikeGratitude(n)) return null;
 
   // Avoid "anul 2026" (the year) — not a cancellation.
   const yearAnul = /\banul\s+\d{4}\b/.test(n);
@@ -127,6 +194,9 @@ export function detectModificationIntent(text) {
     return 'reschedule';
   }
   if (/\bmodific\w*/.test(n) && !looksLikeHoursOrPriceFaq(n)) {
+    return 'reschedule';
+  }
+  if (/\bschimb\w*/.test(n) && !looksLikeHoursOrPriceFaq(n)) {
     return 'reschedule';
   }
 
@@ -362,6 +432,10 @@ export function triageUserIntent(text, opts = {}) {
   const n = normalize(text);
   if (!n) {
     return { intent: 'unknown', confidence: 'low', reason: 'empty' };
+  }
+
+  if (looksLikeGratitude(text)) {
+    return { intent: 'thanks', confidence: 'high', reason: 'gratitude' };
   }
 
   const mod = detectModificationIntent(text);

@@ -46,4 +46,4 @@
  *   Confirmation + Adaugă în calendar URL button.
  *   Name is never asked when Twilio ProfileName / display_name exists.
  */
-export const BOOKING_ARCHITECTURE_VERSION = 'dual-ai-text-first-nlu-v13';
+export const BOOKING_ARCHITECTURE_VERSION = 'dual-ai-text-first-nlu-v14';

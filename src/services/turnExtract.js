@@ -28,21 +28,25 @@ import {
   normalizeTimeWindow,
 } from '../utils/timeWindow.js';
 import {
+  detectModificationIntent,
+  looksLikeGreeting,
+  looksLikeGratitude,
+  looksLikeExplicitSavedReschedule,
+  looksLikeInFlightRevision,
+  looksLikeTimeOnlyRevision,
+  refersToSavedAppointments,
+  looksLikeCancelAll,
+  looksLikeOffTopicChat,
   looksLikeDatetimeOrSlot,
+  looksLikeNewBookingRequest,
+  looksLikeExistingAppointmentQuery,
+  looksLikeOutOfScopeRequest,
   isExplicitConfirmReply,
   isExplicitCancelReply,
   isAffirmativeReply,
-  looksLikeOutOfScopeRequest,
   wantsSameExpiredBooking,
-  looksLikeExistingAppointmentQuery,
-  looksLikeNewBookingRequest,
-  looksLikeGreeting,
-  looksLikeOffTopicChat,
-  triageUserIntent,
-  detectModificationIntent,
-  looksLikeCancelAll,
   looksLikePluralAppointments,
-  refersToSavedAppointments,
+  triageUserIntent,
 } from './intentTriageService.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
@@ -80,6 +84,70 @@ function normalize(text) {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * True while the client is building a NEW booking (draft / confirm card),
+ * not while already in a saved-appointment reschedule/cancel flow.
+ *
+ * @param {Object} params
+ * @param {string} [params.step]
+ * @param {string} [params.wait]
+ * @param {{ state?: string } | null} [params.activeDraft]
+ * @param {Record<string, unknown> | null | undefined} [params.context]
+ */
+function isInFlightBookingContext({ step, wait, activeDraft, context }) {
+  const intent = context?.intent;
+  if (intent === 'reschedule' || intent === 'cancel') return false;
+  if (
+    step === CONVERSATION_STEPS.RESCHEDULING
+    || step === CONVERSATION_STEPS.MODIFYING
+    || step === CONVERSATION_STEPS.CONFIRMING_CANCEL
+  ) {
+    return false;
+  }
+  if (activeDraft && ['browsing', 'pending_confirmation'].includes(String(activeDraft.state || ''))) {
+    return true;
+  }
+  const bookingSteps = new Set([
+    CONVERSATION_STEPS.WAITING_FOR_SERVICE,
+    CONVERSATION_STEPS.CHOOSING_SERVICE,
+    CONVERSATION_STEPS.WAITING_FOR_DATE,
+    CONVERSATION_STEPS.WAITING_FOR_TIME,
+    CONVERSATION_STEPS.WAITING_FOR_DATE_TIME,
+    CONVERSATION_STEPS.WAITING_FOR_CONFIRMATION,
+    CONVERSATION_STEPS.CONFIRMING,
+    CONVERSATION_STEPS.SELECTING_SLOT,
+    CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
+    CONVERSATION_STEPS.ASKING_NAME,
+  ]);
+  if (bookingSteps.has(step)) return true;
+  if (
+    wait === BOOKING_WAIT.SERVICE
+    || wait === BOOKING_WAIT.DATE
+    || wait === BOOKING_WAIT.TIME
+    || wait === BOOKING_WAIT.DATE_TIME
+    || wait === BOOKING_WAIT.CONFIRMATION
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Mid-flow "modific" / "am greșit" → revise the draft; "reprogramez" → saved appointment.
+ * @returns {'revise_draft' | 'reschedule' | null}
+ */
+function resolveRescheduleOrRevise(textBody, { step, wait, activeDraft, context }) {
+  if (looksLikeExplicitSavedReschedule(textBody)) return 'reschedule';
+  if (
+    isInFlightBookingContext({ step, wait, activeDraft, context })
+    && looksLikeInFlightRevision(textBody)
+  ) {
+    return 'revise_draft';
+  }
+  if (detectModificationIntent(textBody) === 'reschedule') return 'reschedule';
+  return null;
 }
 
 function emptyExtract(overrides = {}) {
@@ -880,6 +948,10 @@ async function extractTurnIntentImpl({
 
   // Modification / booking intents on free text must beat every menu wall.
   // "vreau sa reprogramez o programare" must never become stale_choice or reprompt_grid.
+  // Mid-flow "modific" revises the draft being built — not a saved appointment.
+  if (!tappedId && looksLikeGratitude(textBody)) {
+    return emptyExtract({ action: 'thanks', confidence: 'high', source: 'keyword' });
+  }
   const earlyModify = !tappedId ? detectModificationIntent(textBody) : null;
   if (earlyModify === 'cancel') {
     const dropHoldOnly = isPendingHold && !refersToSavedAppointments(textBody) && !looksLikeCancelAll(textBody);
@@ -890,13 +962,30 @@ async function extractTurnIntentImpl({
       source: 'keyword',
     }), textBody);
   }
-  if (earlyModify === 'reschedule') {
-    return annotateModifyExtract(emptyExtract({
-      action: 'reschedule',
-      date_text: extractDateKey(textBody, tz),
-      confidence: 'high',
-      source: 'keyword',
-    }), textBody);
+  if (earlyModify === 'reschedule' || (!tappedId && looksLikeInFlightRevision(textBody))) {
+    const routed = resolveRescheduleOrRevise(textBody, {
+      step,
+      wait,
+      activeDraft,
+      context: convState.context_data,
+    });
+    if (routed === 'revise_draft') {
+      return emptyExtract({
+        action: 'revise_draft',
+        date_text: extractDateKey(textBody, tz),
+        time_text: looksLikeTimeOnlyRevision(textBody) ? '__keep_date__' : null,
+        confidence: 'high',
+        source: 'keyword',
+      });
+    }
+    if (routed === 'reschedule') {
+      return annotateModifyExtract(emptyExtract({
+        action: 'reschedule',
+        date_text: extractDateKey(textBody, tz),
+        confidence: 'high',
+        source: 'keyword',
+      }), textBody);
+    }
   }
   if (!tappedId && looksLikeNewBookingRequest(textBody, { services })) {
     // Cold-start book without a day/time — fall through when the utterance already
@@ -1017,13 +1106,30 @@ async function extractTurnIntentImpl({
       source: 'keyword',
     }), textBody);
   }
-  if (modifyIntent === 'reschedule') {
-    return annotateModifyExtract(emptyExtract({
-      action: 'reschedule',
-      date_text: extractDateKey(textBody, tz),
-      confidence: 'high',
-      source: 'keyword',
-    }), textBody);
+  if (modifyIntent === 'reschedule' || looksLikeInFlightRevision(textBody)) {
+    const routed = resolveRescheduleOrRevise(textBody, {
+      step,
+      wait,
+      activeDraft,
+      context: convState.context_data,
+    });
+    if (routed === 'revise_draft') {
+      return emptyExtract({
+        action: 'revise_draft',
+        date_text: extractDateKey(textBody, tz),
+        time_text: looksLikeTimeOnlyRevision(textBody) ? '__keep_date__' : null,
+        confidence: 'high',
+        source: 'keyword',
+      });
+    }
+    if (routed === 'reschedule') {
+      return annotateModifyExtract(emptyExtract({
+        action: 'reschedule',
+        date_text: extractDateKey(textBody, tz),
+        confidence: 'high',
+        source: 'keyword',
+      }), textBody);
+    }
   }
 
   if (wait === BOOKING_WAIT.CLARIFICATION) {
@@ -1260,7 +1366,19 @@ async function extractTurnIntentImpl({
     extract.action = 'callback';
   }
   else if (triage.intent === 'cancel') extract.action = isPendingHold ? 'cancel_pending' : 'cancel';
-  else if (triage.intent === 'reschedule') extract.action = 'reschedule';
+  else if (triage.intent === 'thanks') extract.action = 'thanks';
+  else if (triage.intent === 'reschedule') {
+    const routed = resolveRescheduleOrRevise(textBody, {
+      step,
+      wait,
+      activeDraft,
+      context: convState.context_data,
+    });
+    extract.action = routed === 'revise_draft' ? 'revise_draft' : 'reschedule';
+    if (routed === 'revise_draft' && looksLikeTimeOnlyRevision(textBody)) {
+      extract.time_text = '__keep_date__';
+    }
+  }
   else if (triage.intent === 'list_appointments') extract.action = 'list_appointments';
   else if (triage.intent === 'book') extract.action = 'book';
   else if (triage.intent === 'contact') extract.action = 'contact';
