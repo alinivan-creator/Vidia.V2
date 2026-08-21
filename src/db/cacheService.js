@@ -347,7 +347,16 @@ export async function getAvailableSlots({
   const timezone = business.timezone;
   const now = new Date();
   const horizonDays = Math.max(14, Number(config.bookingHorizonDays) || 14);
-  const horizonEnd = new Date(now.getTime() + horizonDays * 24 * 60 * 60 * 1000);
+  let horizonEnd = new Date(now.getTime() + horizonDays * 24 * 60 * 60 * 1000);
+
+  // Intentional free-text dates past the 14-day list (e.g. "15 octombrie") must still
+  // load busy intervals for that day — otherwise slots look free incorrectly.
+  if (dateKey && /^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+    const dayEnd = localToUtc(dateKey, '23:59', timezone);
+    if (dayEnd && dayEnd.getTime() > horizonEnd.getTime()) {
+      horizonEnd = new Date(dayEnd.getTime() + 60_000);
+    }
+  }
 
   const busy = await getBusyIntervalsFromCache({
     businessId: business.id,

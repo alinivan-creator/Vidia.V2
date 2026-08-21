@@ -37,6 +37,14 @@ describe('relative NLP datetime', () => {
     assert.equal(parseRomanianDateTimeParts('day_2026-02-09', TZ, now).dateKey, '2026-02-09');
   });
 
+  it('parses intentional free-text beyond the 14-day list horizon', () => {
+    const now = new Date('2026-08-22T09:00:00.000Z');
+    assert.equal(parseRomanianDateTimeParts('pe 15 octombrie la 10', TZ, now).dateKey, '2026-10-15');
+    assert.equal(parseRomanianDateTimeParts('pe 15 octombrie la 10', TZ, now).timeHHmm, '10:00');
+    assert.equal(parseRomanianDateTimeParts('peste 3 saptamani', TZ, now).dateKey, '2026-09-12');
+    assert.equal(parseRomanianDateTimeParts('saptamana viitoare', TZ, now).dateKey, '2026-08-29');
+  });
+
   it('parses săptămâna viitoare / peste două zile|ore / poimâine', () => {
     assert.equal(parseRomanianDateTimeParts('Săptămâna viitoare', TZ, NOW).dateKey, '2026-08-24');
     assert.equal(parseRomanianDateTimeParts('saptamana urmatoare', TZ, NOW).dateKey, '2026-08-24');

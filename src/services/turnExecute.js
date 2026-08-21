@@ -130,6 +130,7 @@ import {
   readDraftBooking,
   reduceBookingTurn,
   sessionKeepsChosenService,
+  sessionAllowsPendingWhen,
 } from '../lib/booking/stateMachine.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
@@ -159,6 +160,20 @@ export function isFreshMenuStart(extract) {
     && !extract.service_name;
 }
 
+/**
+ * Cold "programare" / keyword book with no when — wipe leftovers, never glue Feb onto a new ask.
+ * @param {object} extract
+ */
+export function isCleanSlateBooking(extract) {
+  if (isFreshMenuStart(extract)) return true;
+  if (extract?.action !== 'book') return false;
+  if (extract.date_text || extract.time_text || extract.datetime || extract.slot_id) return false;
+  // Naming a service is not a wipe — mid-flow service change must keep the chosen day.
+  if (extract.service_id || extract.service_name) return false;
+  const src = extract?.source;
+  return src === 'keyword' || src === 'nlu' || src === 'parser' || src === 'menu';
+}
+
 /** Absolute calendar day from a list row (day_YYYY-MM-DD) — must beat leftover draft_booking. */
 export function isStructuredDayPick(extract) {
   return extract?.source === 'menu'
@@ -173,18 +188,41 @@ export function isStructuredSlotPick(extract) {
   return extract?.source === 'menu' && typeof extract?.slot_id === 'string' && extract.slot_id.startsWith('slot_');
 }
 
+/** Ephemeral booking fields that must not survive a clean slate / reset. */
+export function bookingEphemeralContextNulls() {
+  return {
+    pending_date_text: null,
+    pending_time_text: null,
+    pending_time_window: null,
+    pending_datetime: null,
+    pending_slot_id: null,
+    last_menu: null,
+    grid_kind: null,
+    grid_page: null,
+    booking_wait: null,
+    clarification: null,
+    clarified: null,
+  };
+}
+
 export function hydrateExtract(extract, convState, timezone) {
   const ctx = convState?.context_data || {};
   const next = { ...extract };
-  const freshMenuStart = isFreshMenuStart(extract);
-  if (freshMenuStart) {
+  const sessionState = mapSessionState(convState?.current_step);
+  const keepService = sessionKeepsChosenService(sessionState);
+  const allowPendingWhen = sessionAllowsPendingWhen(sessionState);
+
+  if (isCleanSlateBooking(extract)) {
     next.date_text = null;
     next.time_text = null;
     next.time_window = null;
     next.datetime = null;
     next.slot_id = null;
-    next.service_id = null;
-    next.service_name = null;
+    // Fresh "programare" never reuses an abandoned service either.
+    if (!keepService) {
+      next.service_id = null;
+      next.service_name = null;
+    }
     return next;
   }
 
@@ -198,7 +236,6 @@ export function hydrateExtract(extract, convState, timezone) {
       next.time_text = formatTime(decoded, timezone);
       next.time_window = null;
     }
-    const keepService = sessionKeepsChosenService(mapSessionState(convState?.current_step));
     if (!next.service_id && keepService && typeof ctx.pending_service_id === 'string') {
       next.service_id = ctx.pending_service_id;
     }
@@ -217,7 +254,6 @@ export function hydrateExtract(extract, convState, timezone) {
     next.time_window = null;
     next.datetime = null;
     next.slot_id = null;
-    const keepService = sessionKeepsChosenService(mapSessionState(convState?.current_step));
     if (!next.service_id && keepService && typeof ctx.pending_service_id === 'string') {
       next.service_id = ctx.pending_service_id;
     }
@@ -230,18 +266,34 @@ export function hydrateExtract(extract, convState, timezone) {
   const turnHasDate = Boolean(extract.date_text);
   const turnHasTime = Boolean(extract.time_text);
   const turnHasWindow = Boolean(extract.time_window);
-  const keepService = sessionKeepsChosenService(mapSessionState(convState?.current_step));
 
-  if (!turnHasDate && typeof ctx.pending_date_text === 'string' && ctx.pending_date_text) {
+  // Explicit free-text when ("mâine la 13" / "15 octombrie la 10") — ignore leftover when/slot.
+  if (turnHasDate && turnHasTime) {
+    next.slot_id = null;
+    next.time_window = null;
+    if (!next.service_id && keepService && typeof ctx.pending_service_id === 'string') {
+      next.service_id = ctx.pending_service_id;
+    }
+    if (!next.employee_id && typeof ctx.pending_employee_id === 'string') {
+      next.employee_id = ctx.pending_employee_id;
+    }
+    if (timezone) {
+      next.datetime = localToUtc(next.date_text, next.time_text, timezone);
+    }
+    return next;
+  }
+
+  // Only mid-flight waits inherit pending day/time — never IDLE leftovers.
+  if (allowPendingWhen && !turnHasDate && typeof ctx.pending_date_text === 'string' && ctx.pending_date_text) {
     next.date_text = ctx.pending_date_text;
   }
-  if (!turnHasTime && typeof ctx.pending_time_text === 'string' && ctx.pending_time_text) {
+  if (allowPendingWhen && !turnHasTime && typeof ctx.pending_time_text === 'string' && ctx.pending_time_text) {
     const dateChanged = turnHasDate && typeof ctx.pending_date_text === 'string' && extract.date_text !== ctx.pending_date_text;
     if (!dateChanged) {
       next.time_text = ctx.pending_time_text;
     }
   }
-  if (!turnHasWindow && !next.time_text && typeof ctx.pending_time_window === 'string') {
+  if (allowPendingWhen && !turnHasWindow && !next.time_text && typeof ctx.pending_time_window === 'string') {
     const dateChanged = turnHasDate && typeof ctx.pending_date_text === 'string' && extract.date_text !== ctx.pending_date_text;
     if (!dateChanged) {
       next.time_window = ctx.pending_time_window;
@@ -257,7 +309,12 @@ export function hydrateExtract(extract, convState, timezone) {
 
   if (next.date_text && next.time_text && timezone) {
     next.datetime = localToUtc(next.date_text, next.time_text, timezone);
-  } else if (!turnHasDate && !turnHasTime && typeof ctx.pending_datetime === 'string') {
+  } else if (
+    allowPendingWhen
+    && !turnHasDate
+    && !turnHasTime
+    && typeof ctx.pending_datetime === 'string'
+  ) {
     const d = new Date(ctx.pending_datetime);
     if (!Number.isNaN(d.getTime())) next.datetime = d;
   } else if (!next.date_text || !next.time_text) {
@@ -269,14 +326,20 @@ export function hydrateExtract(extract, convState, timezone) {
 async function persistPendingExtract({ business, recipientPhone, extract, requestId }) {
   /** @type {Record<string, unknown>} */
   const context = {};
-  const freshMenuStart = isFreshMenuStart(extract);
-  if (freshMenuStart) {
-    context.pending_date_text = null;
-    context.pending_time_text = null;
-    context.pending_time_window = null;
-    context.pending_datetime = null;
-    context.pending_slot_id = null;
-    context.pending_service_id = null;
+  const cleanSlate = isCleanSlateBooking(extract);
+  if (cleanSlate) {
+    Object.assign(context, bookingEphemeralContextNulls(), {
+      pending_service_id: extract.service_id || null,
+      draft_booking: extract.service_id
+        ? {
+          service_id: extract.service_id,
+          service_name: extract.service_name || null,
+          date: null,
+          time: null,
+          duration: null,
+        }
+        : null,
+    });
   }
   if (extract.date_text) context.pending_date_text = extract.date_text;
   if (extract.time_text) {
@@ -292,13 +355,20 @@ async function persistPendingExtract({ business, recipientPhone, extract, reques
   if (extract.date_text && extract.time_text && extract.datetime instanceof Date) {
     context.pending_datetime = extract.datetime.toISOString();
   } else if (extract.date_text && !extract.time_text) {
-    // New day chosen — drop any leftover time/slot from a previous day (e.g. 9 Feb).
+    // New day chosen (tap or free text) — drop leftover time/slot/menu from another day.
     context.pending_datetime = null;
     context.pending_time_text = null;
     context.pending_slot_id = null;
     context.pending_time_window = null;
+    context.last_menu = null;
+    context.grid_kind = null;
+    context.grid_page = null;
+  } else if (extract.date_text && extract.time_text) {
+    // Explicit free-text slot — drop stale list so old Ore libere rows cannot rematch.
+    context.pending_slot_id = null;
+    context.last_menu = null;
   }
-  if (freshMenuStart || extract.service_id || extract.service_name || extract.date_text || extract.time_text || extract.slot_id) {
+  if (cleanSlate || extract.service_id || extract.service_name || extract.date_text || extract.time_text || extract.slot_id) {
     const latestDraft = await getOrCreateConversationState(business.id, recipientPhone);
     const prevDraft = latestDraft.context_data?.draft_booking && typeof latestDraft.context_data.draft_booking === 'object'
       ? /** @type {Record<string, unknown>} */ (latestDraft.context_data.draft_booking)
@@ -313,10 +383,10 @@ async function persistPendingExtract({ business, recipientPhone, extract, reques
       ...(extract.time_text ? { time: extract.time_text } : {}),
       // Day-only pick must wipe leftover clock time from another day.
       ...(extract.date_text && !extract.time_text && !extract.slot_id ? { time: null } : {}),
-      ...((freshMenuStart || !keepService)
-        ? { service_id: null, service_name: null, duration: null }
+      ...((cleanSlate || !keepService)
+        ? { service_id: extract.service_id || null, service_name: extract.service_name || null, duration: null }
         : {}),
-      ...(freshMenuStart ? { date: null, time: null } : {}),
+      ...(cleanSlate && !extract.date_text ? { date: null, time: null } : {}),
     };
   }
   if (!Object.keys(context).length) return;
@@ -3525,7 +3595,7 @@ async function runBookingMachine(params) {
   const namedThisTurn = Boolean(extract.service_id || extract.service_name);
   const keepLeftoverService = namedThisTurn
     || sessionKeepsChosenService(mapSessionState(convState?.current_step));
-  if (isFreshMenuStart(extract)) {
+  if (isCleanSlateBooking(extract)) {
     draft = {
       ...draft,
       date: null,

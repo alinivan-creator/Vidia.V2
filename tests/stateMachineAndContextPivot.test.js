@@ -7,6 +7,7 @@ import {
   emptyDraft,
   mapSessionState,
   sessionKeepsChosenService,
+  sessionAllowsPendingWhen,
 } from '../src/lib/booking/stateMachine.js';
 import { hydrateExtract } from '../src/services/turnExecute.js';
 import {
@@ -309,5 +310,68 @@ describe('Day list id must not become February (Sep→Feb bug)', () => {
     assert.equal(reduced.draft.date, '2026-09-02');
     assert.equal(reduced.draft.time, null);
     assert.equal(reduced.action, MACHINE_ACTIONS.ACTION_ASK_TIME);
+  });
+
+  it('IDLE leftover Feb is ignored for clean slate programare', async () => {
+    const { hydrateExtract, isCleanSlateBooking } = await import('../src/services/turnExecute.js');
+    const extract = {
+      action: 'book',
+      source: 'keyword',
+      date_text: null,
+      time_text: null,
+      slot_id: null,
+      service_id: null,
+    };
+    assert.equal(isCleanSlateBooking(extract), true);
+    const hydrated = hydrateExtract(
+      extract,
+      {
+        current_step: CONVERSATION_STEPS.IDLE,
+        context_data: {
+          pending_date_text: '2027-02-09',
+          pending_time_text: '16:00',
+          pending_slot_id: 'slot_20270209_1600',
+          pending_service_id: 'srv_old',
+        },
+      },
+      'Europe/Bucharest',
+    );
+    assert.equal(hydrated.date_text, null);
+    assert.equal(hydrated.time_text, null);
+    assert.equal(hydrated.slot_id, null);
+    assert.equal(hydrated.service_id, null);
+  });
+
+  it('explicit free-text mâine la 13 on IDLE ignores leftover Feb pending', async () => {
+    const { hydrateExtract } = await import('../src/services/turnExecute.js');
+    const hydrated = hydrateExtract(
+      {
+        action: 'book',
+        source: 'parser',
+        date_text: '2026-08-23',
+        time_text: '13:00',
+        slot_id: null,
+      },
+      {
+        current_step: CONVERSATION_STEPS.IDLE,
+        context_data: {
+          pending_date_text: '2027-02-09',
+          pending_time_text: '16:00',
+          pending_slot_id: 'slot_20270209_1600',
+          pending_service_id: 'srv_old',
+        },
+      },
+      'Europe/Bucharest',
+    );
+    assert.equal(hydrated.date_text, '2026-08-23');
+    assert.equal(hydrated.time_text, '13:00');
+    assert.equal(hydrated.slot_id, null);
+    assert.equal(hydrated.service_id ?? null, null);
+  });
+
+  it('sessionAllowsPendingWhen is false on IDLE so leftovers cannot glue', () => {
+    assert.equal(sessionAllowsPendingWhen(SESSION_STATES.INIT), false);
+    assert.equal(sessionAllowsPendingWhen(SESSION_STATES.WAITING_FOR_TIME), true);
+    assert.equal(sessionKeepsChosenService(SESSION_STATES.INIT), false);
   });
 });

@@ -306,6 +306,20 @@ export function sessionKeepsChosenService(state) {
     || state === SESSION_STATES.WAITING_FOR_CONFIRMATION;
 }
 
+/**
+ * Only mid-flight date/time collection may inherit pending_date / pending_time.
+ * IDLE / BOOKED / INIT leftovers (9 Feb from an abandoned flow) must never ride along
+ * on "salut, vreau programare mâine la 13".
+ * @param {string} state
+ */
+export function sessionAllowsPendingWhen(state) {
+  return state === SESSION_STATES.WAITING_FOR_DATE
+    || state === SESSION_STATES.WAITING_FOR_TIME
+    || state === SESSION_STATES.WAITING_FOR_DATE_TIME
+    || state === SESSION_STATES.WAITING_FOR_CONFIRMATION
+    || state === SESSION_STATES.WAITING_FOR_CLARIFICATION;
+}
+
 function applyNumberToDraft(draft, field, value, timezone) {
   if (field === 'time') {
     const time = hourToHHmm(value);
