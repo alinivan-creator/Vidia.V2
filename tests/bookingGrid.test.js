@@ -121,6 +121,18 @@ describe('booking grid list picker', () => {
     assert.equal(resolveInteractiveChoice('09:00', 'slot_old_from_history', options), null);
   });
 
+  it('maps Body title+description onto slot / pager ids without ListId', () => {
+    const options = [
+      { id: 'slot_20270209_1630', title: '16:30', description: 'Disponibil' },
+      { id: 'grid_next', title: 'Alte opțiuni ›', description: 'Pagina următoare' },
+    ];
+    assert.equal(resolveInteractiveChoice('16:30 Disponibil', null, options), 'slot_20270209_1630');
+    assert.equal(
+      resolveInteractiveChoice('Alte opțiuni > Pagina următoare', null, options),
+      'grid_next',
+    );
+  });
+
   it('mergeMenuOptions keeps grid_next from the page plus full catalog', () => {
     const catalog = Array.from({ length: 12 }, (_, i) => ({
       id: `slot_${i}`,

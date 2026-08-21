@@ -142,10 +142,39 @@ export function resolveInteractiveChoice(body, buttonPayload, options = []) {
   const numbered = resolveNumberedChoice(body, options);
   if (numbered) return numbered;
 
-  const normalized = String(body ?? '').trim().toLowerCase();
-  if (!normalized) return null;
-  const byTitle = options.find((o) => String(o.title || '').trim().toLowerCase() === normalized);
-  return byTitle?.id ?? null;
+  const raw = String(body ?? '').trim();
+  if (!raw || !options.length) return null;
+
+  const norm = (s) => String(s ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[›»]/g, '>')
+    .replace(/[‹«]/g, '<')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const nBody = norm(raw);
+  const exact = options.find((o) => norm(o.title) === nBody);
+  if (exact) return exact.id;
+
+  // WhatsApp often echoes "16:00 Disponibil" / "Alte opțiuni › Pagina următoare".
+  for (const o of options) {
+    const nTitle = norm(o.title);
+    if (!nTitle) continue;
+    if (nBody === nTitle || nBody.startsWith(`${nTitle} `)) return o.id;
+  }
+
+  const timeHit = /\b(\d{1,2}:\d{2})\b/.exec(nBody);
+  if (timeHit) {
+    const byTime = options.find((o) => {
+      const t = norm(o.title);
+      return t === timeHit[1] || t.startsWith(`${timeHit[1]}`);
+    });
+    if (byTime) return byTime.id;
+  }
+
+  return null;
 }
 
 /**
@@ -916,9 +945,10 @@ export async function sendInteractiveList({
     )
     .slice(0, 10);
 
-  const remembered = (rememberOptions || rows).slice(0, 40).map((row) => ({
+  const remembered = (rememberOptions || rows).slice(0, 80).map((row) => ({
     id: String(row.id),
     title: String(row.title).slice(0, 24),
+    description: row.description != null ? String(row.description).slice(0, 72) : undefined,
   }));
   await rememberMenuOptions(business.id, recipientPhone, remembered, menuKind);
 

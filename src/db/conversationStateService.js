@@ -300,9 +300,10 @@ export async function persistLastMenu({
   options = [],
   requestId = null,
 }) {
-  const slim = (Array.isArray(options) ? options : []).slice(0, 40).map((o) => ({
+  const slim = (Array.isArray(options) ? options : []).slice(0, 80).map((o) => ({
     id: String(o.id),
     title: String(o.title || '').slice(0, 48),
+    ...(o.description != null ? { description: String(o.description).slice(0, 72) } : {}),
   }));
   const existing = await getOrCreateConversationState(businessId, rawPhone);
   return setConversationStep({

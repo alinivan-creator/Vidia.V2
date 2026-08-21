@@ -592,9 +592,22 @@ async function resolveStaff(business, draftOrAppt) {
   };
 }
 
-async function ensureDraft({ business, recipientPhone, clientId, requestId, activeDraft }) {
+async function ensureDraft({ business, recipientPhone, clientId, requestId, activeDraft, convState = null }) {
   if (activeDraft && ['browsing', 'pending_confirmation'].includes(activeDraft.state)) {
     return activeDraft;
+  }
+  const draftId = typeof convState?.context_data?.draft_id === 'string'
+    ? convState.context_data.draft_id
+    : null;
+  if (draftId) {
+    const byId = await getDraftBookingById(draftId, business.id);
+    if (byId && ['browsing', 'pending_confirmation'].includes(String(byId.state || ''))) {
+      return byId;
+    }
+  }
+  const live = await getActiveDraftBooking(business.id, recipientPhone);
+  if (live && ['browsing', 'pending_confirmation'].includes(String(live.state || ''))) {
+    return live;
   }
   return startBrowsingFlow({
     businessId: business.id,
@@ -602,6 +615,55 @@ async function ensureDraft({ business, recipientPhone, clientId, requestId, acti
     rawPhone: recipientPhone,
     requestId,
   });
+}
+
+/**
+ * Service for the in-progress booking — draft row, then conversation context.
+ * Never ask "Ce serviciu dorești?" again while context still holds the chosen service.
+ *
+ * @param {Business} business
+ * @param {Object} params
+ * @param {Record<string, unknown> | null | undefined} [params.extract]
+ * @param {{ selected_service?: unknown } | null} [params.activeDraft]
+ * @param {{ selected_service?: unknown } | null} [params.draft]
+ * @param {import('../db/conversationStateService.js').ConversationState | null | undefined} [params.convState]
+ */
+function resolveServiceForBooking(business, { extract, activeDraft, draft, convState }) {
+  const catalog = getBookingConfig(business).services;
+  if (extract?.service_id) {
+    const hit = catalog.find((s) => s.id === extract.service_id);
+    if (hit) return hit;
+  }
+  if (extract?.service_name) {
+    const hit = catalog.find((s) => String(s.name || '').toLowerCase() === String(extract.service_name).toLowerCase());
+    if (hit) return hit;
+  }
+
+  const asService = (value) => {
+    if (!value || typeof value !== 'object') return null;
+    const row = /** @type {{ id?: string, name?: string, duration_minutes?: number, service_id?: string, service_name?: string, duration?: number }} */ (value);
+    const id = row.id || row.service_id || null;
+    const name = row.name || row.service_name || null;
+    if (!id && !name) return null;
+    if (id) {
+      const hit = catalog.find((s) => s.id === id);
+      if (hit) return hit;
+    }
+    if (name) {
+      const hit = catalog.find((s) => String(s.name || '').toLowerCase() === String(name).toLowerCase());
+      if (hit) return hit;
+    }
+    return {
+      id: id || undefined,
+      name: name || 'Serviciu',
+      duration_minutes: row.duration_minutes ?? row.duration ?? 30,
+    };
+  };
+
+  return asService(activeDraft?.selected_service)
+    || asService(draft?.selected_service)
+    || asService(convState?.context_data?.service)
+    || asService(convState?.context_data?.draft_booking);
 }
 
 async function listSlotsForService({
@@ -1205,19 +1267,34 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
     return executeCallback({ business, recipientPhone, extract, clientId, requestId, textBody: 'consulting_booking_interest' });
   }
 
-  let service = null;
-  if (extract.service_id) {
-    service = getBookingConfig(business).services.find((s) => s.id === extract.service_id) || null;
-  }
-  if (!service && activeDraft?.selected_service) {
-    service = /** @type {Record<string, unknown>} */ (activeDraft.selected_service);
-  }
-  const draft = await ensureDraft({ business, recipientPhone, clientId, requestId, activeDraft });
+  let service = resolveServiceForBooking(business, {
+    extract,
+    activeDraft,
+    draft: null,
+    convState,
+  });
+  const draft = await ensureDraft({
+    business,
+    recipientPhone,
+    clientId,
+    requestId,
+    activeDraft,
+    convState,
+  });
   if (!draft) {
     return handlerResult({
       status: 'ERROR',
       user_message_template_key: 'ERROR_GENERIC',
       data: { client_message: 'Nu am putut porni programarea. Încearcă din nou.' },
+    });
+  }
+
+  if (!service) {
+    service = resolveServiceForBooking(business, {
+      extract,
+      activeDraft,
+      draft,
+      convState,
     });
   }
 

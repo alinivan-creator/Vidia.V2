@@ -1004,7 +1004,7 @@ async function extractTurnIntentImpl({
       }
     }
   } else if (lastMenu?.options?.length) {
-    // Free text: only lone numbered picks map to the current menu — never title fuzzy walls.
+    // Free text OR Body=title+description without ListId: map onto the current menu.
     const loneNumber = /^\d{1,2}$/.test(String(textBody).trim());
     if (loneNumber) {
       const choiceId = resolveNumberedChoice(textBody, lastMenu.options);
@@ -1012,6 +1012,11 @@ async function extractTurnIntentImpl({
         const fromChoice = extractFromChoiceId(choiceId, {}, business);
         if (fromChoice.action !== 'unknown') return fromChoice;
       }
+    }
+    const fromBody = resolveInteractiveChoice(textBody, null, lastMenu.options);
+    if (fromBody) {
+      const fromChoice = extractFromChoiceId(fromBody, {}, business);
+      if (fromChoice.action !== 'unknown') return fromChoice;
     }
   }
 
