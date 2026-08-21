@@ -123,6 +123,24 @@ describe('Reschedule false-busy regression guards', () => {
     assert.match(body, /startBrowsingFlow/);
     assert.match(body, /serviceFromInFlightContext/);
   });
+
+  it('dispatchExecute binds intent before select_appointment (no ReferenceError)', async () => {
+    const fs = await import('node:fs/promises');
+    const src = await fs.readFile(
+      new URL('../src/services/turnExecute.js', import.meta.url),
+      'utf8',
+    );
+    const fnStart = src.indexOf('async function dispatchExecute({');
+    const fnEnd = src.indexOf('async function runBookingMachine(');
+    assert.ok(fnStart > 0 && fnEnd > fnStart, 'dispatchExecute bounds');
+    const body = src.slice(fnStart, fnEnd);
+    const intentBind = body.indexOf('const intent = convState.context_data');
+    const selectAppt = body.indexOf("action === 'select_appointment'");
+    assert.ok(intentBind > 0, 'must declare intent from conversation context');
+    assert.ok(selectAppt > intentBind, 'intent must be bound before select_appointment branch');
+    // Bare `if (intent ===` without a local binding was the cancel/reschedule list crash.
+    assert.match(body, /modifyIntent === 'cancel'|intent === 'cancel'/);
+  });
 });
 
 describe('Confirm-card in-flight session', () => {

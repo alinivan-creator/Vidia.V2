@@ -2854,6 +2854,7 @@ async function dispatchExecute({
   textBody = '',
 }) {
   const action = extract.action;
+  const intent = convState.context_data?.intent;
   const lang = detectClientLanguage(textBody, convState?.context_data?.client_language);
 
   // Courtesy must never confirm a hold (stray confirm_booking payload + "Mulțumesc").
@@ -3101,7 +3102,16 @@ async function dispatchExecute({
   }
 
   if (action === 'select_appointment') {
-    if (intent === 'cancel') {
+    // Intent comes from conversation context set when listing appointments
+    // (cancel vs reschedule). Must never ReferenceError — that surfaces as
+    // the generic technical WhatsApp fallback after a list pick.
+    const modifyIntent = intent
+      || (convState.current_step === CONVERSATION_STEPS.CONFIRMING_CANCEL
+        || convState.current_step === CONVERSATION_STEPS.MODIFYING
+          ? 'cancel'
+          : null)
+      || (convState.current_step === CONVERSATION_STEPS.RESCHEDULING ? 'reschedule' : null);
+    if (modifyIntent === 'cancel') {
       return executeCancel({
         business,
         recipientPhone,
