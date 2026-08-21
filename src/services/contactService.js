@@ -43,7 +43,13 @@ export function getBusinessContactInfo(business) {
     mapsUrl: pickStr(
       contact.maps_url,
       contact.mapsUrl,
+      contact.location_link,
+      contact.link_locatie,
+      contact.link_locație,
+      contact.google_maps_url,
       settings.maps_url,
+      settings.mapsUrl,
+      settings.location_link,
     ),
     website: pickStr(
       contact.website,

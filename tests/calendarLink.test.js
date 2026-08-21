@@ -73,4 +73,40 @@ describe('calendar + contact link rendering', () => {
     assert.doesNotMatch(text, /maps\.google/);
     assert.doesNotMatch(text, /\]\(/);
   });
+
+  it('confirmation includes a short Pornește spre locație maps line from Admin Link hartă', async () => {
+    const {
+      buildBookingConfirmationMessage,
+      buildMapsInviteLine,
+      MAPS_ANCHOR_LABEL,
+      MAPS_SHORT_LINK_LABEL,
+    } = await import('../src/utils/businessMessages.js');
+
+    const business = {
+      name: 'Salon Test',
+      booking_settings: {
+        contact: {
+          maps_url: 'https://maps.app.goo.gl/abc123',
+          address: 'Strada Test 1',
+        },
+      },
+    };
+
+    const maps = buildMapsInviteLine(business);
+    assert.ok(maps?.url?.includes('maps.app.goo.gl'));
+    assert.match(maps.messageLine, new RegExp(MAPS_ANCHOR_LABEL));
+    assert.match(maps.messageLine, new RegExp(`\\[${MAPS_SHORT_LINK_LABEL}\\]\\(`));
+    assert.doesNotMatch(maps.messageLine, /^https:\/\//);
+
+    const body = buildBookingConfirmationMessage({
+      business,
+      serviceName: 'Tuns',
+      slotLabel: 'vineri, 28 august, 14:00',
+      clientName: 'Alin',
+      calendarLine: '',
+    });
+    assert.match(body, /Pornește spre locație/);
+    assert.match(body, /\[hartă\]\(https:\/\/maps\.app\.goo\.gl\/abc123\)/);
+    assert.match(body, /Tuns/);
+  });
 });

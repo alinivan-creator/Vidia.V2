@@ -3,7 +3,7 @@
  * Must not decide availability, confirm bookings, or invent hours.
  */
 
-import { buildAiTransparencyWelcome, buildBookingConfirmationMessage, buildGdprNote } from '../utils/businessMessages.js';
+import { buildAiTransparencyWelcome, buildBookingConfirmationMessage, buildGdprNote, buildMapsInviteLine, MAPS_ANCHOR_LABEL } from '../utils/businessMessages.js';
 import { WA_DIVIDER, waField, waFooter, waJoin, waServiceMeta, waTitle } from '../utils/waCopy.js';
 import { timeWindowBounds } from '../utils/timeWindow.js';
 import { formatContactMessage } from './contactService.js';
@@ -27,6 +27,21 @@ import { mergeMenuOptions } from '../utils/bookingGrid.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 /** @typedef {import('./handlerResult.js').HandlerResult} HandlerResult */
+
+/**
+ * Ensure the Admin maps CTA survives AI polish (which often drops markdown links).
+ * @param {Business} business
+ * @param {string} text
+ * @returns {string}
+ */
+function ensureMapsInviteOnConfirmation(business, text) {
+  const body = String(text || '').trimEnd();
+  if (!body) return body;
+  const maps = buildMapsInviteLine(business);
+  if (!maps?.messageLine || !maps.url) return body;
+  if (body.includes(maps.url) || body.includes(MAPS_ANCHOR_LABEL)) return body;
+  return `${body}\n\n${maps.messageLine}`;
+}
 
 /**
  * Deterministic templates from backend JSON. No invented facts.
@@ -95,8 +110,7 @@ export function renderHandlerResult(business, result) {
         slotLabel: String(d.slot_label || ''),
         clientName: String(d.client_name || ''),
         calendarLine: '',
-        // No markdown maps line — WhatsApp already shows the location card / Maps CTA.
-        mapsLine: '',
+        // mapsLine omitted → Admin Link hartă / adresă (buildMapsInviteLine)
         includeGdpr: false,
       });
     case 'CONFIRMATION_RESCHEDULE': {
@@ -439,7 +453,13 @@ export async function presentTurn({
     || result.user_message_template_key === 'STALE_CHOICE'
     || result.user_message_template_key === 'CONTACT';
   const polished = skipPolish ? null : await polishWithAi(business, result, rendered);
-  const text = polished || rendered;
+  let text = polished || rendered;
+  if (
+    result.user_message_template_key === 'CONFIRMATION_BOOKED'
+    || result.action_performed === 'BOOKED'
+  ) {
+    text = ensureMapsInviteOnConfirmation(business, text);
+  }
   const d = result.data || {};
 
   await simulateHumanDelay({ business, recipientPhone, requestId });
@@ -456,7 +476,7 @@ export async function presentTurn({
   }
 
   if (result.calendar_cta?.url) {
-    // One message: confirmation body + calendar URL button (no trailing maps markdown).
+    // Confirmation body (with short maps markdown) + calendar URL button.
     await sendMessageWithUrlButton({
       business,
       recipientPhone,

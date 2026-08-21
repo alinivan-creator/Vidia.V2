@@ -9,8 +9,11 @@ import { WA_DIVIDER, waField, waFooter, waJoin, waTitle } from './waCopy.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
-/** Friendly Maps CTA label (without brackets) — used inside markdown `[…](url)`. */
-export const MAPS_ANCHOR_LABEL = 'Indicații către locație';
+/** Short Maps CTA — WhatsApp shows only this label, not the full URL. */
+export const MAPS_ANCHOR_LABEL = 'Pornește spre locație';
+
+/** Visible link text after the colon — keep tiny so the confirmation stays compact. */
+export const MAPS_SHORT_LINK_LABEL = 'hartă';
 
 /**
  * @param {Business} business
@@ -179,7 +182,8 @@ export function buildMapsInviteLine(business) {
   return {
     url,
     address: maps.address,
-    messageLine: `[${MAPS_ANCHOR_LABEL}](${url})`,
+    // Markdown keeps the body short: WhatsApp renders the label, not the long Maps URL.
+    messageLine: `${MAPS_ANCHOR_LABEL}: [${MAPS_SHORT_LINK_LABEL}](${url})`,
   };
 }
 

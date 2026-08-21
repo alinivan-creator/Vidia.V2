@@ -1286,7 +1286,6 @@ async function handleConfirmBooking({ business, recipientPhone, draft, requestId
     slotLabel: formatSlotLabel(new Date(slotStart), business.timezone),
     clientName,
     calendarLine: '',
-    mapsLine: '',
     includeGdpr: false,
   });
 

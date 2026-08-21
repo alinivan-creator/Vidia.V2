@@ -188,6 +188,7 @@ export function formatterSystemHint(action) {
   if (action === 'CONFIRMATION_BOOKED' || action === 'CONFIRMATION_CANCELLED') {
     return (
       'Reformulează cald și natural în română, păstrând EXACT faptele din text (serviciu, dată, oră). ' +
+      'Păstrează neschimbat orice link markdown din text (ex. Pornește spre locație / hartă). Nu-l șterge și nu-l înlocui cu un URL lung. ' +
       'Nu inventa detalii. Evită tonul robotic sau imperativ.'
     );
   }
