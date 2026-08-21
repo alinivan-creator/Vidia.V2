@@ -253,6 +253,7 @@ describe('real booking journeys', () => {
       timezone: TZ,
       extractDate: '2026-08-19',
       extractTime: '14:00',
+      now: NOW,
     });
     assert.equal(afterSlot.action, MACHINE_ACTIONS.ACTION_ASK_SERVICE);
     assert.equal(afterSlot.draft.date, '2026-08-19');
@@ -309,6 +310,7 @@ describe('real booking journeys', () => {
       timezone: TZ,
       extractDate: leftover.date_text,
       extractTime: leftover.time_text,
+      now: NOW,
     });
     assert.equal(afterDate.action, MACHINE_ACTIONS.ACTION_ASK_SERVICE);
     assert.equal(afterDate.draft.date, '2026-08-19');

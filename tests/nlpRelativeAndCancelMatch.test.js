@@ -31,6 +31,12 @@ describe('relative NLP datetime', () => {
     assert.equal(parseRomanianDateTimeParts('de azi într-o săptămână', TZ, NOW).dateKey, '2026-08-24');
   });
 
+  it('does not misread day_2026-09-02 ListId as 9 February', () => {
+    const now = new Date('2026-08-21T12:00:00.000Z');
+    assert.equal(parseRomanianDateTimeParts('day_2026-09-02', TZ, now).dateKey, '2026-09-02');
+    assert.equal(parseRomanianDateTimeParts('day_2026-02-09', TZ, now).dateKey, '2026-02-09');
+  });
+
   it('parses săptămâna viitoare / peste două zile|ore / poimâine', () => {
     assert.equal(parseRomanianDateTimeParts('Săptămâna viitoare', TZ, NOW).dateKey, '2026-08-24');
     assert.equal(parseRomanianDateTimeParts('saptamana urmatoare', TZ, NOW).dateKey, '2026-08-24');

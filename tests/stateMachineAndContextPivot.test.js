@@ -218,3 +218,96 @@ describe('Silent Session TTL Check & NLU Classification', () => {
     assert.match(BOOKING_ARCHITECTURE_VERSION, /^dual-ai-text-first-nlu-v1[4-9]/);
   });
 });
+
+describe('Day list id must not become February (Sep→Feb bug)', () => {
+  it('parseRomanianDateTimeParts keeps ISO inside day_YYYY-MM-DD', async () => {
+    const { parseRomanianDateTimeParts } = await import('../src/utils/roDateTime.js');
+    const now = new Date('2026-08-21T12:00:00.000Z');
+    const parsed = parseRomanianDateTimeParts('day_2026-09-02', 'Europe/Bucharest', now);
+    assert.equal(parsed.dateKey, '2026-09-02');
+    assert.notEqual(parsed.dateKey, '2027-02-09');
+  });
+
+  it('hydrateExtract keeps menu day pick and drops stale Feb pending_slot', async () => {
+    const {
+      hydrateExtract,
+      isStructuredDayPick,
+    } = await import('../src/services/turnExecute.js');
+    const extract = {
+      action: 'book',
+      source: 'menu',
+      date_text: '2026-09-02',
+      time_text: null,
+      slot_id: null,
+      service_id: null,
+    };
+    assert.equal(isStructuredDayPick(extract), true);
+    const hydrated = hydrateExtract(
+      extract,
+      {
+        current_step: CONVERSATION_STEPS.WAITING_FOR_TIME,
+        context_data: {
+          pending_date_text: '2027-02-09',
+          pending_time_text: '16:00',
+          pending_slot_id: 'slot_20270209_1600',
+          pending_service_id: 'srv_cut',
+        },
+      },
+      'Europe/Bucharest',
+    );
+    assert.equal(hydrated.date_text, '2026-09-02');
+    assert.equal(hydrated.time_text, null);
+    assert.equal(hydrated.slot_id, null);
+    assert.equal(hydrated.service_id, 'srv_cut');
+  });
+
+  it('hydrateExtract treats slot_id as absolute (ignores pending Feb date)', async () => {
+    const { hydrateExtract } = await import('../src/services/turnExecute.js');
+    const { encodeSlotId, localToUtc } = await import('../src/utils/datetime.js');
+    const slotStart = localToUtc('2026-09-02', '16:00', 'Europe/Bucharest');
+    const slotId = encodeSlotId(slotStart, 'Europe/Bucharest');
+    const hydrated = hydrateExtract(
+      {
+        action: 'select_slot',
+        source: 'menu',
+        slot_id: slotId,
+        date_text: null,
+        time_text: null,
+      },
+      {
+        current_step: CONVERSATION_STEPS.WAITING_FOR_TIME,
+        context_data: {
+          pending_date_text: '2027-02-09',
+          pending_time_text: '16:00',
+          pending_service_id: 'srv_cut',
+        },
+      },
+      'Europe/Bucharest',
+    );
+    assert.equal(hydrated.date_text, '2026-09-02');
+    assert.equal(hydrated.time_text, '16:00');
+    assert.equal(hydrated.service_id, 'srv_cut');
+  });
+
+  it('reduceBookingTurn with ListId text day_… keeps September when extractDate is set', async () => {
+    const now = new Date('2026-08-21T12:00:00.000Z');
+    const reduced = reduceBookingTurn({
+      state: SESSION_STATES.WAITING_FOR_DATE,
+      draft: {
+        service_id: 'srv_cut',
+        service_name: 'Tuns + Barba',
+        date: '2027-02-09',
+        time: '16:00',
+        duration: 45,
+      },
+      text: 'day_2026-09-02',
+      timezone: 'Europe/Bucharest',
+      extractDate: '2026-09-02',
+      extractTime: null,
+      now,
+    });
+    assert.equal(reduced.draft.date, '2026-09-02');
+    assert.equal(reduced.draft.time, null);
+    assert.equal(reduced.action, MACHINE_ACTIONS.ACTION_ASK_TIME);
+  });
+});

@@ -214,9 +214,15 @@ function extractCalendarDate(normalized, timezone, now) {
   const today = formatDateKey(now, timezone);
   const thisYear = Number(today.slice(0, 4));
 
-  const iso = normalized.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
-  if (iso) {
-    return { dateKey: iso[1], rest: normalized.replace(iso[1], ' ') };
+  // ISO YYYY-MM-DD — also when glued after WhatsApp ids like day_2026-09-02.
+  // Requiring \b before the year fails after `_` (underscore is a word char), and the
+  // leftover "09-02" was misread as DD-MM → 9 February (rolled to next year if past).
+  const iso = normalized.match(/(20\d{2}-\d{2}-\d{2})/);
+  if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso[1])) {
+    const [y, m, d] = iso[1].split('-').map(Number);
+    if (isValidYmd(y, m, d)) {
+      return { dateKey: iso[1], rest: normalized.replace(iso[1], ' ') };
+    }
   }
 
   const monthNames = Object.keys(MONTH_MAP).sort((a, b) => b.length - a.length).join('|');
@@ -237,6 +243,7 @@ function extractCalendarDate(normalized, timezone, now) {
     }
   }
 
+  // Numeric DD.MM / DD-MM — never match a slice inside an ISO YYYY-MM-DD (handled above).
   const dmy = normalized.match(/\b(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?\b/);
   if (dmy) {
     const day = Number(dmy[1]);

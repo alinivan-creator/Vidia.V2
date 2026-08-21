@@ -159,6 +159,20 @@ export function isFreshMenuStart(extract) {
     && !extract.service_name;
 }
 
+/** Absolute calendar day from a list row (day_YYYY-MM-DD) — must beat leftover draft_booking. */
+export function isStructuredDayPick(extract) {
+  return extract?.source === 'menu'
+    && typeof extract?.date_text === 'string'
+    && /^\d{4}-\d{2}-\d{2}$/.test(extract.date_text)
+    && !extract.slot_id
+    && !extract.time_text;
+}
+
+/** Absolute slot tap (slot_YYYYMMDD_HHMM) — encodes its own date+time. */
+export function isStructuredSlotPick(extract) {
+  return extract?.source === 'menu' && typeof extract?.slot_id === 'string' && extract.slot_id.startsWith('slot_');
+}
+
 export function hydrateExtract(extract, convState, timezone) {
   const ctx = convState?.context_data || {};
   const next = { ...extract };
@@ -173,6 +187,46 @@ export function hydrateExtract(extract, convState, timezone) {
     next.service_name = null;
     return next;
   }
+
+  // Slot list taps are absolute — never paste a leftover pending_date (e.g. 9 Feb)
+  // on top of a newly chosen day/slot (e.g. 2 Sep). That caused confirmations on the wrong month.
+  if (next.slot_id && timezone) {
+    const decoded = decodeSlotId(next.slot_id, timezone);
+    if (decoded && !Number.isNaN(decoded.getTime())) {
+      next.datetime = decoded;
+      next.date_text = formatDateKey(decoded, timezone);
+      next.time_text = formatTime(decoded, timezone);
+      next.time_window = null;
+    }
+    const keepService = sessionKeepsChosenService(mapSessionState(convState?.current_step));
+    if (!next.service_id && keepService && typeof ctx.pending_service_id === 'string') {
+      next.service_id = ctx.pending_service_id;
+    }
+    if (!next.employee_id && typeof ctx.pending_employee_id === 'string') {
+      next.employee_id = ctx.pending_employee_id;
+    }
+    if (!next.appointment_id && typeof ctx.appointment_id === 'string') {
+      next.appointment_id = ctx.appointment_id;
+    }
+    return next;
+  }
+
+  // Structured day row — keep the tapped date; do not revive an old pending_slot / time.
+  if (isStructuredDayPick(next)) {
+    next.time_text = null;
+    next.time_window = null;
+    next.datetime = null;
+    next.slot_id = null;
+    const keepService = sessionKeepsChosenService(mapSessionState(convState?.current_step));
+    if (!next.service_id && keepService && typeof ctx.pending_service_id === 'string') {
+      next.service_id = ctx.pending_service_id;
+    }
+    if (!next.employee_id && typeof ctx.pending_employee_id === 'string') {
+      next.employee_id = ctx.pending_employee_id;
+    }
+    return next;
+  }
+
   const turnHasDate = Boolean(extract.date_text);
   const turnHasTime = Boolean(extract.time_text);
   const turnHasWindow = Boolean(extract.time_window);
@@ -198,7 +252,7 @@ export function hydrateExtract(extract, convState, timezone) {
     next.service_id = ctx.pending_service_id;
   }
   if (!next.employee_id && typeof ctx.pending_employee_id === 'string') next.employee_id = ctx.pending_employee_id;
-  if (!next.slot_id && typeof ctx.pending_slot_id === 'string') next.slot_id = ctx.pending_slot_id;
+  // Never hydrate pending_slot_id — a stale slot from another day (Feb) must not ride along.
   if (!next.appointment_id && typeof ctx.appointment_id === 'string') next.appointment_id = ctx.appointment_id;
 
   if (next.date_text && next.time_text && timezone) {
@@ -238,10 +292,13 @@ async function persistPendingExtract({ business, recipientPhone, extract, reques
   if (extract.date_text && extract.time_text && extract.datetime instanceof Date) {
     context.pending_datetime = extract.datetime.toISOString();
   } else if (extract.date_text && !extract.time_text) {
+    // New day chosen — drop any leftover time/slot from a previous day (e.g. 9 Feb).
     context.pending_datetime = null;
     context.pending_time_text = null;
+    context.pending_slot_id = null;
+    context.pending_time_window = null;
   }
-  if (freshMenuStart || extract.service_id || extract.service_name || extract.date_text || extract.time_text) {
+  if (freshMenuStart || extract.service_id || extract.service_name || extract.date_text || extract.time_text || extract.slot_id) {
     const latestDraft = await getOrCreateConversationState(business.id, recipientPhone);
     const prevDraft = latestDraft.context_data?.draft_booking && typeof latestDraft.context_data.draft_booking === 'object'
       ? /** @type {Record<string, unknown>} */ (latestDraft.context_data.draft_booking)
@@ -254,6 +311,8 @@ async function persistPendingExtract({ business, recipientPhone, extract, reques
       ...(extract.service_name ? { service_name: extract.service_name } : {}),
       ...(extract.date_text ? { date: extract.date_text } : {}),
       ...(extract.time_text ? { time: extract.time_text } : {}),
+      // Day-only pick must wipe leftover clock time from another day.
+      ...(extract.date_text && !extract.time_text && !extract.slot_id ? { time: null } : {}),
       ...((freshMenuStart || !keepService)
         ? { service_id: null, service_name: null, duration: null }
         : {}),
@@ -1351,10 +1410,16 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
     }) || working;
   }
 
-  const slotStart = (extract.date_text && extract.time_text)
-    ? localToUtc(extract.date_text, extract.time_text, business.timezone)
-    : extract.datetime
-      || (extract.slot_id ? decodeSlotId(extract.slot_id, business.timezone) : null);
+  // Slot list id encodes the absolute instant. Never recombine a stale pending_date
+  // (9 Feb) with a new clock time after the client picked another day (2 Sep).
+  let slotStart = null;
+  if (extract.slot_id) {
+    slotStart = decodeSlotId(extract.slot_id, business.timezone);
+  } else if (extract.datetime instanceof Date && !Number.isNaN(extract.datetime.getTime())) {
+    slotStart = extract.datetime;
+  } else if (extract.date_text && extract.time_text) {
+    slotStart = localToUtc(extract.date_text, extract.time_text, business.timezone);
+  }
 
   if (slotStart) {
     return holdRequestedSlot({
@@ -3648,9 +3713,18 @@ export async function executeTurn(params) {
     || extract.action === 'select_appointment'
     || extract.action === 'confirm_cancel';
 
-  if (!modifyFlow && bookingMachineHandles(extract.action)) {
+  // Absolute WhatsApp day_/slot_ taps must not go through the NLP draft reducer —
+  // leftover draft_booking.date (e.g. 9 Feb) used to overwrite a fresh day row (2 Sep).
+  const structuredCalendarPick = isStructuredDayPick(extract) || isStructuredSlotPick(extract);
+
+  if (!modifyFlow && !structuredCalendarPick && bookingMachineHandles(extract.action)) {
     const handled = await runBookingMachine({ ...params, extract });
     if (handled) return handled;
+    extract.action = 'book';
+  }
+
+  // Menu day pick → always book toward that date's free hours.
+  if (structuredCalendarPick && extract.action !== 'select_slot' && !extract.slot_id) {
     extract.action = 'book';
   }
 
