@@ -162,6 +162,41 @@ describe('inbound payload classification', () => {
     assert.equal(revise.buttonPayload, null);
     assert.equal(revise.textBody, 'Modific');
   });
+
+  it('keeps Alte opțiuni / 16:00 Disponibil as taps when Body includes description', () => {
+    assert.equal(
+      shouldPreferTypedTextOverTap({
+        typed: 'Alte opțiuni > Vezi următoarele zile / ore',
+        tappedId: 'grid_next',
+        buttonTitle: 'Alte opțiuni ›',
+      }),
+      false,
+    );
+    assert.equal(
+      shouldPreferTypedTextOverTap({
+        typed: '16:00 Disponibil',
+        tappedId: 'slot_2026-08-31_16:00',
+        buttonTitle: '16:00',
+      }),
+      false,
+    );
+
+    const pager = classifyInboundMessage({
+      body: 'Alte opțiuni > Vezi următoarele zile / ore',
+      buttonPayload: 'grid_next',
+      buttonText: 'Alte opțiuni ›',
+    });
+    assert.equal(pager.kind, 'interactive');
+    assert.equal(pager.buttonPayload, 'grid_next');
+
+    const slot = classifyInboundMessage({
+      body: '16:00 Disponibil',
+      buttonPayload: 'slot_2026-08-31_16:00',
+      buttonText: '16:00',
+    });
+    assert.equal(slot.kind, 'interactive');
+    assert.equal(slot.buttonPayload, 'slot_2026-08-31_16:00');
+  });
 });
 
 describe('day-part parsing', () => {

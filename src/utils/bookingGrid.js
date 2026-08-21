@@ -176,14 +176,14 @@ export function buildListPickerPage(all, page = 0, pageSize = LIST_PAGE_SIZE) {
     items.push({
       id: GRID_PREFIX.PREV,
       title: '‹ Înapoi',
-      description: 'Opțiuni anterioare',
+      description: 'Pagina anterioară',
     });
   }
   if (safePage < pageCount - 1) {
     items.push({
       id: GRID_PREFIX.NEXT,
       title: 'Alte opțiuni ›',
-      description: 'Vezi următoarele zile / ore',
+      description: 'Pagina următoare',
     });
   }
 

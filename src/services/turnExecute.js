@@ -71,6 +71,7 @@ import {
   timeWindowForDate,
   timeWindowOutsideHoursNotice,
   unknownInfoClientMessage,
+  getHoursForDate,
 } from '../utils/workingHours.js';
 import { normalizeTimeWindow, timeWindowLabel } from '../utils/timeWindow.js';
 import {
@@ -810,12 +811,12 @@ async function askDateGridResult({
     rawPhone: recipientPhone,
     step: conversationStep,
     context: {
+      ...extraContext,
       draft_id: draft?.id,
       service,
       booking_wait: BOOKING_WAIT.DATE,
       grid_kind: 'day',
       grid_page: listPage.page,
-      ...extraContext,
       intent,
       last_menu: {
         kind: 'day_grid',
@@ -924,18 +925,19 @@ async function missingSlotsResult({
     rawPhone: recipientPhone,
     step: conversationStep,
     context: {
+      ...extraContext,
       draft_id: draft?.id,
       intent: extraContext.intent || 'book',
       service,
       booking_wait: dateKey || windowFilter ? BOOKING_WAIT.TIME : BOOKING_WAIT.DATE,
       pending_time_window: windowFilter || null,
+      // Must win over extraContext — otherwise Alte opțiuni resets to page 0 / day grid.
       grid_kind: 'time',
       grid_page: listPage.page,
       last_menu: {
         kind: 'time_grid',
         options: menuOptions,
       },
-      ...extraContext,
       pending_date_text: dateKey || extraContext.pending_date_text || null,
     },
     requestId,
@@ -1311,6 +1313,23 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
       service,
       requestId,
     });
+  }
+
+  // Free-text / Flow may name a closed Admin day — never offer hours for it.
+  {
+    const noon = localToUtc(extract.date_text, '12:00', business.timezone);
+    const dayInfo = getHoursForDate(business, noon);
+    if (!dayInfo.open) {
+      const pretty = formatRomanianDate(extract.date_text, business.timezone);
+      return askDateGridResult({
+        business,
+        recipientPhone,
+        draft: working,
+        service,
+        requestId,
+        notice: `*${pretty}* suntem *INCHIS*. Alege o zi deschisă din listă:`,
+      });
+    }
   }
 
   return missingSlotsResult({

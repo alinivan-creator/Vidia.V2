@@ -3,6 +3,8 @@ import { logError } from './loggerService.js';
 import {
   decodeSlotId,
   formatSlotLabel,
+  formatDateKey,
+  addCalendarDays,
   getBookingConfig,
   getWeekdayInTimezone,
   intervalsOverlap,
@@ -369,15 +371,9 @@ export async function getAvailableSlots({
   if (dateKey && /^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
     dayKeys.push(dateKey);
   } else {
+    const todayKey = formatDateKey(now, timezone);
     for (let dayOffset = 0; dayOffset < horizonDays; dayOffset++) {
-      const day = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
-      const dayKey = new Intl.DateTimeFormat('en-CA', {
-        timeZone: timezone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      }).format(day);
-      if (!dayKeys.includes(dayKey)) dayKeys.push(dayKey);
+      dayKeys.push(addCalendarDays(todayKey, dayOffset));
     }
   }
 

@@ -12,10 +12,15 @@
  * fires "Opțiunea dintr-un mesaj mai vechi nu mai e valabilă." on a perfectly good
  * question. Whenever a body looks like free text, the payload is discarded and the
  * text goes to the natural-language path.
+ *
+ * CRITICAL: WhatsApp/Twilio often put `title + description` in Body (e.g.
+ * "16:00 Disponibil", "Alte opțiuni › Vezi următoarele zile / ore"). That string is
+ * longer than the 24-char title cap — it must STILL count as a tap when ListId is a
+ * known option id, or pager/slot picks collapse into free text and reset the flow.
  */
 
 import { BOOKING_PREFIXES, MOD_PREFIX } from '../services/flowIds.js';
-import { GRID_PREFIX } from './bookingGrid.js';
+import { GRID_PREFIX, isGridNavChoiceId } from './bookingGrid.js';
 import {
   looksLikeGratitude,
   looksLikeInFlightRevision,
@@ -62,6 +67,13 @@ function normalize(text) {
     .trim();
 }
 
+/** ›/» and >/… variants WhatsApp may echo for pager rows. */
+function normalizeListGlyphs(text) {
+  return normalize(text)
+    .replace(/[›»]/g, '>')
+    .replace(/[‹«]/g, '<');
+}
+
 /**
  * Token shape of an option id we (or the Admin menu config) can emit.
  * Tenant menu ids are arbitrary, so shape — not a fixed list — is the test.
@@ -77,6 +89,45 @@ export function looksLikeInteractiveChoiceId(value) {
 }
 
 /**
+ * Body shapes WhatsApp emits for our list/quick-reply rows (title, or title+description).
+ * @param {string} body
+ * @param {string | null | undefined} title
+ */
+export function bodyLooksLikeListRowEcho(body, title = null) {
+  const nBody = normalizeListGlyphs(body);
+  if (!nBody) return false;
+  const nTitle = normalizeListGlyphs(title);
+  if (nTitle && (nBody === nTitle || nBody.startsWith(`${nTitle} `))) return true;
+  // Time row: "16:00" / "16:00 Disponibil"
+  if (/^\d{1,2}:\d{2}(\s+disponibil)?$/.test(nBody)) return true;
+  // Day row: "Luni, 31 Aug" / "Luni, 31 Aug Luni, 31 august"
+  if (/^(luni|marti|miercuri|joi|vineri|sambata|duminica)\b/.test(nBody)) return true;
+  // Pager rows (title may use › while Body uses >)
+  if (/^(alte optiuni|inapoi)\b/.test(nBody)) return true;
+  // Service / appointment rows often append price·duration under the title
+  if (nTitle && nBody.includes(nTitle) && /\b(\d+\s*lei|\d+\s*min)\b/.test(nBody)) return true;
+  return false;
+}
+
+/**
+ * Stable booking option ids — never discard these for a long Body that is still a row echo.
+ * @param {string} tap
+ */
+function isStructuralBookingTapId(tap) {
+  const id = String(tap || '').trim();
+  if (!id) return false;
+  if (isGridNavChoiceId(id) || ID_EXACT.has(id)) return true;
+  return id.startsWith('slot_')
+    || id.startsWith(GRID_PREFIX.DAY)
+    || id.startsWith(BOOKING_PREFIXES.SERVICE)
+    || id.startsWith(BOOKING_PREFIXES.EMPLOYEE)
+    || id.startsWith(MOD_PREFIX.APPT)
+    || id.startsWith('menu_')
+    || id.startsWith('clarify_')
+    || id.startsWith('resume_');
+}
+
+/**
  * Text that cannot be a WhatsApp option title — questions, over-cap length, or
  * clear intent sentences. Short list-row titles like "Luni, 24 Aug" must still
  * count as taps when a day_/slot_ payload is present.
@@ -86,6 +137,7 @@ export function looksLikeInteractiveChoiceId(value) {
 export function looksLikeFreeTextBody(body) {
   const typed = String(body ?? '').trim();
   if (!typed) return false;
+  if (bodyLooksLikeListRowEcho(typed, null)) return false;
   if (looksLikeGratitude(typed) || looksLikeInFlightRevision(typed)) return true;
   if (typed.length > MAX_TITLE_LENGTH) return true;
   if (/[?]/.test(typed)) return true;
@@ -109,13 +161,19 @@ export function looksLikeFreeTextBody(body) {
  */
 function looksLikeTypedText(typed, title, payload) {
   if (!typed) return false;
-  const t = normalize(typed);
+  const t = normalizeListGlyphs(typed);
   if (!t) return false;
-  if (t === normalize(title) || t === normalize(payload)) return false;
+  if (t === normalizeListGlyphs(title) || t === normalize(payload)) return false;
+  if (bodyLooksLikeListRowEcho(typed, title)) return false;
+  if (isStructuralBookingTapId(payload)) {
+    if (looksLikeGratitude(typed) || looksLikeInFlightRevision(typed)) return true;
+    if (bodyLooksLikeListRowEcho(typed, title)) return false;
+    // Clear typed sentence over a stray day_/slot_/menu_ payload.
+    if (looksLikeFreeTextBody(typed)) return true;
+    return false;
+  }
   // Twilio echoes the tapped title in Body, so a mismatch against a known title is typing.
   if (title) return true;
-  // No ButtonText: our own option ids (day_/slot_/…) still win for short row titles.
-  // Intent sentences with a stray payload must not.
   if (looksLikeInteractiveChoiceId(payload)) {
     return looksLikeFreeTextBody(typed);
   }
@@ -142,17 +200,28 @@ export function shouldPreferTypedTextOverTap({ typed, tappedId, buttonTitle = nu
   const tap = String(tappedId ?? '').trim();
   if (!tap) return looksLikeFreeTextBody(body);
 
-  const nBody = normalize(body);
+  const nBody = normalizeListGlyphs(body);
   const nTap = normalize(tap);
-  const nTitle = normalize(buttonTitle);
+  const nTitle = normalizeListGlyphs(buttonTitle);
 
   // Provider echoed the id itself.
   if (nBody === nTap) return false;
-  // Normal Twilio tap: Body matches the visible button/list title.
-  if (nTitle && nBody === nTitle) return false;
 
   // Courtesy / mid-flow revise typed over a stray confirm-button payload.
   if (looksLikeGratitude(body) || looksLikeInFlightRevision(body)) return true;
+
+  // Normal Twilio tap: Body matches the visible button/list title.
+  if (nTitle && nBody === nTitle) return false;
+  // Body = title + description (Ore libere / Alte opțiuni / zile).
+  if (bodyLooksLikeListRowEcho(body, buttonTitle)) return false;
+
+  // Pager / slot / day / service: keep row echoes; steal only for real typed intents.
+  if (isStructuralBookingTapId(tap)) {
+    if (looksLikeFreeTextBody(body) && !bodyLooksLikeListRowEcho(body, buttonTitle)) {
+      return true;
+    }
+    return false;
+  }
 
   // Short list-row title + known option id → keep the tap (≤ WhatsApp title cap).
   if (
