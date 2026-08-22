@@ -891,6 +891,8 @@ export async function cancelActiveDraftsForPhone({
     locked_until: null,
     cancelled_at: new Date().toISOString(),
     conversation_context: context,
+    google_event_id: null,
+    google_event_link: null,
   };
   if (pendingExpiresColumnAvailable !== false) {
     updates.pending_expires_at = null;
