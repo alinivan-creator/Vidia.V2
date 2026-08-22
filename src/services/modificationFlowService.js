@@ -25,7 +25,6 @@ import {
   resolveServiceDurationMinutes,
 } from '../utils/workingHours.js';
 import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
-import { buildGdprNote } from '../utils/businessMessages.js';
 import { WA_DIVIDER, waField, waJoin, waTitle } from '../utils/waCopy.js';
 import {
   lazySyncCalendar,
@@ -920,14 +919,7 @@ export async function applyRescheduleSlot({
     endIso: slotEnd,
   });
 
-  // Order: 1) GDPR note, 2) updated booking confirmation (no duplicate maps markdown)
-  await sendTextMessage({
-    business,
-    recipientPhone,
-    requestId,
-    text: buildGdprNote(business),
-  });
-
+  // Updated booking confirmation (privacy disclosure is only at session start)
   const updateBody = waJoin(
     waTitle('Gata, am mutat programarea'),
     '',

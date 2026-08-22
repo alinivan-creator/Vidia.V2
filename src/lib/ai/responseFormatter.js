@@ -19,11 +19,21 @@ const WEEKDAYS_RO = ['duminică', 'luni', 'marți', 'miercuri', 'joi', 'vineri',
 /**
  * @param {string} dateKey YYYY-MM-DD
  * @param {string} [timezone]
- * @returns {string} e.g. "Luni, 17 august"
+ * @param {'ro' | 'en'} [lang]
+ * @returns {string} e.g. "Luni, 17 august" / "Thursday, 27 August"
  */
-export function formatRomanianDate(dateKey, timezone = 'Europe/Bucharest') {
+export function formatLocalizedDate(dateKey, timezone = 'Europe/Bucharest', lang = 'ro') {
   if (!dateKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return String(dateKey || '');
   const utc = localToUtc(dateKey, '12:00', timezone);
+  if (lang === 'en') {
+    const pretty = new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone,
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+    }).format(utc);
+    return pretty.charAt(0).toUpperCase() + pretty.slice(1);
+  }
   const weekday = new Intl.DateTimeFormat('en-US', { timeZone: timezone, weekday: 'short' }).format(utc);
   const map = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
   const idx = map[/** @type {keyof typeof map} */ (weekday)] ?? 1;
@@ -31,8 +41,16 @@ export function formatRomanianDate(dateKey, timezone = 'Europe/Bucharest') {
   const month = Number(dateKey.slice(5, 7));
   const weekdayLabel = WEEKDAYS_RO[idx] || '';
   const monthLabel = MONTHS_RO[month - 1] || '';
-  const pretty = `${weekdayLabel.charAt(0).toUpperCase()}${weekdayLabel.slice(1)}, ${day} ${monthLabel}`;
-  return pretty;
+  return `${weekdayLabel.charAt(0).toUpperCase()}${weekdayLabel.slice(1)}, ${day} ${monthLabel}`;
+}
+
+/**
+ * @param {string} dateKey YYYY-MM-DD
+ * @param {string} [timezone]
+ * @returns {string} e.g. "Luni, 17 august"
+ */
+export function formatRomanianDate(dateKey, timezone = 'Europe/Bucharest') {
+  return formatLocalizedDate(dateKey, timezone, 'ro');
 }
 
 function formatTime24(hhmm) {
@@ -75,7 +93,7 @@ export function formatMachineAction({
   services = [],
   lang = 'ro',
 }) {
-  const dateLabel = draft.date ? formatRomanianDate(draft.date, timezone) : '';
+  const dateLabel = draft.date ? formatLocalizedDate(draft.date, timezone, lang === 'en' ? 'en' : 'ro') : '';
   const timeLabel = formatTime24(draft.time);
   const service = draft.service_name || (lang === 'en' ? 'the service' : 'serviciul ales');
   const en = lang === 'en';

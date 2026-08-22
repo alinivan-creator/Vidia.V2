@@ -161,7 +161,10 @@ export function formatServiceAskMessage(services, lang = 'ro') {
   );
 }
 
-export function bookingExamplePhrase(services) {
+export function bookingExamplePhrase(services, lang = 'ro') {
   const first = (Array.isArray(services) ? services : []).find((s) => s?.name);
+  if (lang === 'en') {
+    return first?.name ? `${first.name} Monday at 10` : 'Monday at 10';
+  }
   return first?.name ? `${first.name} luni la 10` : 'luni la 10';
 }

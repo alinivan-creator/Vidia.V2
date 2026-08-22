@@ -48,7 +48,7 @@ import {
   formatTime,
   localToUtc,
 } from '../utils/datetime.js';
-import { formatRomanianDate } from '../lib/ai/responseFormatter.js';
+import { formatRomanianDate, formatLocalizedDate } from '../lib/ai/responseFormatter.js';
 import {
   listOpenDayWindows,
   listTimeWindows,
@@ -455,12 +455,13 @@ function employeeMenu(employees) {
   };
 }
 
-function confirmMenu() {
+function confirmMenu(lang = 'ro') {
+  const en = lang === 'en';
   return {
     kind: 'confirm',
     options: [
-      { id: PREFIX.CONFIRM, title: 'Confirmă' },
-      { id: PREFIX.CANCEL, title: 'Anulează' },
+      { id: PREFIX.CONFIRM, title: en ? 'Confirm' : 'Confirmă' },
+      { id: PREFIX.CANCEL, title: en ? 'Cancel' : 'Anulează' },
     ],
   };
 }
@@ -866,8 +867,9 @@ async function listBookableDayWindows({
   draftId = null,
   employeeId = null,
   requestId = null,
+  lang = 'ro',
 }) {
-  const openDays = listOpenDayWindows(business, { limit: 14 });
+  const openDays = listOpenDayWindows(business, { limit: 14, lang });
   if (!openDays.length) return [];
   const duration = catalogDuration(business, service);
   if (!duration) return openDays;
@@ -994,6 +996,7 @@ async function askDateGridResult({
     draftId: draft?.id,
     employeeId: draftEmployeeId(draft),
     requestId,
+    lang: uiLang,
   });
   if (!days.length) {
     return handlerResult({
@@ -1128,7 +1131,7 @@ async function missingSlotsResult({
   }
   const times = listTimeWindows(listed.slots, business.timezone);
   const listPage = buildListPickerPage(times, page, 10, { lang: uiLang });
-  const datePretty = dateKey ? formatRomanianDate(dateKey, business.timezone) : null;
+  const datePretty = dateKey ? formatLocalizedDate(dateKey, business.timezone, uiLang) : null;
   const body = withNotice(
     bodyNotice,
     formatTimeGridMessage(times, dateKey, business.timezone, service?.name, uiLang),
@@ -1212,7 +1215,13 @@ async function missingSlotsResult({
   });
 }
 
-async function afterHold({ business, recipientPhone, draft, service, slotStart, slotEnd, requestId }) {
+async function afterHold({ business, recipientPhone, draft, service, slotStart, slotEnd, requestId, lang = null }) {
+  const conv = lang
+    ? null
+    : await getOrCreateConversationState(business.id, recipientPhone);
+  const uiLang = lang === 'en' || lang === 'ro'
+    ? lang
+    : resolveClientLanguage('', null, conv?.context_data);
   // Never show Confirmă/Anulează unless the slot is soft-locked in DB.
   if (!draft?.id || draft.state !== 'pending_confirmation' || !draft.selected_slot_start) {
     console.error('[booking] afterHold refused: draft is not pending_confirmation', {
@@ -1225,8 +1234,9 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
       status: 'ERROR',
       user_message_template_key: 'ERROR_GENERIC',
       data: {
-        client_message:
-          'Nu am putut bloca intervalul în sistem. Te rog alege din nou ora.',
+        client_message: uiLang === 'en'
+          ? 'I could not lock that time. Please pick a time again.'
+          : 'Nu am putut bloca intervalul în sistem. Te rog alege din nou ora.',
       },
     });
   }
@@ -1238,7 +1248,7 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
   });
   const empId = draftEmployeeId(draft);
   const employee = empId ? await getEmployeeById(empId, business.id) : null;
-  const slotLabel = formatSlotLabel(slotStart, business.timezone);
+  const slotLabel = formatSlotLabel(slotStart, business.timezone, uiLang);
 
   if (!client?.display_name) {
     await setConversationStep({
@@ -1289,7 +1299,7 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
         slot_end: slotEnd.toISOString(),
         intent: 'book',
         booking_wait: BOOKING_WAIT.CONFIRMATION,
-        last_menu: confirmMenu(),
+        last_menu: confirmMenu(uiLang),
         draft_booking: {
           service_id: service.id || service.service_id || null,
           service_name: service.name,
@@ -1315,7 +1325,7 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
       date_key: formatDateKey(slotStart, business.timezone),
       time_hhmm: formatTime(slotStart, business.timezone),
     },
-    menu: confirmMenu(),
+    menu: confirmMenu(uiLang),
     machine_action: MACHINE_ACTIONS.ACTION_SHOW_CONFIRMATION,
   });
 }
@@ -1922,7 +1932,9 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
     requestId,
   });
 
-  const slotLabel = formatSlotLabel(startDate, business.timezone);
+  const postConv = await getOrCreateConversationState(business.id, recipientPhone);
+  const bookedLang = resolveClientLanguage('', null, postConv?.context_data);
+  const slotLabel = formatSlotLabel(startDate, business.timezone, bookedLang);
   return handlerResult({
     status: 'SUCCESS',
     action_performed: 'BOOKED',

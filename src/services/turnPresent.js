@@ -3,7 +3,7 @@
  * Must not decide availability, confirm bookings, or invent hours.
  */
 
-import { buildAiTransparencyWelcome, buildBookingConfirmationMessage, buildGdprNote, buildMapsInviteLine, MAPS_ANCHOR_LABEL, mapsAnchorLabel, withMandatoryAiDisclosure } from '../utils/businessMessages.js';
+import { buildAiTransparencyWelcome, buildBookingConfirmationMessage, buildMapsInviteLine, MAPS_ANCHOR_LABEL, mapsAnchorLabel, withMandatoryAiDisclosure } from '../utils/businessMessages.js';
 import { WA_DIVIDER, waField, waFooter, waJoin, waServiceMeta, waTitle } from '../utils/waCopy.js';
 import { timeWindowBounds } from '../utils/timeWindow.js';
 import { formatContactMessage } from './contactService.js';
@@ -305,15 +305,21 @@ export function renderHandlerResult(business, result) {
       );
     case 'SERVICES_LIST': {
       const services = d.services || [];
-      if (!services.length) return unknownInfoClientMessage();
-      const blocks = [waTitle(`Servicii — ${business.name}`), ''];
+      if (!services.length) return unknownInfoClientMessage(lang);
+      const blocks = [waTitle(en ? `Services — ${business.name}` : `Servicii — ${business.name}`), ''];
       services.forEach((s, i) => {
         const meta = waServiceMeta(s);
         blocks.push(`*${i + 1}. ${s.name}*`);
         if (meta) blocks.push(meta);
         blocks.push('');
       });
-      blocks.push(WA_DIVIDER, '', `Pentru programare: *${bookingExamplePhrase(services)}*`);
+      blocks.push(
+        WA_DIVIDER,
+        '',
+        en
+          ? `To book: *${bookingExamplePhrase(services, 'en')}*`
+          : `Pentru programare: *${bookingExamplePhrase(services, 'ro')}*`,
+      );
       return blocks.join('\n');
     }
     case 'HOURS_LIST':
@@ -330,7 +336,7 @@ export function renderHandlerResult(business, result) {
           : waJoin(waTitle(`Program — ${business.name}`), '', d.hours_text))
         : '';
       const services = d.services || [];
-      const serviceBlocks = [waTitle('Servicii'), ''];
+      const serviceBlocks = [waTitle(en ? 'Services' : 'Servicii'), ''];
       services.forEach((s, i) => {
         const meta = waServiceMeta(s);
         serviceBlocks.push(`*${i + 1}. ${s.name}*`);
@@ -344,10 +350,15 @@ export function renderHandlerResult(business, result) {
     case 'MENU':
       return buildAiTransparencyWelcome(business, lang);
     case 'CALLBACK_SENT':
-      return waJoin(
-        waTitle('Cerere înregistrată'),
-        `Un coleg de la *${d.business_name || business.name}* te sună în curând.`,
-      );
+      return en
+        ? waJoin(
+          waTitle('Request recorded'),
+          `Someone from *${d.business_name || business.name}* will call you soon.`,
+        )
+        : waJoin(
+          waTitle('Cerere înregistrată'),
+          `Un coleg de la *${d.business_name || business.name}* te sună în curând.`,
+        );
     case 'MY_APPOINTMENTS': {
       const rows = d.appointments || [];
       if (!rows.length) {
@@ -552,16 +563,7 @@ export async function presentTurn({
 
   await simulateHumanDelay({ business, recipientPhone, requestId });
 
-  const needsGdpr =
-    result.action_performed === 'BOOKED' || result.action_performed === 'RESCHEDULED';
-  if (needsGdpr) {
-    await sendTextMessage({
-      business,
-      recipientPhone,
-      requestId,
-      text: buildGdprNote(business, lang),
-    });
-  }
+  // Privacy / AI disclosure is only at session start — never after confirm/reschedule.
 
   if (result.calendar_cta?.url) {
     // Confirmation body (with short maps markdown) + calendar URL button.

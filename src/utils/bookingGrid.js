@@ -3,7 +3,7 @@
  */
 
 import { addCalendarDays, formatDateKey, formatTime, getBookingConfig, getWeekdayInTimezone, localToUtc } from './datetime.js';
-import { formatRomanianDate } from '../lib/ai/responseFormatter.js';
+import { formatRomanianDate, formatLocalizedDate } from '../lib/ai/responseFormatter.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -52,23 +52,29 @@ export function isGridNavChoiceId(id) {
   return value === GRID_PREFIX.NEXT || value === GRID_PREFIX.PREV;
 }
 
-const WEEKDAY_SHORT = ['Du', 'Lu', 'Ma', 'Mi', 'Jo', 'Vi', 'Sâ'];
-const WEEKDAY_LONG = ['Duminică', 'Luni', 'Marți', 'Miercuri', 'Joi', 'Vineri', 'Sâmbătă'];
-const MONTHS_SHORT = ['Ian', 'Feb', 'Mar', 'Apr', 'Mai', 'Iun', 'Iul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const WEEKDAY_SHORT_RO = ['Du', 'Lu', 'Ma', 'Mi', 'Jo', 'Vi', 'Sâ'];
+const WEEKDAY_SHORT_EN = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+const WEEKDAY_LONG_RO = ['Duminică', 'Luni', 'Marți', 'Miercuri', 'Joi', 'Vineri', 'Sâmbătă'];
+const WEEKDAY_LONG_EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTHS_SHORT_RO = ['Ian', 'Feb', 'Mar', 'Apr', 'Mai', 'Iun', 'Iul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTHS_SHORT_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /**
- * "Luni, 17 Aug" — fits WhatsApp list item (≤24 chars).
+ * "Luni, 17 Aug" / "Monday, 17 Aug" — fits WhatsApp list item (≤24 chars).
  * @param {string} dateKey
  * @param {string} timezone
+ * @param {'ro' | 'en'} [lang]
  */
-export function formatDayListLabel(dateKey, timezone) {
+export function formatDayListLabel(dateKey, timezone, lang = 'ro') {
   if (!dateKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return String(dateKey || '');
   const noon = localToUtc(dateKey, '12:00', timezone);
   const weekday = getWeekdayInTimezone(noon, timezone);
   const day = Number(dateKey.slice(8, 10));
   const month = Number(dateKey.slice(5, 7));
-  const wd = weekday == null ? '' : WEEKDAY_LONG[weekday];
-  const mo = MONTHS_SHORT[month - 1] || '';
+  const long = lang === 'en' ? WEEKDAY_LONG_EN : WEEKDAY_LONG_RO;
+  const months = lang === 'en' ? MONTHS_SHORT_EN : MONTHS_SHORT_RO;
+  const wd = weekday == null ? '' : long[weekday];
+  const mo = months[month - 1] || '';
   return `${wd}, ${day} ${mo}`.slice(0, 24);
 }
 
@@ -76,17 +82,19 @@ export function formatDayListLabel(dateKey, timezone) {
  * Open calendar days in the booking horizon (Admin hours). Closed days omitted.
  *
  * @param {Business} business
- * @param {{ now?: Date, limit?: number }} [opts]
+ * @param {{ now?: Date, limit?: number, lang?: 'ro' | 'en' }} [opts]
  * @returns {{ dateKey: string, id: string, title: string, description: string, weekdayShort: string }[]}
  */
 export function listOpenDayWindows(business, opts = {}) {
   const now = opts.now || new Date();
+  const lang = opts.lang === 'en' ? 'en' : 'ro';
   const config = getBookingConfig(business);
   const tz = business.timezone || 'Europe/Bucharest';
   // Product: always offer up to 14 open days (2 weeks), even if Admin horizon was left at 7.
   const horizonDays = Math.max(14, Number(config.bookingHorizonDays) || 14);
   const limit = Math.min(Number(opts.limit) || 14, horizonDays);
   const today = formatDateKey(now, tz);
+  const shortDays = lang === 'en' ? WEEKDAY_SHORT_EN : WEEKDAY_SHORT_RO;
   /** @type {{ dateKey: string, id: string, title: string, description: string, weekdayShort: string }[]} */
   const days = [];
 
@@ -97,11 +105,11 @@ export function listOpenDayWindows(business, opts = {}) {
     if (weekday == null) continue;
     const hours = config.businessHours[String(weekday)];
     if (!hours?.open || !hours?.close) continue;
-    const short = WEEKDAY_SHORT[weekday];
-    const label = formatDayListLabel(dateKey, tz);
+    const short = shortDays[weekday];
+    const label = formatDayListLabel(dateKey, tz, lang);
     const desc = dateKey === today
-      ? 'Astăzi'
-      : formatRomanianDate(dateKey, tz);
+      ? (lang === 'en' ? 'Today' : 'Astăzi')
+      : formatLocalizedDate(dateKey, tz, lang);
     days.push({
       dateKey,
       id: `${GRID_PREFIX.DAY}${dateKey}`,

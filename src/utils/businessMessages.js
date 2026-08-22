@@ -80,6 +80,21 @@ export function needsAiDisclosure(ctx) {
   return ctx?.ai_disclosed !== true;
 }
 
+/** Default public privacy policy (WhatsApp markdown link). */
+export const DEFAULT_PRIVACY_POLICY_URL = 'https://www.getvidia.ro/confidentialitate';
+
+/**
+ * Resolve privacy / terms URL for outbound legal copy.
+ * Always returns an https URL so WhatsApp can render a blue underlined link.
+ * @param {Business} business
+ * @returns {string}
+ */
+export function resolvePrivacyPolicyUrl(business) {
+  const { termsUrl, gdprUrl } = getMessagingSettings(business);
+  const raw = (gdprUrl || termsUrl || DEFAULT_PRIVACY_POLICY_URL).trim().replace(/\s+/g, '');
+  return normalizeHttpUrl(raw) || DEFAULT_PRIVACY_POLICY_URL;
+}
+
 /**
  * Compact mandatory AI + short GDPR note for the first bot reply on a new thread.
  * @param {Business} business
@@ -88,25 +103,18 @@ export function needsAiDisclosure(ctx) {
 export function buildMandatoryAiDisclosure(business, lang = 'ro') {
   const uiLang = normalizeUiLang(lang);
   const name = business?.name || (uiLang === 'en' ? 'this business' : 'această locație');
-  const { termsUrl, gdprUrl } = getMessagingSettings(business);
-  const legalLink = (gdprUrl || termsUrl || '').trim().replace(/\s+/g, '');
+  const legalLink = resolvePrivacyPolicyUrl(business);
 
   if (uiLang === 'en') {
-    const policy = legalLink
-      ? ` in line with our [privacy policy](${legalLink})`
-      : ' in line with our privacy policy';
     return waJoin(
       `You are speaking with the *virtual AI assistant* of *${name}*.`,
-      `We process your data${policy}. By continuing, you agree to this.`,
+      `We process your data in line with our [privacy policy](${legalLink}). By continuing, you agree to this.`,
     );
   }
 
-  const policy = legalLink
-    ? ` în conformitate cu [politica de confidențialitate](${legalLink})`
-    : ' în conformitate cu politica de confidențialitate';
   return waJoin(
     `Vorbești cu *asistentul virtual AI* al *${name}*.`,
-    `Prelucrăm datele tale${policy}. Prin continuarea conversației, ești de acord cu acest lucru.`,
+    `Prelucrăm datele tale în conformitate cu [politica de confidențialitate](${legalLink}). Prin continuarea conversației, ești de acord cu acest lucru.`,
   );
 }
 

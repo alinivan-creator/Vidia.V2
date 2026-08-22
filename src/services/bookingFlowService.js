@@ -45,7 +45,6 @@ import { triageUserIntent, looksLikeDatetimeOrSlot, isAffirmativeReply } from '.
 import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
 import {
   buildBookingConfirmationMessage,
-  buildGdprNote,
 } from '../utils/businessMessages.js';
 import { optInClientAfterBooking } from './smsMarketingService.js';
 import {
@@ -1318,14 +1317,7 @@ async function handleConfirmBooking({ business, recipientPhone, draft, requestId
     endIso: endDate.toISOString(),
   });
 
-  // Order: 1) GDPR note, 2) confirmation + calendar CTA (location card is separate / native)
-  await sendTextMessage({
-    business,
-    recipientPhone,
-    requestId,
-    text: buildGdprNote(business),
-  });
-
+  // Confirmation + calendar CTA (privacy disclosure is only at session start)
   const confirmBody = buildBookingConfirmationMessage({
     business,
     serviceName: service.name,
