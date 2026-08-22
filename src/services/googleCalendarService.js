@@ -553,6 +553,124 @@ export async function createCalendarEvent({
 }
 
 /**
+ * Live FreeBusy check against Google (bypasses calendar_cache staleness).
+ * Returns true when the interval overlaps any busy block on the calendar.
+ *
+ * @param {Object} params
+ * @param {import('../db/businessService.js').Business} params.business
+ * @param {string} params.startIso
+ * @param {string} params.endIso
+ * @param {string | null} [params.calendarId]
+ * @param {string | null} [params.requestId]
+ * @returns {Promise<boolean>}
+ */
+export async function isGoogleSlotBusy({
+  business,
+  startIso,
+  endIso,
+  calendarId = null,
+  requestId = null,
+}) {
+  if (isBusinessMockMode(business)) return false;
+
+  const resolvedCalendarId = calendarId || business.google_calendar_id;
+  if (!resolvedCalendarId || !startIso || !endIso) return false;
+
+  try {
+    const calendar = await getCalendarClient(business, resolvedCalendarId);
+    const response = await calendar.freebusy.query({
+      requestBody: {
+        timeMin: startIso,
+        timeMax: endIso,
+        items: [{ id: resolvedCalendarId }],
+      },
+    });
+    const busy = response.data?.calendars?.[resolvedCalendarId]?.busy;
+    return Array.isArray(busy) && busy.length > 0;
+  } catch (error) {
+    console.error('[google-calendar] freebusy query failed', error);
+    await logError({
+      message: 'isGoogleSlotBusy freebusy failed',
+      source: 'google_calendar',
+      businessId: business.id,
+      requestId,
+      error,
+      details: { calendarId: resolvedCalendarId },
+    });
+    // Fail closed for confirm safety when we cannot verify.
+    return true;
+  }
+}
+
+/**
+ * True when Google has another event overlapping this interval
+ * (excluding our own pending/confirmed event ids).
+ *
+ * @param {Object} params
+ * @param {import('../db/businessService.js').Business} params.business
+ * @param {string} params.startIso
+ * @param {string} params.endIso
+ * @param {string | null} [params.calendarId]
+ * @param {string[]} [params.excludeEventIds]
+ * @param {string | null} [params.requestId]
+ */
+export async function hasExternalGoogleOverlap({
+  business,
+  startIso,
+  endIso,
+  calendarId = null,
+  excludeEventIds = [],
+  requestId = null,
+}) {
+  if (isBusinessMockMode(business)) return false;
+
+  const resolvedCalendarId = calendarId || business.google_calendar_id;
+  if (!resolvedCalendarId || !startIso || !endIso) return false;
+
+  const exclude = new Set(
+    (Array.isArray(excludeEventIds) ? excludeEventIds : [])
+      .filter((id) => typeof id === 'string' && id.trim())
+      .map((id) => id.trim()),
+  );
+
+  try {
+    const calendar = await getCalendarClient(business, resolvedCalendarId);
+    const response = await calendar.events.list({
+      calendarId: resolvedCalendarId,
+      timeMin: startIso,
+      timeMax: endIso,
+      singleEvents: true,
+      orderBy: 'startTime',
+      maxResults: 50,
+    });
+
+    const startMs = new Date(startIso).getTime();
+    const endMs = new Date(endIso).getTime();
+    const items = response.data.items ?? [];
+
+    return items.some((ev) => {
+      if (!ev?.id || ev.status === 'cancelled') return false;
+      if (exclude.has(ev.id)) return false;
+      const a = new Date(ev.start?.dateTime || `${ev.start?.date}T00:00:00Z`).getTime();
+      const b = new Date(ev.end?.dateTime || `${ev.end?.date}T00:00:00Z`).getTime();
+      if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+      return a < endMs && startMs < b;
+    });
+  } catch (error) {
+    console.error('[google-calendar] overlap list failed', error);
+    await logError({
+      message: 'hasExternalGoogleOverlap failed',
+      source: 'google_calendar',
+      businessId: business.id,
+      requestId,
+      error,
+      details: { calendarId: resolvedCalendarId },
+    });
+    return true;
+  }
+}
+
+/**
  * Updates an existing calendar event (reschedule).
  */
 export async function updateCalendarEvent({

@@ -739,6 +739,52 @@ export async function confirmDraftBooking({
 }
 
 /**
+ * Attach a Google Calendar event id to a pending hold (visible soft-lock).
+ * @param {Object} params
+ * @param {string} params.draftId
+ * @param {string} params.businessId
+ * @param {string} params.googleEventId
+ * @param {string | null} [params.googleEventLink]
+ * @param {string | null} [params.requestId]
+ */
+export async function setDraftGoogleEvent({
+  draftId,
+  businessId,
+  googleEventId,
+  googleEventLink = null,
+  requestId = null,
+}) {
+  if (!draftId || !businessId || !googleEventId) return null;
+
+  const { data, error } = await supabase
+    .from('draft_bookings')
+    .update({
+      google_event_id: googleEventId,
+      google_event_link: googleEventLink,
+    })
+    .eq('id', draftId)
+    .eq('business_id', businessId)
+    .eq('state', 'pending_confirmation')
+    .select(await draftSelectColumns())
+    .maybeSingle();
+
+  if (error) {
+    await logError({
+      message: 'setDraftGoogleEvent failed',
+      source: 'database',
+      requestId,
+      draftBookingId: draftId,
+      businessId,
+      error,
+    });
+    return null;
+  }
+
+  await clearPendingHoldFromCache({ businessId, draftId, requestId }).catch(() => false);
+  return /** @type {DraftBooking | null} */ (data);
+}
+
+/**
  * @param {Object} params
  * @param {string} params.draftId
  * @param {string} params.businessId

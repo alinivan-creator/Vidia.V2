@@ -18,6 +18,7 @@ import {
   cancelOrResetDraft,
   rescheduleConfirmedBookingAtomic,
   cancelConfirmedBookingAtomic,
+  setDraftGoogleEvent,
 } from '../db/draftBookingService.js';
 import {
   CONVERSATION_STEPS,
@@ -110,6 +111,7 @@ import {
   resolveCalendarEventId,
   isBusinessMockMode,
   isMockEventId,
+  hasExternalGoogleOverlap,
 } from './googleCalendarService.js';
 import { handlerResult } from './handlerResult.js';
 import {
@@ -1404,10 +1406,66 @@ async function holdRequestedSlot({
     requestId,
   });
 
+  // Visible Google Calendar soft-lock — without this, Admin/manual calendar
+  // looks free until Confirm and double-booking is easy.
+  const staffForHold = await resolveStaff(business, claimed.draft);
+  if (claimed.draft.google_event_id) {
+    try {
+      await deleteCalendarEvent({
+        business,
+        eventId: claimed.draft.google_event_id,
+        calendarId: staffForHold.calendarId,
+        requestId,
+      });
+    } catch (error) {
+      console.warn('[booking] failed to clear previous Google hold', error);
+    }
+  }
+
+  const holdEvent = await createCalendarEvent({
+    business,
+    calendarId: staffForHold.calendarId,
+    employeeId: staffForHold.employeeId,
+    event: {
+      summary: `⏳ HOLD — ${service.name}`,
+      description:
+        `Pending WhatsApp booking (not confirmed yet)\n` +
+        `Phone: ${claimed.draft.phone_number || recipientPhone}\n` +
+        `Draft: ${claimed.draft.id}\n` +
+        `Expires with pending TTL if not confirmed.`,
+      startIso: slotStart.toISOString(),
+      endIso: slotEnd.toISOString(),
+    },
+    requestId,
+  });
+
+  let draftAfterHold = claimed.draft;
+  if (holdEvent.ok && holdEvent.eventId && !isMockEventId(holdEvent.eventId) && !holdEvent.mocked) {
+    const withEvent = await setDraftGoogleEvent({
+      draftId: claimed.draft.id,
+      businessId: business.id,
+      googleEventId: holdEvent.eventId,
+      googleEventLink: holdEvent.htmlLink,
+      requestId,
+    });
+    if (withEvent) draftAfterHold = withEvent;
+    console.log('[booking] Google HOLD event created', {
+      draftId: claimed.draft.id,
+      eventId: holdEvent.eventId,
+      requestId,
+    });
+  } else {
+    console.warn('[booking] Google HOLD event missing — cache soft-lock only', {
+      draftId: claimed.draft.id,
+      reason: holdEvent.error || holdEvent.reason || 'unknown',
+      requestId,
+    });
+  }
+
   return afterHold({
     business,
     recipientPhone,
-    draft: claimed.draft,
+    draft: draftAfterHold,
     service,
     slotStart,
     slotEnd,
@@ -1658,8 +1716,8 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
     });
   }
 
-  // Final lock check before Google write — force-sync first so a manual Google
-  // event added while the hold was pending cannot be missed by a "fresh" cache.
+  // Final lock check before Google write — force-sync + live Google overlap
+  // (manual events added after hold must block confirm).
   const { employeeId: confirmEmpId, employee: confirmEmp, calendarId: confirmCalId } = await resolveStaff(business, draft);
   await lazySyncCalendar({
     business,
@@ -1669,6 +1727,12 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
     employeeId: confirmEmpId,
   });
 
+  const ownEventId = typeof draft.google_event_id === 'string' ? draft.google_event_id : null;
+  const excludeEventIds = [
+    pendingHoldCacheEventId(draft.id),
+    ...(ownEventId ? [ownEventId] : []),
+  ];
+
   const confirmSlotId = encodeSlotId(startDate, business.timezone);
   const stillAvailable = await isSlotAvailable({
     business,
@@ -1676,9 +1740,17 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
     durationMinutes: duration,
     excludeDraftId: draft.id,
     employeeId: confirmEmpId,
-    excludeGoogleEventIds: [pendingHoldCacheEventId(draft.id)],
+    excludeGoogleEventIds: excludeEventIds,
   });
-  if (!stillAvailable) {
+  const googleConflict = await hasExternalGoogleOverlap({
+    business,
+    startIso: startDate.toISOString(),
+    endIso: endDate.toISOString(),
+    calendarId: confirmCalId,
+    excludeEventIds: ownEventId ? [ownEventId] : [],
+    requestId,
+  });
+  if (!stillAvailable || googleConflict) {
     await cancelOrResetDraft({
       draftId: draft.id,
       businessId: business.id,
@@ -1686,6 +1758,18 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
       context: { ...draft.conversation_context, step: 'slot_lost_on_confirm' },
       requestId,
     });
+    if (ownEventId) {
+      try {
+        await deleteCalendarEvent({
+          business,
+          eventId: ownEventId,
+          calendarId: confirmCalId,
+          requestId,
+        });
+      } catch (error) {
+        console.warn('[booking] failed to release Google hold after conflict', error);
+      }
+    }
     return missingSlotsResult({
       business,
       recipientPhone,
@@ -1706,23 +1790,48 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
   const employee = confirmEmp;
   const calendarId = confirmCalId;
 
-  const result = await createCalendarEvent({
-    business,
-    calendarId,
-    employeeId,
-    event: {
-      summary: `${service.name} — ${clientName || phoneE164}${employee ? ` (${employee.name})` : ''}`,
-      description:
-        `Programare WhatsApp Vidia\n` +
-        (clientName ? `Client: ${clientName}\n` : '') +
-        `Telefon: ${phoneE164}\n` +
-        (employee ? `Angajat: ${employee.name}\n` : '') +
-        `Draft: ${draft.id}`,
-      startIso: startDate.toISOString(),
-      endIso: endDate.toISOString(),
-    },
-    requestId,
-  });
+  const summary = `${service.name} — ${clientName || phoneE164}${employee ? ` (${employee.name})` : ''}`;
+  const description =
+    `Programare WhatsApp Vidia\n` +
+    (clientName ? `Client: ${clientName}\n` : '') +
+    `Telefon: ${phoneE164}\n` +
+    (employee ? `Angajat: ${employee.name}\n` : '') +
+    `Draft: ${draft.id}`;
+
+  /** @type {{ ok: boolean, eventId: string | null, htmlLink: string | null, mocked?: boolean, reason?: string, error?: string }} */
+  let result;
+  if (ownEventId && !isMockEventId(ownEventId)) {
+    const patched = await updateCalendarEvent({
+      business,
+      eventId: ownEventId,
+      calendarId,
+      requestId,
+      updates: {
+        summary,
+        description,
+        start: { dateTime: startDate.toISOString(), timeZone: business.timezone },
+        end: { dateTime: endDate.toISOString(), timeZone: business.timezone },
+      },
+    });
+    if (patched.ok) {
+      result = { ok: true, eventId: ownEventId, htmlLink: draft.google_event_link || null, mocked: patched.mocked === true };
+    } else {
+      result = { ok: false, eventId: null, htmlLink: null, reason: patched.reason, error: patched.error };
+    }
+  } else {
+    result = await createCalendarEvent({
+      business,
+      calendarId,
+      employeeId,
+      event: {
+        summary,
+        description,
+        startIso: startDate.toISOString(),
+        endIso: endDate.toISOString(),
+      },
+      requestId,
+    });
+  }
 
   const isMockEvent =
     result.mocked === true
