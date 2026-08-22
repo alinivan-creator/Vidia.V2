@@ -675,7 +675,7 @@ function appointmentChoiceMenu(appointments, business, { includeCancelAll = fals
 
 /**
  * Persist the interactive appointment picker and lock the conversation on CHOOSE_APPOINTMENT.
- * last_menu is stored here so a numbered reply still works if the Twilio list is not tapped.
+ * last_menu stores the full catalog so page nav (Alte programări ›) and numbered replies work.
  */
 async function askWhichAppointment({
   business,
@@ -687,9 +687,23 @@ async function askWhichAppointment({
   includeCancelAll = false,
   extraContext = {},
   lang = 'ro',
+  page = 0,
 }) {
   const uiLang = lang === 'en' ? 'en' : 'ro';
-  const options = appointmentChoiceMenu(appointments, business, { includeCancelAll, lang: uiLang });
+  const catalog = appointmentChoiceMenu(appointments, business, { includeCancelAll, lang: uiLang });
+  const listPage = buildListPickerPage(catalog, page, 10, {
+    lang: uiLang,
+    nextTitle: uiLang === 'en' ? 'More appointments ›' : 'Alte programări ›',
+    prevTitle: uiLang === 'en' ? '‹ Back' : '‹ Înapoi',
+    nextDesc: uiLang === 'en' ? 'Next page' : 'Pagina următoare',
+    prevDesc: uiLang === 'en' ? 'Previous page' : 'Pagina anterioară',
+  });
+  const pageOptions = listPage.items.map((i) => ({
+    id: i.id,
+    title: i.title,
+    description: i.description,
+  }));
+  const menuOptions = mergeMenuOptions(pageOptions, catalog);
   await setConversationStep({
     businessId: business.id,
     rawPhone: recipientPhone,
@@ -697,7 +711,10 @@ async function askWhichAppointment({
     context: {
       intent,
       appointment_ids: appointments.map((a) => a.id),
-      last_menu: { kind: 'modify', options },
+      include_cancel_all: includeCancelAll,
+      grid_kind: 'modify',
+      grid_page: listPage.page,
+      last_menu: { kind: 'modify', options: menuOptions },
       ...extraContext,
     },
     mergeContext: false,
@@ -709,11 +726,11 @@ async function askWhichAppointment({
     user_message_template_key: 'MISSING_APPOINTMENT',
     data: {
       intent,
-      appointments: options,
+      appointments: pageOptions,
       client_message: clientMessage,
       list_button: uiLang === 'en' ? 'Your appointments' : 'Programările tale',
     },
-    menu: { kind: 'modify', options, catalog: options },
+    menu: { kind: 'modify', options: pageOptions, catalog },
   });
 }
 
@@ -930,7 +947,9 @@ async function askDateGridResult({
   conversationStep = CONVERSATION_STEPS.WAITING_FOR_DATE,
   extraContext = {},
   notice = null,
+  lang = 'ro',
 }) {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   const intent = extraContext.intent || 'book';
   // Richer Meta Flow UI when the tenant has published a WhatsApp Flow.
   // A notice must stay visible, so keep the text grid in that case.
@@ -985,16 +1004,18 @@ async function askDateGridResult({
         service_name: service?.name,
         client_message: withNotice(
           notice,
-          `Nu am zile cu ore libere în următoarele 14 zile. Contactează ${business.name || 'locația'} sau încearcă mai târziu.`,
+          uiLang === 'en'
+            ? `No open days with free times in the next 14 days. Contact ${business.name || 'the business'} or try again later.`
+            : `Nu am zile cu ore libere în următoarele 14 zile. Contactează ${business.name || 'locația'} sau încearcă mai târziu.`,
         ),
       },
       machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE,
     });
   }
-  const listPage = buildListPickerPage(days, page);
+  const listPage = buildListPickerPage(days, page, 10, { lang: uiLang });
   const body = withNotice(
     notice,
-    clientMessage || formatDayGridMessage(days, business.timezone, service?.name),
+    clientMessage || formatDayGridMessage(days, business.timezone, service?.name, uiLang),
   );
   const pageOptions = listPage.items.map((i) => ({
     id: i.id,
@@ -1031,7 +1052,7 @@ async function askDateGridResult({
       client_message: body,
       grid_page: listPage.page,
       ui: 'list_picker',
-      list_button: 'Zile disponibile',
+      list_button: uiLang === 'en' ? 'Available days' : 'Zile disponibile',
     },
     menu: {
       kind: 'day_grid',
@@ -1057,7 +1078,9 @@ async function missingSlotsResult({
   timeWindow = null,
   page = 0,
   notice = null,
+  lang = 'ro',
 }) {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   // "mâine seara" is a day-part, not a clock time: clip it to the Admin hours of that
   // date, and when nothing free is left inside it fall back to the whole day with a
   // notice instead of dropping the client back to the day picker.
@@ -1104,11 +1127,11 @@ async function missingSlotsResult({
     });
   }
   const times = listTimeWindows(listed.slots, business.timezone);
-  const listPage = buildListPickerPage(times, page);
+  const listPage = buildListPickerPage(times, page, 10, { lang: uiLang });
   const datePretty = dateKey ? formatRomanianDate(dateKey, business.timezone) : null;
   const body = withNotice(
     bodyNotice,
-    formatTimeGridMessage(times, dateKey, business.timezone, service?.name),
+    formatTimeGridMessage(times, dateKey, business.timezone, service?.name, uiLang),
   );
   const useQuickReply = times.length > 0 && times.length <= QUICK_REPLY_MAX && listPage.pageCount <= 1;
   const pageOptions = useQuickReply
@@ -1176,7 +1199,7 @@ async function missingSlotsResult({
       })),
       grid_page: listPage.page,
       ui: useQuickReply ? 'quick_reply' : 'list_picker',
-      list_button: 'Ore libere',
+      list_button: uiLang === 'en' ? 'Free times' : 'Ore libere',
     },
     menu: {
       kind: 'time_grid',
@@ -2722,6 +2745,7 @@ async function executeReschedule({
       reasonKey: 'MISSING_SLOT',
       conversationStep: CONVERSATION_STEPS.RESCHEDULING,
       extraContext,
+      lang,
     });
   }
 
@@ -2738,6 +2762,7 @@ async function executeReschedule({
     requestId,
     conversationStep: CONVERSATION_STEPS.RESCHEDULING,
     extraContext,
+    lang,
     clientMessage: lang === 'en'
       ? `Let's reschedule *${serviceName}*`
         + (oldWhen ? ` from *${oldWhen}*` : '')
@@ -3102,9 +3127,11 @@ async function executeChat(business, textBody = '', lang = 'ro') {
 }
 
 function executeStaleChoice({ business, convState }) {
+  const lang = resolveClientLanguage('', null, convState?.context_data);
   const last = readLastMenu(convState);
-  const clientMessage =
-    'Opțiunea aia nu mai e pe lista curentă. Te rog alege din mesajul cel mai recent (sau scrie *programare*).';
+  const clientMessage = lang === 'en'
+    ? 'That option is no longer on the current list. Please choose from the latest message (or type *booking*).'
+    : 'Opțiunea aia nu mai e pe lista curentă. Te rog alege din mesajul cel mai recent (sau scrie *programare*).';
   if (last?.options?.length) {
     const kind = last.kind || 'generic';
     const listButton = kind === 'day_grid'
@@ -3451,13 +3478,46 @@ async function dispatchExecute({
 
   if (action === 'reprompt_grid' || action === 'grid_nav') {
     const ctx = convState.context_data || {};
+    const pageNow = Number(ctx.grid_page) || 0;
+    const delta = extract.choice_id === GRID_PREFIX.PREV ? -1 : extract.choice_id === GRID_PREFIX.NEXT ? 1 : 0;
+    const page = action === 'grid_nav' ? Math.max(0, pageNow + delta) : pageNow;
+
+    // Appointment cancel/reschedule list pagination (Alte programări ›).
+    const modifyList = ctx.grid_kind === 'modify'
+      || (
+        convState.current_step === CONVERSATION_STEPS.MODIFYING
+        && (ctx.intent === 'cancel' || ctx.intent === 'reschedule')
+      );
+    if (modifyList) {
+      const appointments = await listActionableAppointments(business, recipientPhone, requestId);
+      const ids = Array.isArray(ctx.appointment_ids) ? ctx.appointment_ids.map(String) : [];
+      const byId = new Map(appointments.map((a) => [String(a.id), a]));
+      const ordered = ids.length
+        ? [
+          ...ids.map((id) => byId.get(id)).filter(Boolean),
+          ...appointments.filter((a) => !ids.includes(String(a.id))),
+        ]
+        : appointments;
+      return askWhichAppointment({
+        business,
+        recipientPhone,
+        appointments: ordered,
+        intent: ctx.intent === 'cancel' ? 'cancel' : 'reschedule',
+        requestId,
+        includeCancelAll: Boolean(ctx.include_cancel_all),
+        page,
+        lang,
+        extraContext: {
+          pending_date_text: typeof ctx.pending_date_text === 'string' ? ctx.pending_date_text : null,
+          pending_time_text: typeof ctx.pending_time_text === 'string' ? ctx.pending_time_text : null,
+        },
+      });
+    }
+
     const service = ctx.service
       || (draft?.selected_service
         ? /** @type {{ id?: string, name: string, duration_minutes: number }} */ (draft.selected_service)
         : null);
-    const pageNow = Number(ctx.grid_page) || 0;
-    const delta = extract.choice_id === GRID_PREFIX.PREV ? -1 : extract.choice_id === GRID_PREFIX.NEXT ? 1 : 0;
-    const page = action === 'grid_nav' ? Math.max(0, pageNow + delta) : pageNow;
     const kind = ctx.grid_kind || (ctx.pending_date_text ? 'time' : 'day');
 
     if (!service) {
@@ -3469,6 +3529,7 @@ async function dispatchExecute({
           activeDraft: draft,
           convState,
           requestId,
+          textBody,
         });
       }
       return executeBook({
@@ -3509,6 +3570,7 @@ async function dispatchExecute({
           }
           : {},
         page,
+        lang,
       });
     }
 
@@ -3521,6 +3583,7 @@ async function dispatchExecute({
       service,
       requestId,
       page,
+      lang,
       conversationStep: ctx.intent === 'reschedule'
         ? CONVERSATION_STEPS.RESCHEDULING
         : CONVERSATION_STEPS.WAITING_FOR_DATE,
@@ -3535,7 +3598,9 @@ async function dispatchExecute({
         }
         : {},
       clientMessage: action === 'reprompt_grid'
-        ? `${formatDayGridMessage(listOpenDayWindows(business, { limit: 14 }), business.timezone, service.name)}\n\n_Poți alege din listă sau scrie, ex: *mâine la 10*._`
+        ? (lang === 'en'
+          ? `${formatDayGridMessage(listOpenDayWindows(business, { limit: 14 }), business.timezone, service.name, 'en')}\n\n_Pick from the list or type, e.g. *tomorrow at 10*._`
+          : `${formatDayGridMessage(listOpenDayWindows(business, { limit: 14 }), business.timezone, service.name)}\n\n_Poți alege din listă sau scrie, ex: *mâine la 10*._`)
         : null,
     });
   }

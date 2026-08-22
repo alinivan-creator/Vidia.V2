@@ -12,8 +12,8 @@ import { formatDateKey, formatTime } from './datetime.js';
 const MONTHS_SHORT_RO = ['Ian', 'Feb', 'Mar', 'Apr', 'Mai', 'Iun', 'Iul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTHS_SHORT_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/** WhatsApp list-picker max rows. */
-const LIST_ROW_MAX = 10;
+/** Soft cap for cancel/reschedule lists (paginated in WhatsApp; DB may return more). */
+const APPOINTMENT_LIST_SOFT_CAP = 50;
 
 function normalize(text) {
   return String(text ?? '')
@@ -191,6 +191,7 @@ export function nextRescheduleSlotStep({
 /**
  * Twilio list-picker rows for the client's upcoming bookings.
  * Title ≤24 chars (WhatsApp cap); description holds service + weekday.
+ * Returns the full catalog — callers paginate with buildListPickerPage.
  *
  * @param {{ id: string, selected_slot_start?: string | null, selected_service?: { name?: string } | null }[]} appointments
  * @param {string} timezone
@@ -204,11 +205,10 @@ export function buildAppointmentChoiceMenu(appointments, timezone, opts = {}) {
   const includeCancelAll = Boolean(opts.includeCancelAll) && list.length > 1;
   const apptPrefix = opts.apptPrefix || 'mod_appt_';
   const cancelAllId = opts.cancelAllId || 'mod_cancel_all';
-  const maxAppts = includeCancelAll ? LIST_ROW_MAX - 1 : LIST_ROW_MAX;
   const defaultService = lang === 'en' ? 'Appointment' : 'Programare';
   const locale = lang === 'en' ? 'en-GB' : 'ro-RO';
 
-  const items = list.slice(0, maxAppts).map((a) => {
+  const items = list.slice(0, APPOINTMENT_LIST_SOFT_CAP).map((a) => {
     const service = String(/** @type {{ name?: string }} */ (a.selected_service ?? {}).name || defaultService);
     const start = a.selected_slot_start ? new Date(a.selected_slot_start) : null;
     let title = defaultService;

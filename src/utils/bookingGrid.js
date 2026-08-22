@@ -139,12 +139,18 @@ export function listTimeWindows(slots, timezone) {
  * @param {T[]} all
  * @param {number} page
  * @param {number} [pageSize]
+ * @param {{ lang?: 'ro' | 'en', nextTitle?: string, prevTitle?: string, nextDesc?: string, prevDesc?: string }} [opts]
  */
-export function buildListPickerPage(all, page = 0, pageSize = LIST_PAGE_SIZE) {
+export function buildListPickerPage(all, page = 0, pageSize = LIST_PAGE_SIZE, opts = {}) {
   if (!all.length) {
     return { items: /** @type {T[]} */ ([]), page: 0, pageCount: 0 };
   }
   const size = Math.max(1, Math.min(10, pageSize));
+  const lang = opts.lang === 'en' ? 'en' : 'ro';
+  const nextTitle = String(opts.nextTitle || (lang === 'en' ? 'More options ›' : 'Alte opțiuni ›')).slice(0, 24);
+  const prevTitle = String(opts.prevTitle || (lang === 'en' ? '‹ Back' : '‹ Înapoi')).slice(0, 24);
+  const nextDesc = String(opts.nextDesc || (lang === 'en' ? 'Next page' : 'Pagina următoare')).slice(0, 72);
+  const prevDesc = String(opts.prevDesc || (lang === 'en' ? 'Previous page' : 'Pagina anterioară')).slice(0, 72);
 
   // Everything fits — no nav rows.
   if (all.length <= size) {
@@ -159,7 +165,7 @@ export function buildListPickerPage(all, page = 0, pageSize = LIST_PAGE_SIZE) {
     };
   }
 
-  // Multi-page: reserve up to 2 slots for ‹ Înapoi / Alte ›.
+  // Multi-page: reserve up to 2 slots for ‹ Back / More ›.
   const contentPerPage = Math.max(1, size - 2);
   const pageCount = Math.ceil(all.length / contentPerPage);
   const safePage = Math.min(Math.max(0, Number(page) || 0), pageCount - 1);
@@ -175,15 +181,15 @@ export function buildListPickerPage(all, page = 0, pageSize = LIST_PAGE_SIZE) {
   if (safePage > 0) {
     items.push({
       id: GRID_PREFIX.PREV,
-      title: '‹ Înapoi',
-      description: 'Pagina anterioară',
+      title: prevTitle,
+      description: prevDesc,
     });
   }
   if (safePage < pageCount - 1) {
     items.push({
       id: GRID_PREFIX.NEXT,
-      title: 'Alte opțiuni ›',
-      description: 'Pagina următoare',
+      title: nextTitle,
+      description: nextDesc,
     });
   }
 
@@ -203,9 +209,18 @@ export function buildQuickReplyPage(all, page = 0) {
 
 /**
  * Clean body for day list (no ASCII art).
+ * @param {unknown} _days
+ * @param {string} [_timezone]
  * @param {string} [serviceName]
+ * @param {'ro' | 'en'} [lang]
  */
-export function formatDayGridMessage(_days, _timezone, serviceName = null) {
+export function formatDayGridMessage(_days, _timezone, serviceName = null, lang = 'ro') {
+  if (lang === 'en') {
+    const head = serviceName
+      ? `*Choose a day — ${serviceName}*`
+      : '*Choose a day*';
+    return `${head}\n\nTap *Available days* (next 14 open days) or type, e.g. *tomorrow at 10*.`;
+  }
   const head = serviceName
     ? `*Alege ziua — ${serviceName}*`
     : '*Alege ziua*';
@@ -218,9 +233,20 @@ export function formatDayGridMessage(_days, _timezone, serviceName = null) {
  * @param {string} dateKey
  * @param {string} timezone
  * @param {string} [serviceName]
+ * @param {'ro' | 'en'} [lang]
  */
-export function formatTimeGridMessage(_times, dateKey, timezone, serviceName = null) {
+export function formatTimeGridMessage(_times, dateKey, timezone, serviceName = null, lang = 'ro') {
   const pretty = dateKey ? formatRomanianDate(dateKey, timezone) : '';
+  if (lang === 'en') {
+    const head = serviceName
+      ? `*Choose a time — ${serviceName}*`
+      : '*Choose a time*';
+    const dateLine = pretty ? `*Date:* ${pretty}` : null;
+    const hint = _times?.length && _times.length <= QUICK_REPLY_MAX
+      ? 'Tap your preferred time below.'
+      : 'Tap *Free times* and pick a slot.';
+    return [head, dateLine, '', hint].filter(Boolean).join('\n');
+  }
   const head = serviceName
     ? `*Alege ora — ${serviceName}*`
     : '*Alege ora*';

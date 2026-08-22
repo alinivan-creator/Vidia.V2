@@ -26,7 +26,6 @@ import {
   localizeMenuOptions,
 } from '../utils/uiI18n.js';
 import {
-  needsAiDisclosure,
   buildMandatoryAiDisclosure,
   buildAiTransparencyWelcome,
 } from '../utils/businessMessages.js';
@@ -197,28 +196,26 @@ export async function routeInboundTurn({
   const langPick = parseLanguageChoice({ textBody, buttonPayload });
   if (langPick) {
     const step = nextConv?.current_step || 'IDLE';
-    const mustDisclose = needsAiDisclosure(nextConv?.context_data);
+    // Always send the legal AI notice here (replaces "Great! We will…").
+    // Mark disclosed so the pipeline does not prepend it again mid-flow.
     nextConv = await setConversationStep({
       businessId: business.id,
       rawPhone: recipientPhone,
       step,
       context: {
         session_language: langPick,
-        ...(mustDisclose ? { ai_disclosed: true } : {}),
+        ai_disclosed: true,
       },
       mergeContext: true,
       requestId,
     }) || nextConv;
 
-    // Once per session, right after language choice — never the old "Great! We will…".
-    if (mustDisclose) {
-      await sendTextMessage({
-        business,
-        recipientPhone,
-        requestId,
-        text: buildMandatoryAiDisclosure(business, langPick),
-      });
-    }
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: buildMandatoryAiDisclosure(business, langPick),
+    });
     // Always refresh the entry menu in the chosen language when idle.
     if (step === 'IDLE' || step === 'idle') {
       await sendFreshEntryMenu({

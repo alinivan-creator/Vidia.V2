@@ -303,6 +303,13 @@ export function localizeMenuOptions(options, lang = 'ro') {
     else if (/contact/i.test(bare) && /loca[țt]ie/i.test(bare)) next = t('entryContact', 'en');
     else if (/contact/i.test(bare)) next = 'Contact';
     else if (/renun[țt][aă]/i.test(bare) || id.includes('abort')) next = 'Never mind';
+    else if (/alte program[aă]ri/i.test(bare) || /^more appointments/i.test(bare)) {
+      next = 'More appointments ›';
+    }
+    else if (/alte op[tț]iuni/i.test(bare) || /^more options/i.test(bare)) {
+      next = 'More options ›';
+    }
+    else if (/[îi]napoi/i.test(bare) || /^‹?\s*back$/i.test(bare)) next = '‹ Back';
     else if (bare === 'Servicii' || title === 'Servicii') next = t('listServices', 'en');
     else if (bare === 'Zile disponibile' || title === 'Zile disponibile') next = t('listDays', 'en');
     else if (bare === 'Ore libere' || title === 'Ore libere') next = t('listTimes', 'en');

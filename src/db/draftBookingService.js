@@ -990,7 +990,7 @@ export async function listUpcomingConfirmedBookings(businessId, rawPhone) {
     .eq('state', 'confirmed')
     .gte('selected_slot_start', new Date().toISOString())
     .order('selected_slot_start', { ascending: true })
-    .limit(10);
+    .limit(50);
 
   if (error) {
     await logError({

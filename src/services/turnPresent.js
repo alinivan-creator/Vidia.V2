@@ -183,13 +183,14 @@ export function renderHandlerResult(business, result) {
           'Pentru o programare nouă, scrie *programare*.',
         );
     case 'FLOW_ABORTED':
-      return waJoin(
-        waTitle('Ok, m-am oprit'),
-        'Cu ce te mai pot ajuta?',
-      );
+      return en
+        ? waJoin(waTitle('Ok, stopped'), 'How else can I help?')
+        : waJoin(waTitle('Ok, m-am oprit'), 'Cu ce te mai pot ajuta?');
     case 'THANKS':
       return (typeof d.client_message === 'string' && d.client_message.trim())
-        || 'Cu plăcere! Dacă mai ai nevoie — o programare, orarul sau contact — scrie-mi oricând.';
+        || (en
+          ? "You're welcome! If you need anything else — a booking, hours, or contact — just write here."
+          : 'Cu plăcere! Dacă mai ai nevoie — o programare, orarul sau contact — scrie-mi oricând.');
     case 'MISSING_EMPLOYEE': {
       const names = (d.services || []).map((e) => e.name).filter(Boolean);
       const intro = d.client_message || 'Nu am găsit specialistul. Alege din echipă:';
@@ -296,7 +297,12 @@ export function renderHandlerResult(business, result) {
     case 'ERROR_NO_APPOINTMENT':
     case 'ERROR_GENERIC':
     case 'HOLD_EXPIRED':
-      return String(d.client_message || 'A apărut o eroare. Încearcă din nou sau scrie *contact*.');
+      return String(
+        d.client_message
+        || (en
+          ? 'Something went wrong. Please try again or type *contact*.'
+          : 'A apărut o eroare. Încearcă din nou sau scrie *contact*.'),
+      );
     case 'SERVICES_LIST': {
       const services = d.services || [];
       if (!services.length) return unknownInfoClientMessage();
@@ -399,7 +405,9 @@ export function renderHandlerResult(business, result) {
           : 'Din păcate nu oferim acest serviciu. Te rog alege din listă.');
     case 'STALE_CHOICE':
       return (typeof d.client_message === 'string' && d.client_message.trim())
-        || 'Opțiunea aia nu mai e pe lista curentă. Te rog alege din mesajul cel mai recent (sau scrie *programare*).';
+        || (en
+          ? 'That option is no longer on the current list. Please choose from the latest message (or type *booking*).'
+          : 'Opțiunea aia nu mai e pe lista curentă. Te rog alege din mesajul cel mai recent (sau scrie *programare*).');
     case 'ADMIN_FACT':
       return String(d.fact || unknownInfoClientMessage(lang));
     case 'MISSING_INFO':
@@ -407,7 +415,10 @@ export function renderHandlerResult(business, result) {
         || missingBusinessInfoMessage(d.topic_label || null, lang)
         || unknownInfoClientMessage(lang);
     default:
-      return String(d.client_message || 'Spune-mi cum te pot ajuta.');
+      return String(
+        d.client_message
+        || (en ? 'How can I help you?' : 'Spune-mi cum te pot ajuta.'),
+      );
   }
 }
 
