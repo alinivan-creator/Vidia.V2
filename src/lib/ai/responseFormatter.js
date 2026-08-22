@@ -35,6 +35,25 @@ export function formatRomanianDate(dateKey, timezone = 'Europe/Bucharest') {
   return pretty;
 }
 
+/**
+ * @param {string} dateKey YYYY-MM-DD
+ * @param {string} [timezone]
+ * @param {'ro' | 'en'} [lang]
+ */
+export function formatDisplayDate(dateKey, timezone = 'Europe/Bucharest', lang = 'ro') {
+  if (lang === 'en') {
+    if (!dateKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return String(dateKey || '');
+    const utc = localToUtc(dateKey, '12:00', timezone);
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone,
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+    }).format(utc);
+  }
+  return formatRomanianDate(dateKey, timezone);
+}
+
 function formatTime24(hhmm) {
   if (!hhmm) return '';
   if (/^\d{2}:\d{2}$/.test(hhmm)) return hhmm;

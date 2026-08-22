@@ -3,7 +3,8 @@
  */
 
 import { addCalendarDays, formatDateKey, formatTime, getBookingConfig, getWeekdayInTimezone, localToUtc } from './datetime.js';
-import { formatRomanianDate } from '../lib/ai/responseFormatter.js';
+import { formatRomanianDate, formatDisplayDate } from '../lib/ai/responseFormatter.js';
+import { dayGridBody, timeGridBody, bookingUi } from './bookingI18n.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -80,6 +81,7 @@ export function formatDayListLabel(dateKey, timezone) {
  * @returns {{ dateKey: string, id: string, title: string, description: string, weekdayShort: string }[]}
  */
 export function listOpenDayWindows(business, opts = {}) {
+  const lang = opts.lang === 'en' ? 'en' : 'ro';
   const now = opts.now || new Date();
   const config = getBookingConfig(business);
   const tz = business.timezone || 'Europe/Bucharest';
@@ -100,8 +102,8 @@ export function listOpenDayWindows(business, opts = {}) {
     const short = WEEKDAY_SHORT[weekday];
     const label = formatDayListLabel(dateKey, tz);
     const desc = dateKey === today
-      ? 'Astăzi'
-      : formatRomanianDate(dateKey, tz);
+      ? bookingUi('today', lang)
+      : formatDisplayDate(dateKey, tz, lang);
     days.push({
       dateKey,
       id: `${GRID_PREFIX.DAY}${dateKey}`,
@@ -120,14 +122,15 @@ export function listOpenDayWindows(business, opts = {}) {
  * @param {string} timezone
  * @returns {{ id: string, title: string, time: string, description: string }[]}
  */
-export function listTimeWindows(slots, timezone) {
+export function listTimeWindows(slots, timezone, lang = 'ro') {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   return (slots || []).map((s) => {
     const time = formatTime(s.start, timezone);
     return {
       id: s.id,
       title: time.slice(0, 24),
       time,
-      description: 'Disponibil',
+      description: bookingUi('available', uiLang),
     };
   });
 }
@@ -140,7 +143,8 @@ export function listTimeWindows(slots, timezone) {
  * @param {number} page
  * @param {number} [pageSize]
  */
-export function buildListPickerPage(all, page = 0, pageSize = LIST_PAGE_SIZE) {
+export function buildListPickerPage(all, page = 0, pageSize = LIST_PAGE_SIZE, lang = 'ro') {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   if (!all.length) {
     return { items: /** @type {T[]} */ ([]), page: 0, pageCount: 0 };
   }
@@ -175,15 +179,15 @@ export function buildListPickerPage(all, page = 0, pageSize = LIST_PAGE_SIZE) {
   if (safePage > 0) {
     items.push({
       id: GRID_PREFIX.PREV,
-      title: '‹ Înapoi',
-      description: 'Pagina anterioară',
+      title: bookingUi('navPrev', uiLang),
+      description: bookingUi('navPrevDesc', uiLang),
     });
   }
   if (safePage < pageCount - 1) {
     items.push({
       id: GRID_PREFIX.NEXT,
-      title: 'Alte opțiuni ›',
-      description: 'Pagina următoare',
+      title: bookingUi('navNext', uiLang),
+      description: bookingUi('navNextDesc', uiLang),
     });
   }
 
@@ -205,11 +209,8 @@ export function buildQuickReplyPage(all, page = 0) {
  * Clean body for day list (no ASCII art).
  * @param {string} [serviceName]
  */
-export function formatDayGridMessage(_days, _timezone, serviceName = null) {
-  const head = serviceName
-    ? `*Alege ziua — ${serviceName}*`
-    : '*Alege ziua*';
-  return `${head}\n\nApasă *Zile disponibile* (următoarele 14 zile cu locuri libere) sau scrie, ex: *mâine la 10*.`;
+export function formatDayGridMessage(_days, _timezone, serviceName = null, lang = 'ro') {
+  return dayGridBody(lang === 'en' ? 'en' : 'ro', serviceName);
 }
 
 /**
@@ -218,24 +219,29 @@ export function formatDayGridMessage(_days, _timezone, serviceName = null) {
  * @param {string} dateKey
  * @param {string} timezone
  * @param {string} [serviceName]
+ * @param {'ro' | 'en'} [lang]
  */
-export function formatTimeGridMessage(_times, dateKey, timezone, serviceName = null) {
-  const pretty = dateKey ? formatRomanianDate(dateKey, timezone) : '';
-  const head = serviceName
-    ? `*Alege ora — ${serviceName}*`
-    : '*Alege ora*';
-  const dateLine = pretty ? `*Data:* ${pretty}` : null;
-  const hint = _times?.length && _times.length <= QUICK_REPLY_MAX
-    ? 'Atinge ora dorită mai jos.'
-    : 'Apasă *Ore libere* și selectează intervalul.';
-  return [head, dateLine, '', hint].filter(Boolean).join('\n');
+export function formatTimeGridMessage(_times, dateKey, timezone, serviceName = null, lang = 'ro') {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
+  const pretty = dateKey ? formatDisplayDate(dateKey, timezone, uiLang) : '';
+  const head = uiLang === 'en'
+    ? (serviceName ? `*Choose a time — ${serviceName}*` : '*Choose a time*')
+    : (serviceName ? `*Alege ora — ${serviceName}*` : '*Alege ora*');
+  const few = _times?.length && _times.length <= QUICK_REPLY_MAX;
+  const body = timeGridBody(uiLang, pretty || null, Boolean(few));
+  return [head, body].filter(Boolean).join('\n\n');
 }
 
-export function cardHeaderForGrid(kind, serviceName = null) {
+export function cardHeaderForGrid(kind, serviceName = null, lang = 'ro') {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   if (kind === 'time') {
-    return serviceName ? `Ore — ${serviceName}`.slice(0, 60) : 'Alege ora';
+    return uiLang === 'en'
+      ? (serviceName ? `Times — ${serviceName}`.slice(0, 60) : 'Choose a time')
+      : (serviceName ? `Ore — ${serviceName}`.slice(0, 60) : 'Alege ora');
   }
-  return serviceName ? `Zile — ${serviceName}`.slice(0, 60) : 'Alege ziua';
+  return uiLang === 'en'
+    ? (serviceName ? `Days — ${serviceName}`.slice(0, 60) : 'Choose a day')
+    : (serviceName ? `Zile — ${serviceName}`.slice(0, 60) : 'Alege ziua');
 }
 
 /** Kept for tests that imported old helpers — returns empty (ASCII removed). */

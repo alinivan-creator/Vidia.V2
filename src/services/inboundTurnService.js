@@ -88,8 +88,10 @@ export async function routeInboundTurn({
     activeDraft,
   });
   if (langGate.handled) {
+    if (!langGate.languageChosen) return;
+
+    const freshConv = await reloadConversationState(business, recipientPhone);
     if (langGate.replayText) {
-      const freshConv = await reloadConversationState(business, recipientPhone);
       await processTurnPipeline({
         business,
         recipientPhone,
@@ -101,6 +103,33 @@ export async function routeInboundTurn({
         requestId,
         convState: freshConv,
         activeDraft,
+      });
+    } else {
+      // Language chosen with nothing deferred — show the entry menu in that language.
+      const { executeTurn } = await import('./turnExecute.js');
+      const { presentTurn } = await import('./turnPresent.js');
+      const { stampResultLanguage } = await import('../utils/bookingI18n.js');
+      const { resolveClientLanguage } = await import('../utils/clientLanguage.js');
+      const result = await executeTurn({
+        business,
+        recipientPhone,
+        extract: {
+          action: 'menu',
+          source: 'language_gate',
+          extraction: { intent: 'menu' },
+        },
+        clientId,
+        requestId,
+        convState: freshConv,
+        activeDraft: null,
+        textBody: '',
+      });
+      const lang = resolveClientLanguage('', freshConv?.context_data?.client_language, freshConv?.context_data);
+      await presentTurn({
+        business,
+        recipientPhone,
+        result: stampResultLanguage(result, lang),
+        requestId,
       });
     }
     return;

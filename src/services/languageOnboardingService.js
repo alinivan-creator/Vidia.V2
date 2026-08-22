@@ -240,7 +240,7 @@ export async function handleLanguageOnboarding({
       requestId,
       deferredText: deferredFromCtx,
     });
-    return { handled: true, replayText: replay };
+    return { handled: true, languageChosen: true, replayText: replay };
   }
 
   if (isAwaitingLanguageChoice(convState)) {
@@ -251,7 +251,7 @@ export async function handleLanguageOnboarding({
       requestId,
       text: 'Te rog apasă *Română* sau *English* mai jos.\nPlease tap *Română* or *English* below.',
     });
-    return { handled: true };
+    return { handled: true, languageChosen: false };
   }
 
   const raw = String(textBody || '').trim();
@@ -264,7 +264,7 @@ export async function handleLanguageOnboarding({
     requestId,
     deferredText: deferForLater,
   });
-  return { handled: true };
+  return { handled: true, languageChosen: false };
 }
 
 /**

@@ -101,9 +101,8 @@ export function buildAiTransparencyWelcome(business) {
  * @param {Business} business
  */
 export function buildEnglishTransparencyWelcome(business) {
-  const base =
-    (business.welcome_message && business.welcome_message.trim())
-      || `Welcome to *${business.name}*.`;
+  // Admin welcome_message is usually Romanian — English flow uses a dedicated template.
+  const base = `Welcome to *${business.name}*.`;
 
   const disclosure = alreadyDisclosesAi(base)
     ? ''
