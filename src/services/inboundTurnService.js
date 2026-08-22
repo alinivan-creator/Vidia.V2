@@ -27,6 +27,11 @@ import {
   localizeMenuOptions,
   t,
 } from '../utils/uiI18n.js';
+import {
+  needsAiDisclosure,
+  withMandatoryAiDisclosure,
+  buildAiTransparencyWelcome,
+} from '../utils/businessMessages.js';
 import { resetExpiredSessionForRestart } from './pendingExpiryCron.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
@@ -39,6 +44,24 @@ function entryMenuButtons(business) {
     id: btn.id,
     title: String(btn.label || '').slice(0, 20),
   }));
+}
+
+/**
+ * @param {Object} params
+ * @param {string} params.businessId
+ * @param {string} params.rawPhone
+ * @param {string} params.step
+ * @param {string | null} [params.requestId]
+ */
+async function markAiDisclosed({ businessId, rawPhone, step, requestId = null }) {
+  await setConversationStep({
+    businessId,
+    rawPhone,
+    step: step || 'IDLE',
+    context: { ai_disclosed: true },
+    mergeContext: true,
+    requestId,
+  });
 }
 
 /**
@@ -142,18 +165,25 @@ export async function routeInboundTurn({
       clientId,
       requestId,
     });
+    // New thread → mandatory AI + GDPR disclosure on the first reply.
     await sendTextMessage({
       business,
       recipientPhone,
       requestId,
-      text: t('sessionRestarted', 'en'),
+      text: buildAiTransparencyWelcome(business, 'en'),
     });
     await sendFreshEntryMenu({
       business,
       recipientPhone,
       requestId,
-      lang: 'ro',
-      bodyText: entryMenuBodyText('ro'),
+      lang: 'en',
+      bodyText: entryMenuBodyText('en'),
+    });
+    await markAiDisclosed({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: 'IDLE',
+      requestId,
     });
     console.log('[session] restart session — hard reset to entry menu', {
       businessId: business.id,
@@ -169,19 +199,27 @@ export async function routeInboundTurn({
   const langPick = parseLanguageChoice({ textBody, buttonPayload });
   if (langPick) {
     const step = nextConv?.current_step || 'IDLE';
+    const mustDisclose = needsAiDisclosure(nextConv?.context_data);
     nextConv = await setConversationStep({
       businessId: business.id,
       rawPhone: recipientPhone,
       step,
-      context: { session_language: langPick },
+      context: {
+        session_language: langPick,
+        ...(mustDisclose ? { ai_disclosed: true } : {}),
+      },
       mergeContext: true,
       requestId,
     }) || nextConv;
+
+    const ack = languageAck(langPick);
     await sendTextMessage({
       business,
       recipientPhone,
       requestId,
-      text: languageAck(langPick),
+      text: mustDisclose
+        ? withMandatoryAiDisclosure(ack, business, langPick)
+        : ack,
     });
     // Offer the entry menu only when idle — mid-flow just switches language for later copy.
     if (step === 'IDLE' || step === 'idle') {
@@ -211,6 +249,8 @@ export async function routeInboundTurn({
     }
   }
 
+  // Direct request (booking etc.) continues through the pipeline — disclosure is
+  // attached on the first presentTurn when ai_disclosed is not set yet.
   await processTurnPipeline({
     business,
     recipientPhone,

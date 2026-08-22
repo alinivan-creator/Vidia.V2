@@ -11,6 +11,8 @@ import { runExecutionAgent } from './executionAgent.js';
 import { presentTurn } from './turnPresent.js';
 import { readInboundStamp } from './sessionValidator.js';
 import { readSessionLanguage } from '../utils/uiI18n.js';
+import { needsAiDisclosure } from '../utils/businessMessages.js';
+import { setConversationStep } from '../db/conversationStateService.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -72,11 +74,13 @@ export async function processTurnPipeline({
   });
 
   const uiLang = readSessionLanguage(convState?.context_data);
+  const attachDisclosure = needsAiDisclosure(convState?.context_data);
   const localized = {
     ...result,
     data: {
       ...(result.data || {}),
       ui_language: uiLang,
+      attach_ai_disclosure: attachDisclosure,
     },
   };
 
@@ -87,6 +91,7 @@ export async function processTurnPipeline({
     next_required_step: envelope.next_step,
     machine_action: localized.machine_action ?? null,
     ui_language: uiLang,
+    attach_ai_disclosure: attachDisclosure,
   });
 
   await presentTurn({
@@ -96,6 +101,17 @@ export async function processTurnPipeline({
     requestId,
     turnStamp: readInboundStamp(convState),
   });
+
+  if (attachDisclosure) {
+    await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: convState?.current_step || 'IDLE',
+      context: { ai_disclosed: true },
+      mergeContext: true,
+      requestId,
+    });
+  }
 
   return { extract, result: localized, envelope };
 }

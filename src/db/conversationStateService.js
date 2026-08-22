@@ -244,6 +244,7 @@ export async function resetConversationState({
       deferred_inbound: null,
       client_language: null,
       session_language: sessionLanguage,
+      ai_disclosed: null,
     },
     mergeContext: false,
     requestId,

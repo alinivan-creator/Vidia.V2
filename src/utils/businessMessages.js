@@ -63,12 +63,65 @@ export function getMessagingSettings(business) {
  * True if text already discloses AI / virtual assistant.
  * @param {string} text
  */
-function alreadyDisclosesAi(text) {
+export function alreadyDisclosesAi(text) {
   const n = String(text ?? '')
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
-  return /asistent (virtual|inteligent)|sunt (un )?ai\b|\bai\b.*asistent|asistent.*\bai\b|virtual assistant/.test(n);
+  return /asistent (virtual|inteligent)|virtual assistant|ai assistant|sunt (un )?ai\b|\bai\b.*asistent|asistent.*\bai\b|speaking with (an )?ai/.test(n);
+}
+
+/**
+ * Whether this conversation thread still needs the mandatory first-contact
+ * AI + GDPR disclosure (cleared on hardReset / session TTL).
+ * @param {Record<string, unknown> | null | undefined} ctx
+ */
+export function needsAiDisclosure(ctx) {
+  return ctx?.ai_disclosed !== true;
+}
+
+/**
+ * Compact mandatory AI + short GDPR note for the first bot reply on a new thread.
+ * @param {Business} business
+ * @param {'ro' | 'en'} [lang]
+ */
+export function buildMandatoryAiDisclosure(business, lang = 'ro') {
+  const uiLang = normalizeUiLang(lang);
+  const name = business?.name || (uiLang === 'en' ? 'this business' : 'această locație');
+  const { termsUrl, gdprUrl } = getMessagingSettings(business);
+  const legalLink = (gdprUrl || termsUrl || '').trim().replace(/\s+/g, '');
+
+  if (uiLang === 'en') {
+    const policy = legalLink
+      ? ` in line with our [privacy policy](${legalLink})`
+      : ' in line with our privacy policy';
+    return waJoin(
+      `You are speaking with the *virtual AI assistant* of *${name}*.`,
+      `We process your data${policy}. By continuing, you agree to this.`,
+    );
+  }
+
+  const policy = legalLink
+    ? ` în conformitate cu [politica de confidențialitate](${legalLink})`
+    : ' în conformitate cu politica de confidențialitate';
+  return waJoin(
+    `Vorbești cu *asistentul virtual AI* al *${name}*.`,
+    `Prelucrăm datele tale${policy}. Prin continuarea conversației, ești de acord cu acest lucru.`,
+  );
+}
+
+/**
+ * Attach disclosure once at the top of the first outbound reply.
+ * @param {string} body
+ * @param {Business} business
+ * @param {'ro' | 'en'} [lang]
+ */
+export function withMandatoryAiDisclosure(body, business, lang = 'ro') {
+  const text = String(body ?? '').trim();
+  const note = buildMandatoryAiDisclosure(business, lang);
+  if (!text) return note;
+  if (alreadyDisclosesAi(text)) return text;
+  return waJoin(note, '', text);
 }
 
 /**
@@ -76,38 +129,29 @@ function alreadyDisclosesAi(text) {
  * Uses business.welcome_message and clearly identifies the bot as AI.
  *
  * @param {Business} business
+ * @param {'ro' | 'en'} [lang]
  * @returns {string}
  */
-export function buildAiTransparencyWelcome(business) {
+export function buildAiTransparencyWelcome(business, lang = 'ro') {
+  const uiLang = normalizeUiLang(lang);
   const base =
     (business.welcome_message && business.welcome_message.trim())
-      || `Bun venit la *${business.name}*.`;
+      || (uiLang === 'en'
+        ? `Welcome to *${business.name}*.`
+        : `Bun venit la *${business.name}*.`);
 
-  const disclosure = alreadyDisclosesAi(base)
-    ? ''
-    : `Sunt *asistentul virtual* al *${business.name}*.`;
-
-  const { termsUrl, gdprUrl } = getMessagingSettings(business);
-  const legalLink = (gdprUrl || termsUrl || '').trim().replace(/\s+/g, '');
-  const policyBit = legalLink
-    ? ` în conformitate cu [politica de confidențialitate](${legalLink})`
-    : ' în conformitate cu politica de confidențialitate';
-
-  const privacyBlock = waJoin(
-    waTitle('Confidențialitate'),
-    `Prelucrăm datele tale${policyBit}.`,
-    'Prin continuarea conversației și trimiterea detaliilor, ești de acord cu acest lucru.',
-  );
+  const disclosure = buildMandatoryAiDisclosure(business, uiLang);
+  const footer = uiLang === 'en'
+    ? waFooter(['Booking', 'Hours', 'Contact'])
+    : waFooter(['Programări', 'Orar', 'Contact']);
 
   return waJoin(
-    privacyBlock,
+    disclosure,
     '',
-    disclosure || null,
-    disclosure ? '' : null,
     base,
     '',
     WA_DIVIDER,
-    waFooter(['Programări', 'Orar', 'Contact']),
+    footer,
   );
 }
 

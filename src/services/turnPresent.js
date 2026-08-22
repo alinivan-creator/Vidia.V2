@@ -3,7 +3,7 @@
  * Must not decide availability, confirm bookings, or invent hours.
  */
 
-import { buildAiTransparencyWelcome, buildBookingConfirmationMessage, buildGdprNote, buildMapsInviteLine, MAPS_ANCHOR_LABEL, mapsAnchorLabel } from '../utils/businessMessages.js';
+import { buildAiTransparencyWelcome, buildBookingConfirmationMessage, buildGdprNote, buildMapsInviteLine, MAPS_ANCHOR_LABEL, mapsAnchorLabel, withMandatoryAiDisclosure } from '../utils/businessMessages.js';
 import { WA_DIVIDER, waField, waFooter, waJoin, waServiceMeta, waTitle } from '../utils/waCopy.js';
 import { timeWindowBounds } from '../utils/timeWindow.js';
 import { formatContactMessage } from './contactService.js';
@@ -328,7 +328,7 @@ export function renderHandlerResult(business, result) {
     case 'CONTACT':
       return formatContactMessage(business);
     case 'MENU':
-      return buildAiTransparencyWelcome(business);
+      return buildAiTransparencyWelcome(business, lang);
     case 'CALLBACK_SENT':
       return waJoin(
         waTitle('Cerere înregistrată'),
@@ -525,6 +525,12 @@ export async function presentTurn({
   const lang = normalizeUiLang(d.ui_language);
   const en = lang === 'en';
 
+  // Legal: first reply on a new conversation thread must disclose AI + short GDPR.
+  // MENU welcome already embeds the disclosure — skip double-wrapping.
+  if (d.attach_ai_disclosure === true && result.user_message_template_key !== 'MENU') {
+    text = withMandatoryAiDisclosure(text, business, lang);
+  }
+
   await simulateHumanDelay({ business, recipientPhone, requestId });
 
   const needsGdpr =
@@ -545,7 +551,7 @@ export async function presentTurn({
       recipientPhone,
       requestId,
       text,
-      buttonTitle: result.calendar_cta.title || (en ? t('addCalendar', 'en') : 'Adaugă în calendar'),
+      buttonTitle: en ? t('addCalendar', 'en') : t('addCalendar', 'ro'),
       buttonUrl: result.calendar_cta.url,
     });
     return;
