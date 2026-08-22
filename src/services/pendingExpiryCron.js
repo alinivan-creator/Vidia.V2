@@ -56,6 +56,8 @@ export async function resetExpiredSessionForRestart({
     rawPhone,
     keepLastIntent: false,
     hardReset: true,
+    // Drop language lock so the RO/EN gate can run on a truly fresh session.
+    preserveLanguage: false,
     requestId,
   });
 

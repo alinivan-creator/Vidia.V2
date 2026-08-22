@@ -189,13 +189,20 @@ export async function resetConversationState({
   keepLastIntent = true,
   /** After a successful booking — drop recent turns / offers so the next message starts clean. */
   hardReset = false,
+  /**
+   * Keep RO/EN choice across soft resets (menu, abort, post-booking).
+   * Session TTL restart must pass false so the language gate can run again.
+   */
+  preserveLanguage = true,
   requestId = null,
 }) {
   let lastIntent = null;
   let recentTurns = null;
   let languagePreserve = {};
   const existingBeforeReset = await getOrCreateConversationState(businessId, rawPhone);
-  languagePreserve = preservedLanguageContext(existingBeforeReset?.context_data);
+  if (preserveLanguage) {
+    languagePreserve = preservedLanguageContext(existingBeforeReset?.context_data);
+  }
   if (keepLastIntent && !hardReset) {
     lastIntent = existingBeforeReset.context_data?.last_booking_intent ?? null;
     recentTurns = existingBeforeReset.context_data?.recent_turns ?? null;

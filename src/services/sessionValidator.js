@@ -83,21 +83,33 @@ function hasInFlightContext(convState) {
 }
 
 /**
- * True when the booking/modify session has been idle longer than TTL.
- * IDLE with no in-flight context is already a clean slate.
+ * True when the last client inbound is older than session TTL.
+ *
+ * Applies to active booking/modify flows AND to IDLE with sticky state
+ * (e.g. language_confirmed) so returning after a long pause never stays
+ * locked on an old session.
+ *
+ * Clean IDLE with nothing sticky is already a blank slate — no expiry needed.
  *
  * @param {ConversationState | null | undefined} convState
  * @param {number} ttlMinutes
  * @param {number} [now]
  */
 export function isConversationSessionExpired(convState, ttlMinutes, now = Date.now()) {
-  const step = String(convState?.current_step || 'IDLE');
-  const active = ACTIVE_STEPS.has(step) || hasInFlightContext(convState);
-  if (!active) return false;
   const ts = readSessionTimestamp(convState);
   if (!ts) return false;
   const ttlMs = Math.max(1, Number(ttlMinutes) || DEFAULT_SESSION_TTL_MINUTES) * 60 * 1000;
-  return now - ts > ttlMs;
+  if (now - ts <= ttlMs) return false;
+
+  const step = String(convState?.current_step || 'IDLE');
+  const ctx = convState?.context_data && typeof convState.context_data === 'object'
+    ? convState.context_data
+    : {};
+  const sticky = ACTIVE_STEPS.has(step)
+    || hasInFlightContext(convState)
+    || ctx.language_confirmed === true
+    || ctx.language_gate_pending === true;
+  return sticky;
 }
 
 /**

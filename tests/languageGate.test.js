@@ -81,6 +81,12 @@ describe('language gate (optional onboarding)', () => {
     );
   });
 
+  it('resolveLanguageChoice still works for mid-session language switch', () => {
+    assert.equal(resolveLanguageChoice({ textBody: 'English' }), 'en');
+    assert.equal(resolveLanguageChoice({ textBody: 'Română' }), 'ro');
+    assert.equal(resolveLanguageChoice({ buttonPayload: LANGUAGE_BUTTONS.EN.id }), 'en');
+  });
+
   it('resolveClientLanguage sticks after confirmation', () => {
     const ctx = { language_confirmed: true, client_language: 'en' };
     assert.equal(resolveClientLanguage('salut vreau programare', 'ro', ctx), 'en');

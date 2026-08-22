@@ -222,8 +222,7 @@ export async function handleLanguageOnboarding({
   convState,
   activeDraft = null,
 }) {
-  const gateOpen = await shouldRunLanguageGate({ business, convState, activeDraft });
-  if (!gateOpen) {
+  if (!isLanguageGateEnabled(business)) {
     return { handled: false };
   }
 
@@ -231,6 +230,28 @@ export async function handleLanguageOnboarding({
     ? convState.context_data.deferred_inbound
     : null;
   const chosen = resolveLanguageChoice({ textBody, buttonPayload });
+
+  // Escape hatch: explicit language tap/type switches even after confirmation
+  // (no need to wait for session TTL to unstick a wrong language).
+  if (chosen && hasConfirmedLanguage(convState)) {
+    const current = convState.context_data?.client_language === 'en' ? 'en' : 'ro';
+    if (chosen === current) {
+      return { handled: false };
+    }
+    await confirmLanguageChoice({
+      business,
+      recipientPhone,
+      lang: chosen,
+      requestId,
+      deferredText: null,
+    });
+    return { handled: true, languageChosen: true, replayText: null };
+  }
+
+  const gateOpen = await shouldRunLanguageGate({ business, convState, activeDraft });
+  if (!gateOpen) {
+    return { handled: false };
+  }
 
   if (chosen) {
     const replay = await confirmLanguageChoice({
