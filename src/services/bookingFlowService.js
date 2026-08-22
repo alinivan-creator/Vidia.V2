@@ -1189,12 +1189,24 @@ async function handleConfirmBooking({ business, recipientPhone, draft, requestId
   }
 
   const confirmSlotId = encodeSlotId(startDate, business.timezone);
+  const empId = draftEmployeeId(draft);
+  const employee = empId ? await getEmployeeById(empId, business.id) : null;
+  const calendarId = resolveEmployeeCalendarId(business, employee);
+
+  await lazySyncCalendar({
+    business,
+    requestId,
+    force: true,
+    calendarId,
+    employeeId: empId,
+  });
+
   const stillAvailable = await isSlotAvailable({
     business,
     slotId: confirmSlotId,
     durationMinutes: duration,
     excludeDraftId: draft.id,
-    employeeId: draftEmployeeId(draft),
+    employeeId: empId,
     excludeGoogleEventIds: [pendingHoldCacheEventId(draft.id)],
   });
   if (!stillAvailable) {
@@ -1223,9 +1235,6 @@ async function handleConfirmBooking({ business, recipientPhone, draft, requestId
   });
   const clientName = client?.display_name?.trim() || '';
   const clientLabel = clientName || phoneE164;
-  const empId = draftEmployeeId(draft);
-  const employee = empId ? await getEmployeeById(empId, business.id) : null;
-  const calendarId = resolveEmployeeCalendarId(business, employee);
 
   const result = await createCalendarEvent({
     business,

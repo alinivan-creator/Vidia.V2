@@ -76,14 +76,31 @@ describe('minimal bilingual UI layer', () => {
     assert.equal(full.length, 3);
   });
 
-  it('localizes confirm buttons for EN without changing ids', () => {
+  it('MISSING_SERVICE renders English when ui_language is en (machine action path)', () => {
+    const text = renderHandlerResult(
+      { id: 'b1', name: 'Salon', timezone: 'Europe/Bucharest' },
+      {
+        user_message_template_key: 'MISSING_SERVICE',
+        machine_action: 'ACTION_ASK_SERVICE',
+        data: {
+          ui_language: 'en',
+          services: [{ id: 's1', name: 'Tuns Clasic', duration_minutes: 30 }],
+        },
+      },
+    );
+    assert.match(text, /Which service would you like/i);
+    assert.doesNotMatch(text, /Ce serviciu dorești/);
+  });
+
+  it('localizes Details & prices menu label for EN', () => {
     const opts = localizeMenuOptions([
-      { id: 'confirm_booking', title: 'Confirmă' },
-      { id: 'cancel_pending', title: 'Anulează' },
+      { id: 'book', title: '📅 Programare' },
+      { id: 'info', title: 'ℹ️ Detalii & Prețuri' },
+      { id: 'contact', title: 'Contact' },
     ], 'en');
-    assert.equal(opts[0].id, 'confirm_booking');
-    assert.equal(opts[0].title, 'Confirm');
-    assert.equal(opts[1].title, 'Cancel');
+    assert.equal(opts[0].title, 'Booking');
+    assert.equal(opts[1].title, 'Details & prices');
+    assert.equal(opts[2].title, 'Contact');
   });
 
   it('ASK_CONFIRM stays Romanian when ui_language is absent', () => {

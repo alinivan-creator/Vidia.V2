@@ -1658,14 +1658,24 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
     });
   }
 
-  // Final lock check before Google write — refuse if another pending/confirmed took the slot.
+  // Final lock check before Google write — force-sync first so a manual Google
+  // event added while the hold was pending cannot be missed by a "fresh" cache.
+  const { employeeId: confirmEmpId, employee: confirmEmp, calendarId: confirmCalId } = await resolveStaff(business, draft);
+  await lazySyncCalendar({
+    business,
+    requestId,
+    force: true,
+    calendarId: confirmCalId,
+    employeeId: confirmEmpId,
+  });
+
   const confirmSlotId = encodeSlotId(startDate, business.timezone);
   const stillAvailable = await isSlotAvailable({
     business,
     slotId: confirmSlotId,
     durationMinutes: duration,
     excludeDraftId: draft.id,
-    employeeId: draftEmployeeId(draft),
+    employeeId: confirmEmpId,
     excludeGoogleEventIds: [pendingHoldCacheEventId(draft.id)],
   });
   if (!stillAvailable) {
@@ -1681,7 +1691,7 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
       recipientPhone,
       draft,
       service,
-      employeeId: draftEmployeeId(draft),
+      employeeId: confirmEmpId,
       dateKey: formatDateKey(startDate, business.timezone),
       requestId,
       reasonKey: 'SLOT_UNAVAILABLE',
@@ -1692,7 +1702,9 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
   const phoneE164 = draft.phone_number;
   const client = await getClientByPhone({ businessId: business.id, rawPhone: recipientPhone, requestId });
   const clientName = client?.display_name?.trim() || '';
-  const { employeeId, employee, calendarId } = await resolveStaff(business, draft);
+  const employeeId = confirmEmpId;
+  const employee = confirmEmp;
+  const calendarId = confirmCalId;
 
   const result = await createCalendarEvent({
     business,

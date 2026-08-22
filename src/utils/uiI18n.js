@@ -233,6 +233,9 @@ export function localizeMenuOptions(options, lang = 'ro') {
     if (title === 'Confirmă' || id.includes('confirm')) next = t('confirmBtn', 'en');
     else if (title === 'Anulează' || id.includes('cancel')) next = t('cancelBtn', 'en');
     else if (/programare/i.test(title) || id.includes('book')) next = 'Booking';
+    else if (/detalii|pre[țt]uri|info/i.test(title) || id.includes('info') || id.includes('detail')) {
+      next = 'Details & prices';
+    }
     else if (/^orar$|program$/i.test(title.replace(/^[^\w]+/, '').trim()) || id.includes('hours')) next = 'Hours';
     else if (/contact/i.test(title)) next = 'Contact';
     else if (title === 'Servicii') next = t('listServices', 'en');

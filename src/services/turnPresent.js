@@ -77,10 +77,12 @@ export function renderHandlerResult(business, result) {
   const lang = normalizeUiLang(d.ui_language);
   const en = lang === 'en';
 
-  // Grid window bodies are authoritative — do not let machine polish overwrite them.
+  // Grid window bodies are authoritative in RO — for EN, prefer bilingual templates /
+  // machine actions so session_language actually switches copy (not only button titles).
   if (
     typeof d.client_message === 'string'
     && d.client_message.trim()
+    && !en
     && (key === 'ASK_DATE' || key === 'ASK_TIME' || key === 'MISSING_SLOT')
   ) {
     return d.client_message.trim();
@@ -192,14 +194,9 @@ export function renderHandlerResult(business, result) {
     }
     case 'MISSING_SERVICE':
       if (en) {
-        return waJoin(
-          waTitle(t('askServiceTitle', 'en')),
-          '',
-          t('askServiceHint', 'en'),
-          `Or type the name — e.g. *${(d.services || [])[0]?.name || 'service'}*.`,
-        );
+        return formatServiceAskMessage(d.services || [], 'en');
       }
-      return formatServiceAskMessage(d.services || []);
+      return formatServiceAskMessage(d.services || [], 'ro');
     case 'ASK_DATE':
       if (en && !(typeof d.client_message === 'string' && d.client_message.trim())) {
         return waJoin(
@@ -412,6 +409,9 @@ export function renderHandlerResult(business, result) {
  */
 async function polishWithAi(business, result, rendered) {
   if (!business?.id || !rendered?.trim()) return null;
+
+  // Never polish EN sessions back into Romanian (formatter hints are RO-only).
+  if (normalizeUiLang(result.data?.ui_language) === 'en') return null;
 
   const action = result.machine_action;
   const templateKey = result.user_message_template_key;

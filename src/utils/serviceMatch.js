@@ -140,10 +140,19 @@ import { waJoin, waTitle } from './waCopy.js';
 
 /**
  * @param {{ name?: string, duration_minutes?: number }[]} services
+ * @param {'ro' | 'en'} [lang]
  */
-export function formatServiceAskMessage(services) {
+export function formatServiceAskMessage(services, lang = 'ro') {
   const list = (Array.isArray(services) ? services : []).filter((s) => s?.name);
-  const example = list[0]?.name || 'programare';
+  const example = list[0]?.name || (lang === 'en' ? 'service' : 'programare');
+  if (lang === 'en') {
+    return waJoin(
+      waTitle('Which service would you like?'),
+      '',
+      'Tap *Services* and pick from the list (duration and price on each option).',
+      `Or type the name — e.g. *${example}*.`,
+    );
+  }
   return waJoin(
     waTitle('Ce serviciu dorești?'),
     '',

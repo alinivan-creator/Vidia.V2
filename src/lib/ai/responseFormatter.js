@@ -117,8 +117,7 @@ export function formatMachineAction({
       );
     }
     case MACHINE_ACTIONS.ACTION_ASK_SERVICE:
-      return formatServiceAskMessage(services);
-    case MACHINE_ACTIONS.ACTION_ASK_DATE:
+      return formatServiceAskMessage(services, en ? 'en' : 'ro');    case MACHINE_ACTIONS.ACTION_ASK_DATE:
       return en
         ? waJoin(
           waTitle(draft.service_name ? `Pick a day — ${draft.service_name}` : 'Pick a day'),
