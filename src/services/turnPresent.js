@@ -3,7 +3,7 @@
  * Must not decide availability, confirm bookings, or invent hours.
  */
 
-import { buildAiTransparencyWelcome, buildBookingConfirmationMessage, buildGdprNote, buildMapsInviteLine, MAPS_ANCHOR_LABEL } from '../utils/businessMessages.js';
+import { buildAiTransparencyWelcome, buildEnglishTransparencyWelcome, buildBookingConfirmationMessage, buildGdprNote, buildMapsInviteLine, MAPS_ANCHOR_LABEL } from '../utils/businessMessages.js';
 import { WA_DIVIDER, waField, waFooter, waJoin, waServiceMeta, waTitle } from '../utils/waCopy.js';
 import { timeWindowBounds } from '../utils/timeWindow.js';
 import { formatContactMessage } from './contactService.js';
@@ -273,7 +273,9 @@ export function renderHandlerResult(business, result) {
     case 'CONTACT':
       return formatContactMessage(business);
     case 'MENU':
-      return buildAiTransparencyWelcome(business);
+      return lang === 'en'
+        ? buildEnglishTransparencyWelcome(business)
+        : buildAiTransparencyWelcome(business);
     case 'CALLBACK_SENT':
       return waJoin(
         waTitle('Cerere înregistrată'),

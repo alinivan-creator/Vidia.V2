@@ -79,7 +79,7 @@ import {
   formatBusinessInfoReply,
   missingBusinessInfoMessage,
 } from '../utils/businessInfoLookup.js';
-import { detectClientLanguage } from '../utils/clientLanguage.js';
+import { resolveClientLanguage } from '../utils/clientLanguage.js';
 import {
   detectModificationIntent,
   refersToSavedAppointments,
@@ -2720,7 +2720,7 @@ async function executeContact(business) {
   });
 }
 
-async function executeMenu(business, recipientPhone, requestId) {
+async function executeMenu(business, recipientPhone, requestId, convState = null) {
   if (business?.id && recipientPhone) {
     await cancelActiveDraftsForPhone({
       businessId: business.id,
@@ -2734,12 +2734,17 @@ async function executeMenu(business, recipientPhone, requestId) {
       requestId,
     });
   }
+  const lang = resolveClientLanguage('', convState?.context_data?.client_language, convState?.context_data);
   return handlerResult({
     status: 'SUCCESS',
     action_performed: 'MENU',
     next_required_step: null,
     user_message_template_key: 'MENU',
-    data: { business_name: business.name, welcome: business.welcome_message || null },
+    data: {
+      business_name: business.name,
+      welcome: business.welcome_message || null,
+      client_language: lang,
+    },
     menu: entryMenu(business),
   });
 }
@@ -3086,7 +3091,7 @@ async function dispatchExecute({
 }) {
   const action = extract.action;
   const intent = convState.context_data?.intent;
-  const lang = detectClientLanguage(textBody, convState?.context_data?.client_language);
+  const lang = resolveClientLanguage(textBody, convState?.context_data?.client_language, convState?.context_data);
 
   // Courtesy must never confirm a hold (stray confirm_booking payload + "Mulțumesc").
   if (action === 'thanks') {
@@ -3475,7 +3480,7 @@ async function dispatchExecute({
   if (action === 'services') return executeServices(business, lang);
   if (action === 'hours_and_services') return executeHoursAndServices(business, lang);
   if (action === 'contact') return executeContact(business);
-  if (action === 'menu') return executeMenu(business, recipientPhone, requestId);
+  if (action === 'menu') return executeMenu(business, recipientPhone, requestId, convState);
   if (action === 'callback') {
     return executeCallback({ business, recipientPhone, extract, clientId, requestId, textBody });
   }

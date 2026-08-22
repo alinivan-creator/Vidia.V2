@@ -25,6 +25,8 @@
  * Cold-start:
  *   First inbound text is parsed for NEW_BOOKING / RESCHEDULE / CANCEL / FAQ immediately.
  *   No greeting gate — "vreau să fac o programare" / "vreau să reprogramez" run without "Salut".
+ *   Optional language gate (OFF by default): LANGUAGE_GATE_ENABLED or booking_settings.language_gate_enabled.
+ *   When enabled, first contact shows RO/EN quick-reply before the booking pipeline; confirmed language persists.
  *   Stale button walls never intercept free-text mid-flow.
  *
  * TTLs (independent):
@@ -46,4 +48,4 @@
  *   Confirmation + Adaugă în calendar URL button.
  *   Name is never asked when Twilio ProfileName / display_name exists.
  */
-export const BOOKING_ARCHITECTURE_VERSION = 'dual-ai-text-first-nlu-v18';
+export const BOOKING_ARCHITECTURE_VERSION = 'dual-ai-text-first-nlu-v19';

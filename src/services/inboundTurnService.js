@@ -10,6 +10,10 @@ import { setClientSmsOptIn } from './smsMarketingService.js';
 import { sendTextMessage } from './whatsappService.js';
 import { triageUserIntent } from './intentTriageService.js';
 import { getBookingConfig } from '../utils/datetime.js';
+import {
+  handleLanguageOnboarding,
+  reloadConversationState,
+} from './languageOnboardingService.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -73,6 +77,34 @@ export async function routeInboundTurn({
   void lastIntent;
   void pendingDismissed;
   void pendingExpired;
+
+  const langGate = await handleLanguageOnboarding({
+    business,
+    recipientPhone,
+    textBody,
+    buttonPayload,
+    requestId,
+    convState,
+    activeDraft,
+  });
+  if (langGate.handled) {
+    if (langGate.replayText) {
+      const freshConv = await reloadConversationState(business, recipientPhone);
+      await processTurnPipeline({
+        business,
+        recipientPhone,
+        textBody: langGate.replayText,
+        buttonPayload: null,
+        buttonTitle: null,
+        typedText: langGate.replayText,
+        clientId,
+        requestId,
+        convState: freshConv,
+        activeDraft,
+      });
+    }
+    return;
+  }
 
   await processTurnPipeline({
     business,

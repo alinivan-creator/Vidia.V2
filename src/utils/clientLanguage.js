@@ -2,6 +2,19 @@
  * Client language from the latest free-text turn. Default Romanian.
  */
 
+/**
+ * @param {string} text
+ * @param {'ro' | 'en' | null | undefined} [previous]
+ * @param {Record<string, unknown> | null | undefined} [context]
+ * @returns {'ro' | 'en'}
+ */
+export function resolveClientLanguage(text, previous = null, context = null) {
+  if (context?.language_confirmed === true) {
+    return context.client_language === 'en' ? 'en' : 'ro';
+  }
+  return detectClientLanguage(text, previous);
+}
+
 function normalize(text) {
   return String(text ?? '')
     .toLowerCase()
