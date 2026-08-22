@@ -25,8 +25,9 @@
  * Cold-start:
  *   First inbound text is parsed for NEW_BOOKING / RESCHEDULE / CANCEL / FAQ immediately.
  *   No greeting gate — "vreau să fac o programare" / "vreau să reprogramez" run without "Salut".
- *   UI copy is Romanian (bilingual gate rolled back for stability). Leftover language_confirmed
- *   fields from old EN tests are scrubbed on inbound and never block booking.
+ *   UI copy defaults to Romanian. Optional EN overlay via uiI18n (`session_language`
+ *   for the active conversation only; cleared on session TTL / hardReset).
+ *   Type *English* / *Română* to switch for the current session.
  *   Stale button walls never intercept free-text mid-flow.
  *
  * TTLs (independent):

@@ -192,10 +192,18 @@ export async function resetConversationState({
 }) {
   let lastIntent = null;
   let recentTurns = null;
+  /** @type {'ro' | 'en' | null} */
+  let sessionLanguage = null;
+  const existing = await getOrCreateConversationState(businessId, rawPhone);
   if (keepLastIntent && !hardReset) {
-    const existing = await getOrCreateConversationState(businessId, rawPhone);
     lastIntent = existing.context_data?.last_booking_intent ?? null;
     recentTurns = existing.context_data?.recent_turns ?? null;
+  }
+  // Keep ephemeral language across soft resets; drop it on hardReset / session TTL.
+  if (!hardReset && existing.context_data?.session_language === 'en') {
+    sessionLanguage = 'en';
+  } else if (!hardReset && existing.context_data?.session_language === 'ro') {
+    sessionLanguage = 'ro';
   }
 
   return setConversationStep({
@@ -231,11 +239,11 @@ export async function resetConversationState({
       google_event_id: null,
       slot_start: null,
       slot_end: null,
-      // Scrub rolled-back language-gate residue so old sessions never stick.
       language_confirmed: null,
       language_gate_pending: null,
       deferred_inbound: null,
-      client_language: 'ro',
+      client_language: null,
+      session_language: sessionLanguage,
     },
     mergeContext: false,
     requestId,

@@ -10,6 +10,8 @@ import { setClientSmsOptIn } from './smsMarketingService.js';
 import { sendTextMessage } from './whatsappService.js';
 import { triageUserIntent } from './intentTriageService.js';
 import { getBookingConfig } from '../utils/datetime.js';
+import { setConversationStep } from '../db/conversationStateService.js';
+import { languageAck, parseLanguageChoice } from '../utils/uiI18n.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -73,6 +75,27 @@ export async function routeInboundTurn({
   void lastIntent;
   void pendingDismissed;
   void pendingExpired;
+
+  // Soft language pick — only when the whole message is a language word / button.
+  // Does not interrupt booking; RO remains default when nothing is chosen.
+  const langPick = parseLanguageChoice({ textBody, buttonPayload });
+  if (langPick) {
+    await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: convState?.current_step || 'IDLE',
+      context: { session_language: langPick },
+      mergeContext: true,
+      requestId,
+    });
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: languageAck(langPick),
+    });
+    return;
+  }
 
   await processTurnPipeline({
     business,

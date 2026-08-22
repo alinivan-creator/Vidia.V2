@@ -24,6 +24,7 @@ import { unknownInfoClientMessage } from '../utils/workingHours.js';
 import { missingBusinessInfoMessage } from '../utils/businessInfoLookup.js';
 import { formatServiceAskMessage, bookingExamplePhrase } from '../utils/serviceMatch.js';
 import { mergeMenuOptions } from '../utils/bookingGrid.js';
+import { t, localizeMenuOptions, normalizeUiLang } from '../utils/uiI18n.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 /** @typedef {import('./handlerResult.js').HandlerResult} HandlerResult */
@@ -51,7 +52,9 @@ function ensureMapsInviteOnConfirmation(business, text) {
 export function renderHandlerResult(business, result) {
   const d = result.data || {};
   const key = result.user_message_template_key;
-  const lang = 'ro';
+  // Optional EN overlay only — default path stays the stable Romanian templates.
+  const lang = normalizeUiLang(d.ui_language);
+  const en = lang === 'en';
 
   // Grid window bodies are authoritative — do not let machine polish overwrite them.
   if (
@@ -89,11 +92,21 @@ export function renderHandlerResult(business, result) {
       return (
         (typeof d.client_message === 'string' && d.client_message)
         || waJoin(
-          waTitle('Cum te cheamă?'),
-          'Prenume și nume — ex: *Ana Popescu*',
+          waTitle(en ? 'What is your name?' : 'Cum te cheamă?'),
+          en ? 'First and last name — e.g. *Ana Popescu*' : 'Prenume și nume — ex: *Ana Popescu*',
         )
       );
     case 'ASK_CONFIRM': {
+      if (en) {
+        return waJoin(
+          waTitle(t('confirmTitle', 'en')),
+          '',
+          waField(t('labelClient', 'en'), d.client_name),
+          waField(t('labelSpecialist', 'en'), d.employee_name),
+          waField(t('labelService', 'en'), d.service_name || t('labelService', 'en')),
+          waField(t('labelWhen', 'en'), d.slot_label || ''),
+        );
+      }
       return waJoin(
         waTitle('Confirmi programarea?'),
         '',
@@ -155,8 +168,22 @@ export function renderHandlerResult(business, result) {
         : intro;
     }
     case 'MISSING_SERVICE':
+      if (en) {
+        return waJoin(
+          waTitle(t('askServiceTitle', 'en')),
+          '',
+          t('askServiceHint', 'en'),
+          `Or type the name — e.g. *${(d.services || [])[0]?.name || 'service'}*.`,
+        );
+      }
       return formatServiceAskMessage(d.services || []);
     case 'ASK_DATE':
+      if (en && !(typeof d.client_message === 'string' && d.client_message.trim())) {
+        return waJoin(
+          waTitle(d.service_name ? `${t('askDayTitle', 'en')} — ${d.service_name}` : t('askDayTitle', 'en')),
+          t('askDayHint', 'en'),
+        );
+      }
       return (
         (typeof d.client_message === 'string' && d.client_message)
         || waJoin(
@@ -169,6 +196,14 @@ export function renderHandlerResult(business, result) {
         return d.client_message.trim();
       }
       const bounds = timeWindowBounds(d.time_window);
+      if (en) {
+        const windowHint = bounds ? ` (${bounds.labelEn || bounds.labelRo})` : '';
+        return waJoin(
+          waTitle(d.service_name ? `${t('askTimeTitle', 'en')} — ${d.service_name}${windowHint}` : `${t('askTimeTitle', 'en')}${windowHint}`),
+          d.date_label ? `*${t('labelDate', 'en')}*\n${d.date_label}` : null,
+          t('askTimeHint', 'en'),
+        );
+      }
       const windowHint = bounds ? ` (${bounds.labelRo})` : '';
       return waJoin(
         waTitle(d.service_name ? `Alege ora — ${d.service_name}${windowHint}` : `Alege ora${windowHint}`),
@@ -463,6 +498,8 @@ export async function presentTurn({
     text = ensureMapsInviteOnConfirmation(business, text);
   }
   const d = result.data || {};
+  const lang = normalizeUiLang(d.ui_language);
+  const en = lang === 'en';
 
   await simulateHumanDelay({ business, recipientPhone, requestId });
 
@@ -484,7 +521,7 @@ export async function presentTurn({
       recipientPhone,
       requestId,
       text,
-      buttonTitle: result.calendar_cta.title || 'Adaugă în calendar',
+      buttonTitle: result.calendar_cta.title || (en ? t('addCalendar', 'en') : 'Adaugă în calendar'),
       buttonUrl: result.calendar_cta.url,
     });
     return;
@@ -494,7 +531,7 @@ export async function presentTurn({
     const buttons = Array.isArray(d.link_ctas) && d.link_ctas.length
       ? d.link_ctas
       : [
-        d.maps_cta?.url ? { title: d.maps_cta.title || 'Vezi locația', url: d.maps_cta.url } : null,
+        d.maps_cta?.url ? { title: d.maps_cta.title || (en ? t('seeLocation', 'en') : 'Vezi locația'), url: d.maps_cta.url } : null,
         d.website_cta?.url ? { title: d.website_cta.title || 'Website', url: d.website_cta.url } : null,
       ].filter(Boolean);
     const [first, ...rest] = buttons;
@@ -519,7 +556,7 @@ export async function presentTurn({
       recipientPhone,
       flowId: String(d.flow_id),
       bodyText: text,
-      cta: 'Deschide calendarul',
+      cta: en ? t('openCalendar', 'en') : 'Deschide calendarul',
       requestId,
       flowToken: typeof d.flow_token === 'string' ? d.flow_token : null,
     });
@@ -572,15 +609,16 @@ export async function presentTurn({
     if (result.user_message_template_key === 'MENU') {
       await sendTextMessage({ business, recipientPhone, requestId, text });
       await simulateHumanDelay({ business, recipientPhone, requestId, delayMs: 800 });
+      const menuButtons = localizeMenuOptions(result.menu.options, lang);
       await sendInteractiveButtons({
         business,
         recipientPhone,
         requestId,
-        bodyText: 'Cu ce te putem ajuta?',
-        buttons: result.menu.options,
+        bodyText: en ? t('menuFooter', 'en') : 'Cu ce te putem ajuta?',
+        buttons: menuButtons,
         footerText: business.name,
         menuKind: result.menu.kind || 'entry',
-        rememberOptions: mergeMenuOptions(result.menu.options, result.menu.catalog || []),
+        rememberOptions: mergeMenuOptions(menuButtons, localizeMenuOptions(result.menu.catalog || [], lang)),
       });
       return;
     }
@@ -593,9 +631,27 @@ export async function presentTurn({
       || (kind === 'time_grid' && result.menu.options.length > 3);
 
     if (wantsList) {
-      const buttonLabel = typeof d.list_button === 'string' && d.list_button
-        ? d.list_button
-        : (kind === 'day_grid' ? 'Zile disponibile' : kind === 'service' ? 'Servicii' : kind === 'modify' ? 'Programările tale' : 'Ore libere');
+      const buttonLabel = en
+        ? (kind === 'day_grid' ? t('listDays', 'en')
+          : kind === 'service' ? t('listServices', 'en')
+            : kind === 'modify' ? t('listAppointments', 'en')
+              : t('listTimes', 'en'))
+        : (typeof d.list_button === 'string' && d.list_button
+          ? d.list_button
+          : (kind === 'day_grid' ? 'Zile disponibile' : kind === 'service' ? 'Servicii' : kind === 'modify' ? 'Programările tale' : 'Ore libere'));
+      const sectionTitle = en
+        ? (kind === 'day_grid' ? t('sectionDays', 'en')
+          : kind === 'service' ? t('sectionServices', 'en')
+            : kind === 'modify' ? t('sectionAppointments', 'en')
+              : t('sectionTimes', 'en'))
+        : (kind === 'day_grid' ? 'Zile' : kind === 'service' ? 'Servicii' : kind === 'modify' ? 'Programări' : 'Ore');
+      const rowDesc = en
+        ? (kind === 'day_grid' ? t('available', 'en')
+          : kind === 'service' ? t('fromCatalog', 'en')
+            : kind === 'modify' ? t('activeBooking', 'en')
+              : t('freeSlot', 'en'))
+        : (kind === 'day_grid' ? 'Disponibil' : kind === 'service' ? 'Din catalog' : kind === 'modify' ? 'Programare activă' : 'Liber');
+      const listOptions = localizeMenuOptions(result.menu.options, lang);
       await sendInteractiveList({
         business,
         recipientPhone,
@@ -603,30 +659,31 @@ export async function presentTurn({
         bodyText: text,
         buttonText: buttonLabel,
         sections: [{
-          title: kind === 'day_grid' ? 'Zile' : kind === 'service' ? 'Servicii' : kind === 'modify' ? 'Programări' : 'Ore',
-          rows: result.menu.options.map((opt) => ({
+          title: sectionTitle,
+          rows: listOptions.map((opt) => ({
             id: opt.id,
             title: opt.title,
-            description: opt.description || (kind === 'day_grid' ? 'Disponibil' : kind === 'service' ? 'Din catalog' : kind === 'modify' ? 'Programare activă' : 'Liber'),
+            description: opt.description || rowDesc,
           })),
         }],
         footerText: business.name,
         menuKind: kind || 'list',
         // Must include page nav ids (grid_next / grid_prev) + full catalog for this picker.
-        rememberOptions: mergeMenuOptions(result.menu.options, result.menu.catalog || []),
+        rememberOptions: mergeMenuOptions(listOptions, localizeMenuOptions(result.menu.catalog || [], lang)),
       });
       return;
     }
 
+    const btnOptions = localizeMenuOptions(result.menu.options, lang);
     await sendInteractiveButtons({
       business,
       recipientPhone,
       requestId,
       bodyText: text,
-      buttons: result.menu.options,
+      buttons: btnOptions,
       footerText: business.name,
       menuKind: kind || 'generic',
-      rememberOptions: mergeMenuOptions(result.menu.options, result.menu.catalog || []),
+      rememberOptions: mergeMenuOptions(btnOptions, localizeMenuOptions(result.menu.catalog || [], lang)),
     });
     return;
   }

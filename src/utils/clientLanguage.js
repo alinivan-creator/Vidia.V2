@@ -1,46 +1,43 @@
 /**
- * Client UI language helpers.
+ * Client UI language — ephemeral session only (no permanent lock).
  *
- * Bilingual gate/i18n was rolled back for stability. Templates stay Romanian.
- * These helpers only normalize / scrub leftover session fields so old Supabase
- * rows never crash or lock the booking flow.
+ * - Default / corrupt / unknown → Romanian (`ro`)
+ * - Active choice lives in `context_data.session_language` for the conversation TTL
+ * - Legacy language-gate fields are scrubbed and never block booking
  */
+
+import { normalizeUiLang, readSessionLanguage } from './uiI18n.js';
 
 /**
  * @param {unknown} value
  * @returns {'ro' | 'en'}
  */
 export function normalizeClientLanguage(value) {
-  if (value === 'en' || value === 'EN') return 'en';
-  if (value === 'ro' || value === 'RO') return 'ro';
-  return 'ro';
+  return normalizeUiLang(value);
 }
 
 /**
- * Resolve presentation language. Always Romanian until a clean bilingual layer ships.
- * Corrupt / null / unknown session values must never block the flow.
- *
  * @param {string} [_text]
  * @param {unknown} [_previous]
- * @param {Record<string, unknown> | null | undefined} [_context]
- * @returns {'ro'}
+ * @param {Record<string, unknown> | null | undefined} [context]
+ * @returns {'ro' | 'en'}
  */
-export function resolveClientLanguage(_text = '', _previous = null, _context = null) {
-  return 'ro';
+export function resolveClientLanguage(_text = '', _previous = null, context = null) {
+  return readSessionLanguage(context);
 }
 
 /**
- * @param {string} _text
+ * @param {string} [_text]
  * @param {unknown} [_previous]
- * @returns {'ro'}
+ * @returns {'ro' | 'en'}
  */
 export function detectClientLanguage(_text, _previous = null) {
-  return 'ro';
+  return normalizeUiLang(_previous);
 }
 
 /**
- * Fields left by the rolled-back language gate. Clearing them on inbound
- * unsticks numbers that tested English / got language_confirmed stuck.
+ * Clear rolled-back permanent language-gate residue. Does not clear
+ * `session_language` (ephemeral choice for the active conversation).
  *
  * @param {Record<string, unknown> | null | undefined} ctx
  * @returns {Record<string, unknown>}
@@ -50,22 +47,22 @@ export function languageScrubPatch(ctx) {
     ctx?.language_confirmed != null
     || ctx?.language_gate_pending != null
     || ctx?.deferred_inbound != null
-    || (ctx?.client_language != null && ctx.client_language !== 'ro' && ctx.client_language !== 'en');
+    || (ctx?.client_language != null
+      && ctx.client_language !== 'ro'
+      && ctx.client_language !== 'en'
+      && ctx.client_language !== null);
 
-  if (!hasSticky && (ctx?.client_language === 'ro' || ctx?.client_language == null)) {
-    return {};
-  }
+  if (!hasSticky) return {};
 
   return {
     language_confirmed: null,
     language_gate_pending: null,
     deferred_inbound: null,
-    client_language: 'ro',
+    client_language: null,
   };
 }
 
 /**
- * True when context still carries experimental language-gate residue.
  * @param {Record<string, unknown> | null | undefined} ctx
  */
 export function needsLanguageScrub(ctx) {

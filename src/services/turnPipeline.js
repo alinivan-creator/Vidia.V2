@@ -10,6 +10,7 @@ import { extractTurnIntent } from './turnExtract.js';
 import { runExecutionAgent } from './executionAgent.js';
 import { presentTurn } from './turnPresent.js';
 import { readInboundStamp } from './sessionValidator.js';
+import { readSessionLanguage } from '../utils/uiI18n.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -70,21 +71,31 @@ export async function processTurnPipeline({
     textBody,
   });
 
+  const uiLang = readSessionLanguage(convState?.context_data);
+  const localized = {
+    ...result,
+    data: {
+      ...(result.data || {}),
+      ui_language: uiLang,
+    },
+  };
+
   debugLog('turn-pipeline execute', {
     requestId,
     status: envelope.status,
     action_performed: envelope.action,
     next_required_step: envelope.next_step,
-    machine_action: result.machine_action ?? null,
+    machine_action: localized.machine_action ?? null,
+    ui_language: uiLang,
   });
 
   await presentTurn({
     business,
     recipientPhone,
-    result,
+    result: localized,
     requestId,
     turnStamp: readInboundStamp(convState),
   });
 
-  return { extract, result, envelope };
+  return { extract, result: localized, envelope };
 }

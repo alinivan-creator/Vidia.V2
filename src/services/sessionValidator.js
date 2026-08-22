@@ -84,7 +84,8 @@ function hasInFlightContext(convState) {
 
 /**
  * True when the booking/modify session has been idle longer than TTL.
- * IDLE with no in-flight context is already a clean slate.
+ * Also expires IDLE sessions that only hold an ephemeral language choice,
+ * so the next conversation can pick RO/EN again.
  *
  * @param {ConversationState | null | undefined} convState
  * @param {number} ttlMinutes
@@ -92,7 +93,11 @@ function hasInFlightContext(convState) {
  */
 export function isConversationSessionExpired(convState, ttlMinutes, now = Date.now()) {
   const step = String(convState?.current_step || 'IDLE');
-  const active = ACTIVE_STEPS.has(step) || hasInFlightContext(convState);
+  const ctx = convState?.context_data && typeof convState.context_data === 'object'
+    ? convState.context_data
+    : {};
+  const stickyLang = ctx.session_language === 'en' || ctx.session_language === 'ro';
+  const active = ACTIVE_STEPS.has(step) || hasInFlightContext(convState) || stickyLang;
   if (!active) return false;
   const ts = readSessionTimestamp(convState);
   if (!ts) return false;
