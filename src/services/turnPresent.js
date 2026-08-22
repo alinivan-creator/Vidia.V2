@@ -156,12 +156,12 @@ export function renderHandlerResult(business, result) {
         return d.client_message.trim();
       }
       return waJoin(
-        waTitle('Gata, am mutat programarea'),
+        waTitle(en ? t('rescheduledTitle', 'en') : t('rescheduledTitle', 'ro')),
         '',
-        waField('Serviciu', d.service_name || 'Serviciu'),
-        waField('Noua dată', d.slot_label || ''),
+        waField(en ? t('labelService', 'en') : t('labelService', 'ro'), d.service_name || (en ? 'Service' : 'Serviciu')),
+        waField(en ? t('labelNewDate', 'en') : t('labelNewDate', 'ro'), d.slot_label || ''),
         '',
-        'Te așteptăm! Dacă mai schimbi ceva, scrie *reprogramare* sau *anulează*.',
+        en ? t('rescheduledHint', 'en') : t('rescheduledHint', 'ro'),
       );
     }
     case 'CONFIRMATION_CANCELLED':
@@ -169,8 +169,8 @@ export function renderHandlerResult(business, result) {
         return d.client_message.trim();
       }
       return waJoin(
-        waTitle('Am anulat programarea'),
-        'Când vrei din nou, scrie *programare* — te ajut eu.',
+        waTitle(en ? t('cancelledTitle', 'en') : t('cancelledTitle', 'ro')),
+        en ? t('cancelledHint', 'en') : t('cancelledHint', 'ro'),
       );
     case 'CANCEL_PENDING':
       return lang === 'en'
@@ -271,21 +271,24 @@ export function renderHandlerResult(business, result) {
       );
     }
     case 'MISSING_APPOINTMENT': {
-      const intent = d.intent === 'cancel' ? 'anulăm' : 'mutăm';
-      const custom = typeof d.client_message === 'string' && d.client_message.trim()
+      const body = typeof d.client_message === 'string' && d.client_message.trim()
         ? d.client_message.trim()
-        : `Am găsit câteva programări. Pe care o ${intent}?`;
-      return waJoin(waTitle('Programările tale'), custom);
+        : t(d.intent === 'cancel' ? 'whichToCancel' : 'whichToMove', lang);
+      return waJoin(waTitle(t('listAppointments', lang)), body);
     }
     case 'CONFIRM_CANCEL':
       if (typeof d.client_message === 'string' && d.client_message.trim()) {
-        return waJoin(waTitle('Confirmi anularea?'), '', d.client_message.trim());
+        return waJoin(
+          waTitle(en ? 'Confirm cancellation?' : 'Confirmi anularea?'),
+          '',
+          d.client_message.trim(),
+        );
       }
       return waJoin(
-        waTitle('Confirmi anularea?'),
+        waTitle(en ? 'Confirm cancellation?' : 'Confirmi anularea?'),
         '',
-        waField('Serviciu', d.service_name || 'Programare'),
-        waField('Când', d.slot_label || ''),
+        waField(en ? t('labelService', 'en') : t('labelService', 'ro'), d.service_name || (en ? 'Appointment' : 'Programare')),
+        waField(en ? t('labelWhen', 'en') : t('labelWhen', 'ro'), d.slot_label || ''),
       );
     case 'CLOSED_HOURS':
     case 'ERROR_DURATION':
@@ -343,21 +346,21 @@ export function renderHandlerResult(business, result) {
       const rows = d.appointments || [];
       if (!rows.length) {
         return waJoin(
-          waTitle('Programările tale'),
-          'Nicio programare activă.',
+          waTitle(t('listAppointments', lang)),
+          t('noActiveAppts', lang),
           '',
-          'Pentru una nouă: *luni la 17*',
+          t('myApptsEmptyHint', lang),
         );
       }
-      const lines = rows.map((a) => `• *${a.service_name || 'Programare'}*\n  ${a.slot_label || ''}`);
+      const lines = rows.map((a) => `• *${a.service_name || (en ? 'Appointment' : 'Programare')}*\n  ${a.slot_label || ''}`);
       return waJoin(
-        waTitle('Programările tale'),
+        waTitle(t('listAppointments', lang)),
         '',
         lines.join('\n\n'),
         '',
         WA_DIVIDER,
         '',
-        waFooter(['*anulează*', '*reprogramare*']),
+        waFooter(en ? ['*cancel*', '*reschedule*'] : ['*anulează*', '*reprogramare*']),
       );
     }
     case 'CHAT_FALLBACK':

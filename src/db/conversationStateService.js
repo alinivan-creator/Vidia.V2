@@ -136,7 +136,19 @@ export async function setConversationStep({
     nextContext = { ...existingCtx, ...context };
   } else {
     nextContext = { ...context };
-    for (const key of ['recent_turns', 'last_menu', 'last_booking_intent', 'pending_offer', 'clarified', 'draft_booking']) {
+    // Preserve session UX + short memory when callers replace booking fields.
+    for (const key of [
+      'recent_turns',
+      'last_menu',
+      'last_booking_intent',
+      'pending_offer',
+      'clarified',
+      'draft_booking',
+      'session_language',
+      'ai_disclosed',
+      'session_timestamp',
+      'last_inbound_at',
+    ]) {
       if (!Object.prototype.hasOwnProperty.call(context, key) && existingCtx[key] !== undefined) {
         nextContext[key] = existingCtx[key];
       }
@@ -188,22 +200,29 @@ export async function resetConversationState({
   keepLastIntent = true,
   /** After a successful booking — drop recent turns / offers so the next message starts clean. */
   hardReset = false,
+  /**
+   * Drop ephemeral UX session (language + AI disclosure).
+   * Only for conversation TTL / *restart session* — never after cancel / book / reschedule.
+   */
+  clearSessionUx = false,
   requestId = null,
 }) {
   let lastIntent = null;
   let recentTurns = null;
   /** @type {'ro' | 'en' | null} */
   let sessionLanguage = null;
+  /** @type {true | null} */
+  let aiDisclosed = null;
   const existing = await getOrCreateConversationState(businessId, rawPhone);
   if (keepLastIntent && !hardReset) {
     lastIntent = existing.context_data?.last_booking_intent ?? null;
     recentTurns = existing.context_data?.recent_turns ?? null;
   }
-  // Keep ephemeral language across soft resets; drop it on hardReset / session TTL.
-  if (!hardReset && existing.context_data?.session_language === 'en') {
-    sessionLanguage = 'en';
-  } else if (!hardReset && existing.context_data?.session_language === 'ro') {
-    sessionLanguage = 'ro';
+  // Keep language + AI disclosure across booking resets; clear only on session UX expiry.
+  if (!clearSessionUx) {
+    if (existing.context_data?.session_language === 'en') sessionLanguage = 'en';
+    else if (existing.context_data?.session_language === 'ro') sessionLanguage = 'ro';
+    if (existing.context_data?.ai_disclosed === true) aiDisclosed = true;
   }
 
   return setConversationStep({
@@ -244,7 +263,7 @@ export async function resetConversationState({
       deferred_inbound: null,
       client_language: null,
       session_language: sessionLanguage,
-      ai_disclosed: null,
+      ai_disclosed: aiDisclosed,
     },
     mergeContext: false,
     requestId,

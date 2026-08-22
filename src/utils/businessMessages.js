@@ -73,7 +73,7 @@ export function alreadyDisclosesAi(text) {
 
 /**
  * Whether this conversation thread still needs the mandatory first-contact
- * AI + GDPR disclosure (cleared on hardReset / session TTL).
+ * AI + GDPR disclosure (cleared only on session TTL / restart session).
  * @param {Record<string, unknown> | null | undefined} ctx
  */
 export function needsAiDisclosure(ctx) {

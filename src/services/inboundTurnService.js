@@ -17,7 +17,6 @@ import { triageUserIntent } from './intentTriageService.js';
 import { getBookingConfig } from '../utils/datetime.js';
 import { setConversationStep } from '../db/conversationStateService.js';
 import {
-  languageAck,
   parseLanguageChoice,
   isRestartSessionCommand,
   hasExplicitSessionLanguage,
@@ -25,11 +24,10 @@ import {
   entryMenuBodyText,
   withEnglishSwitchOption,
   localizeMenuOptions,
-  t,
 } from '../utils/uiI18n.js';
 import {
   needsAiDisclosure,
-  withMandatoryAiDisclosure,
+  buildMandatoryAiDisclosure,
   buildAiTransparencyWelcome,
 } from '../utils/businessMessages.js';
 import { resetExpiredSessionForRestart } from './pendingExpiryCron.js';
@@ -212,22 +210,23 @@ export async function routeInboundTurn({
       requestId,
     }) || nextConv;
 
-    const ack = languageAck(langPick);
-    await sendTextMessage({
-      business,
-      recipientPhone,
-      requestId,
-      text: mustDisclose
-        ? withMandatoryAiDisclosure(ack, business, langPick)
-        : ack,
-    });
-    // Offer the entry menu only when idle — mid-flow just switches language for later copy.
+    // Once per session, right after language choice — never the old "Great! We will…".
+    if (mustDisclose) {
+      await sendTextMessage({
+        business,
+        recipientPhone,
+        requestId,
+        text: buildMandatoryAiDisclosure(business, langPick),
+      });
+    }
+    // Always refresh the entry menu in the chosen language when idle.
     if (step === 'IDLE' || step === 'idle') {
       await sendFreshEntryMenu({
         business,
         recipientPhone,
         requestId,
         lang: langPick,
+        bodyText: entryMenuBodyText(langPick),
       });
     }
     return;

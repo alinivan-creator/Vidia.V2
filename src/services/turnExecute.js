@@ -81,6 +81,7 @@ import {
   missingBusinessInfoMessage,
 } from '../utils/businessInfoLookup.js';
 import { resolveClientLanguage } from '../utils/clientLanguage.js';
+import { t } from '../utils/uiI18n.js';
 import {
   detectModificationIntent,
   refersToSavedAppointments,
@@ -663,11 +664,12 @@ function resolveAppointmentForModify(appointments, extract, convState, business,
   );
 }
 
-function appointmentChoiceMenu(appointments, business, { includeCancelAll = false } = {}) {
+function appointmentChoiceMenu(appointments, business, { includeCancelAll = false, lang = 'ro' } = {}) {
   return buildAppointmentChoiceMenu(appointments, business.timezone, {
     includeCancelAll,
     apptPrefix: MOD_PREFIX.APPT,
     cancelAllId: MOD_PREFIX.CANCEL_ALL,
+    lang,
   });
 }
 
@@ -684,8 +686,10 @@ async function askWhichAppointment({
   clientMessage = null,
   includeCancelAll = false,
   extraContext = {},
+  lang = 'ro',
 }) {
-  const options = appointmentChoiceMenu(appointments, business, { includeCancelAll });
+  const uiLang = lang === 'en' ? 'en' : 'ro';
+  const options = appointmentChoiceMenu(appointments, business, { includeCancelAll, lang: uiLang });
   await setConversationStep({
     businessId: business.id,
     rawPhone: recipientPhone,
@@ -707,7 +711,7 @@ async function askWhichAppointment({
       intent,
       appointments: options,
       client_message: clientMessage,
-      list_button: 'Programările tale',
+      list_button: uiLang === 'en' ? 'Your appointments' : 'Programările tale',
     },
     menu: { kind: 'modify', options, catalog: options },
   });
@@ -2583,17 +2587,19 @@ async function applyReschedule({
     requestId,
   });
 
+  const uiLang = resolveClientLanguage('', null, convState?.context_data);
+  const whenLabel = formatSlotLabel(slotStart, business.timezone, uiLang);
   return handlerResult({
     status: 'SUCCESS',
     action_performed: 'RESCHEDULED',
     next_required_step: null,
     user_message_template_key: 'CONFIRMATION_RESCHEDULE',
     data: {
-      service_name: service.name || 'Programare',
-      slot_label: formatSlotLabel(slotStart, business.timezone),
-      client_message:
-        `Gata — am mutat programarea ta la *${service.name || 'serviciu'}* pe *${formatSlotLabel(slotStart, business.timezone)}*. ` +
-        'Te așteptăm cu drag! Dacă mai schimbi ceva, scrie *reprogramare*.',
+      service_name: service.name || (uiLang === 'en' ? 'Appointment' : 'Programare'),
+      slot_label: whenLabel,
+      client_message: uiLang === 'en'
+        ? `Done — I moved your appointment for *${service.name || 'service'}* to *${whenLabel}*. See you soon! To change again, type *reschedule*.`
+        : `Gata — am mutat programarea ta la *${service.name || 'serviciu'}* pe *${whenLabel}*. Te așteptăm cu drag! Dacă mai schimbi ceva, scrie *reprogramare*.`,
     },
     calendar_cta: calendarCta(business, service.name, slotStart, slotEnd),
   });
@@ -2606,7 +2612,9 @@ async function executeReschedule({
   activeDraft,
   convState,
   requestId,
+  textBody = '',
 }) {
+  const lang = resolveClientLanguage(textBody, null, convState?.context_data);
   if (activeDraft && ['browsing', 'pending_confirmation'].includes(activeDraft.state)) {
     await cancelOrResetDraft({
       draftId: activeDraft.id,
@@ -2622,7 +2630,7 @@ async function executeReschedule({
     return handlerResult({
       status: 'ERROR',
       user_message_template_key: 'ERROR_NO_APPOINTMENT',
-      data: { client_message: 'Nu am găsit o programare activă de modificat. Scrie *programare* pentru una nouă.' },
+      data: { client_message: t('noApptReschedule', lang) },
     });
   }
 
@@ -2635,7 +2643,7 @@ async function executeReschedule({
   if (!appointment) {
     const pool = resolved.candidates?.length ? resolved.candidates : appointments;
     const clientMessage = resolved.reason === 'ambiguous'
-      ? 'Am găsit mai multe programări pe intervalul menționat. Care o mutăm?'
+      ? t('whichAmbiguousMove', lang)
       : null;
     return askWhichAppointment({
       business,
@@ -2644,6 +2652,7 @@ async function executeReschedule({
       intent: 'reschedule',
       requestId,
       clientMessage,
+      lang,
       extraContext: {
         // Keep new-slot hints so the next turn can apply them after choice.
         pending_date_text: extract.date_text || null,
@@ -2717,9 +2726,10 @@ async function executeReschedule({
   }
 
   const oldWhen = appointment.selected_slot_start
-    ? formatSlotLabel(new Date(appointment.selected_slot_start), business.timezone)
+    ? formatSlotLabel(new Date(appointment.selected_slot_start), business.timezone, lang)
     : null;
-  const serviceName = /** @type {{ name?: string }} */ (appointment.selected_service ?? {}).name || 'programarea';
+  const serviceName = /** @type {{ name?: string }} */ (appointment.selected_service ?? {}).name
+    || (lang === 'en' ? 'your appointment' : 'programarea');
   return askDateGridResult({
     business,
     recipientPhone,
@@ -2728,10 +2738,13 @@ async function executeReschedule({
     requestId,
     conversationStep: CONVERSATION_STEPS.RESCHEDULING,
     extraContext,
-    clientMessage:
-      `Reprogramăm *${serviceName}*` +
-      (oldWhen ? ` de *${oldWhen}*` : '') +
-      '. Alege mai întâi *ziua nouă* — orele apar după ce ai ales data.',
+    clientMessage: lang === 'en'
+      ? `Let's reschedule *${serviceName}*`
+        + (oldWhen ? ` from *${oldWhen}*` : '')
+        + '. First pick the *new day* — times appear after you choose the date.'
+      : `Reprogramăm *${serviceName}*`
+        + (oldWhen ? ` de *${oldWhen}*` : '')
+        + '. Alege mai întâi *ziua nouă* — orele apar după ce ai ales data.',
   });
 }
 
@@ -2744,6 +2757,7 @@ async function executeCancel({
   requestId,
   textBody = '',
 }) {
+  const lang = resolveClientLanguage(textBody, null, convState?.context_data);
   const inModifyFlow = convState.current_step === CONVERSATION_STEPS.CONFIRMING_CANCEL
     || convState.current_step === CONVERSATION_STEPS.MODIFYING
     || convState.current_step === CONVERSATION_STEPS.RESCHEDULING;
@@ -2780,7 +2794,7 @@ async function executeCancel({
     return handlerResult({
       status: 'ERROR',
       user_message_template_key: 'ERROR_NO_APPOINTMENT',
-      data: { client_message: 'Nu am găsit o programare activă de anulat. Scrie *programare* pentru una nouă.' },
+      data: { client_message: t('noApptCancel', lang) },
     });
   }
 
@@ -2805,15 +2819,20 @@ async function executeCancel({
         intent: 'cancel',
         requestId,
         includeCancelAll,
-        clientMessage: `Nu am găsit o programare la *${hint}*. Care vrei să anulezi?`,
+        lang,
+        clientMessage: lang === 'en'
+          ? `I could not find an appointment at *${hint}*. Which one do you want to cancel?`
+          : `Nu am găsit o programare la *${hint}*. Care vrei să anulezi?`,
       });
     }
 
     const pool = resolved.candidates?.length ? resolved.candidates : appointments;
     const clientMessage = resolved.reason === 'ambiguous'
-      ? 'Am găsit mai multe programări pe intervalul menționat. Care o anulezi?'
+      ? t('whichAmbiguousCancel', lang)
       : (includeCancelAll
-        ? `Ai ${pool.length} programări. Alege una sau anulează-le pe toate.`
+        ? (lang === 'en'
+          ? `You have ${pool.length} appointments. Pick one or cancel all.`
+          : `Ai ${pool.length} programări. Alege una sau anulează-le pe toate.`)
         : null);
     return askWhichAppointment({
       business,
@@ -2822,13 +2841,18 @@ async function executeCancel({
       intent: 'cancel',
       requestId,
       includeCancelAll,
+      lang,
       clientMessage,
     });
   }
 
   const when = appointment.selected_slot_start
-    ? formatSlotLabel(new Date(appointment.selected_slot_start), business.timezone)
+    ? formatSlotLabel(new Date(appointment.selected_slot_start), business.timezone, lang)
     : '—';
+  const cancelOpts = [
+    { id: MOD_PREFIX.CONFIRM_CANCEL, title: lang === 'en' ? 'Cancel' : 'Anulează' },
+    { id: MOD_PREFIX.ABORT, title: lang === 'en' ? 'Never mind' : 'Renunță' },
+  ];
   await setConversationStep({
     businessId: business.id,
     rawPhone: recipientPhone,
@@ -2842,10 +2866,7 @@ async function executeCancel({
       slot_end: appointment.selected_slot_end,
       last_menu: {
         kind: 'confirm',
-        options: [
-          { id: MOD_PREFIX.CONFIRM_CANCEL, title: 'Anulează' },
-          { id: MOD_PREFIX.ABORT, title: 'Renunță' },
-        ],
+        options: cancelOpts,
       },
     },
     mergeContext: false,
@@ -2856,15 +2877,12 @@ async function executeCancel({
     next_required_step: 'CONFIRM_CANCEL',
     user_message_template_key: 'CONFIRM_CANCEL',
     data: {
-      service_name: appointment.selected_service?.name || 'Programare',
+      service_name: appointment.selected_service?.name || (lang === 'en' ? 'Appointment' : 'Programare'),
       slot_label: when,
     },
     menu: {
       kind: 'confirm',
-      options: [
-        { id: MOD_PREFIX.CONFIRM_CANCEL, title: 'Anulează' },
-        { id: MOD_PREFIX.ABORT, title: 'Renunță' },
-      ],
+      options: cancelOpts,
     },
   });
 }
@@ -3031,21 +3049,24 @@ async function executeSetName({ business, recipientPhone, extract, activeDraft, 
   });
 }
 
-async function executeListAppointments({ business, recipientPhone, activeDraft }) {
+async function executeListAppointments({ business, recipientPhone, activeDraft, lang = 'ro' }) {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   const upcoming = await listUpcomingConfirmedBookings(business.id, recipientPhone);
   const pending = activeDraft?.state === 'pending_confirmation' ? activeDraft : null;
   const rows = upcoming.map((a) => {
     const service = /** @type {{ name?: string }} */ (a.selected_service ?? {});
     const when = a.selected_slot_start
-      ? formatSlotLabel(new Date(a.selected_slot_start), business.timezone)
+      ? formatSlotLabel(new Date(a.selected_slot_start), business.timezone, uiLang)
       : '—';
-    return { service_name: service.name || 'Programare', slot_label: when };
+    return { service_name: service.name || (uiLang === 'en' ? 'Appointment' : 'Programare'), slot_label: when };
   });
   if (pending?.selected_slot_start) {
     const service = /** @type {{ name?: string }} */ (pending.selected_service ?? {});
     rows.unshift({
-      service_name: `${service.name || 'Programare'} (în așteptarea confirmării)`,
-      slot_label: formatSlotLabel(new Date(pending.selected_slot_start), business.timezone),
+      service_name: uiLang === 'en'
+        ? `${service.name || 'Appointment'} (awaiting confirmation)`
+        : `${service.name || 'Programare'} (în așteptarea confirmării)`,
+      slot_label: formatSlotLabel(new Date(pending.selected_slot_start), business.timezone, uiLang),
     });
   }
   return handlerResult({
@@ -3362,6 +3383,7 @@ async function dispatchExecute({
       activeDraft: draft,
       convState,
       requestId,
+      textBody,
     });
   }
 
@@ -3655,7 +3677,7 @@ async function dispatchExecute({
   }
 
   if (action === 'list_appointments') {
-    return executeListAppointments({ business, recipientPhone, activeDraft: draft });
+    return executeListAppointments({ business, recipientPhone, activeDraft: draft, lang });
   }
   if (action === 'revise_draft') {
     return executeReviseDraft({

@@ -26,20 +26,24 @@
  *   First inbound text is parsed for NEW_BOOKING / RESCHEDULE / CANCEL / FAQ immediately.
  *   No greeting gate — "vreau să fac o programare" / "vreau să reprogramez" run without "Salut".
  *   First bot reply on a new thread always includes mandatory AI + short GDPR disclosure
- *   (`ai_disclosed` in conversation context; cleared on hardReset / session TTL).
- *   Greetings → welcome menu; direct requests → same disclosure prepended, then booking flow.
+ *   (`ai_disclosed` in conversation context). Shown once after language choice (or on the
+ *   first pipeline reply if language was auto-detected). Survives cancel / book / reschedule
+ *   resets; cleared only on session TTL or *restart session*.
+ *   Greetings → welcome menu; direct requests → same disclosure prepended once, then booking.
  *   UI copy defaults to Romanian. Optional EN overlay via uiI18n (`session_language`
- *   for the active conversation only; cleared on session TTL / hardReset).
+ *   for the active conversation only; cleared on session TTL / restart — kept across
+ *   cancel / confirm / reschedule so EN stays consistent for the whole session).
  *   First free-text can auto-set `en` when English is clear; RO menus include
  *   a Switch to English hint (and a button when a WhatsApp slot is free).
  *   Type *English* / *Română*, tap `lang_en`, or *restart session* anytime.
  *   Stale button walls never intercept free-text mid-flow.
  *
  * TTLs (independent):
- *   pending_ttl_minutes (default 5) — calendar hold for pending_confirmation only.
- *     Choosing a time calls claim_booking_slot → state pending_confirmation + locked_until
- *     and writes a synthetic calendar_cache busy row (`vidia_hold_<draftId>`).
- *     Soft locks + cache hide that interval from other clients until Confirm / Cancel / TTL.
+ *   pending_ttl_minutes (default 5) — calendar HOLD for pending_confirmation only.
+ *     Choosing a time creates a Google Calendar HOLD event + soft-lock.
+ *     Confirm → converts/keeps the event. Cancel → deletes HOLD immediately.
+ *     Idle (neither confirm nor cancel) → cron `/cron/expire-pending` every minute
+ *     expires the draft and deletes the Google HOLD after Admin pending_ttl_minutes.
  *   session_ttl_minutes (default 45) — idle conversation; last client inbound.
  *     After TTL, silent hard reset to IDLE before processing the next message.
  *     Type *restart session* for an immediate hard reset during tests.

@@ -9,7 +9,8 @@
 
 import { formatDateKey, formatTime } from './datetime.js';
 
-const MONTHS_SHORT = ['Ian', 'Feb', 'Mar', 'Apr', 'Mai', 'Iun', 'Iul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTHS_SHORT_RO = ['Ian', 'Feb', 'Mar', 'Apr', 'Mai', 'Iun', 'Iul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTHS_SHORT_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** WhatsApp list-picker max rows. */
 const LIST_ROW_MAX = 10;
@@ -193,29 +194,33 @@ export function nextRescheduleSlotStep({
  *
  * @param {{ id: string, selected_slot_start?: string | null, selected_service?: { name?: string } | null }[]} appointments
  * @param {string} timezone
- * @param {{ includeCancelAll?: boolean, apptPrefix?: string, cancelAllId?: string }} [opts]
+ * @param {{ includeCancelAll?: boolean, apptPrefix?: string, cancelAllId?: string, lang?: 'ro' | 'en' }} [opts]
  */
 export function buildAppointmentChoiceMenu(appointments, timezone, opts = {}) {
   const tz = timezone || 'Europe/Bucharest';
+  const lang = opts.lang === 'en' ? 'en' : 'ro';
+  const months = lang === 'en' ? MONTHS_SHORT_EN : MONTHS_SHORT_RO;
   const list = Array.isArray(appointments) ? appointments : [];
   const includeCancelAll = Boolean(opts.includeCancelAll) && list.length > 1;
   const apptPrefix = opts.apptPrefix || 'mod_appt_';
   const cancelAllId = opts.cancelAllId || 'mod_cancel_all';
   const maxAppts = includeCancelAll ? LIST_ROW_MAX - 1 : LIST_ROW_MAX;
+  const defaultService = lang === 'en' ? 'Appointment' : 'Programare';
+  const locale = lang === 'en' ? 'en-GB' : 'ro-RO';
 
   const items = list.slice(0, maxAppts).map((a) => {
-    const service = String(/** @type {{ name?: string }} */ (a.selected_service ?? {}).name || 'Programare');
+    const service = String(/** @type {{ name?: string }} */ (a.selected_service ?? {}).name || defaultService);
     const start = a.selected_slot_start ? new Date(a.selected_slot_start) : null;
-    let title = 'Programare';
+    let title = defaultService;
     let description = service.slice(0, 72);
     if (start && !Number.isNaN(start.getTime())) {
       const dateKey = formatDateKey(start, tz);
       const time = formatTime(start, tz);
       const day = Number(dateKey.slice(8, 10));
       const month = Number(dateKey.slice(5, 7));
-      const mo = MONTHS_SHORT[month - 1] || '';
+      const mo = months[month - 1] || '';
       title = `${time} · ${day} ${mo}`.slice(0, 24);
-      const weekday = new Intl.DateTimeFormat('ro-RO', { timeZone: tz, weekday: 'long' }).format(start);
+      const weekday = new Intl.DateTimeFormat(locale, { timeZone: tz, weekday: 'long' }).format(start);
       const weekdayCap = weekday.charAt(0).toUpperCase() + weekday.slice(1);
       description = `${service} · ${weekdayCap}`.slice(0, 72);
     }
@@ -229,8 +234,10 @@ export function buildAppointmentChoiceMenu(appointments, timezone, opts = {}) {
   if (includeCancelAll) {
     items.push({
       id: cancelAllId,
-      title: 'Anulează toate'.slice(0, 24),
-      description: `${list.length} programări active`.slice(0, 72),
+      title: (lang === 'en' ? 'Cancel all' : 'Anulează toate').slice(0, 24),
+      description: (lang === 'en'
+        ? `${list.length} active appointments`
+        : `${list.length} programări active`).slice(0, 72),
     });
   }
   return items;

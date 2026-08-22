@@ -56,6 +56,7 @@ export async function resetExpiredSessionForRestart({
     rawPhone,
     keepLastIntent: false,
     hardReset: true,
+    clearSessionUx: true,
     requestId,
   });
 

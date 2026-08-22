@@ -82,6 +82,54 @@ const UI = {
     ro: 'Sesiune repornită. Cu ce te putem ajuta?',
     en: 'Session restarted. How can we help you?',
   },
+  whichToMove: {
+    ro: 'Am găsit câteva programări. Pe care o mutăm?',
+    en: 'I found a few appointments. Which one should we move?',
+  },
+  whichToCancel: {
+    ro: 'Am găsit câteva programări. Pe care o anulăm?',
+    en: 'I found a few appointments. Which one should we cancel?',
+  },
+  whichAmbiguousMove: {
+    ro: 'Am găsit mai multe programări pe intervalul menționat. Care o mutăm?',
+    en: 'I found several appointments in that window. Which one should we move?',
+  },
+  whichAmbiguousCancel: {
+    ro: 'Am găsit mai multe programări pe intervalul menționat. Care o anulăm?',
+    en: 'I found several appointments in that window. Which one should we cancel?',
+  },
+  noApptReschedule: {
+    ro: 'Nu am găsit o programare activă de modificat. Scrie *programare* pentru una nouă.',
+    en: 'I could not find an active appointment to change. Type *booking* for a new one.',
+  },
+  noApptCancel: {
+    ro: 'Nu am găsit o programare activă de anulat. Scrie *programare* pentru una nouă.',
+    en: 'I could not find an active appointment to cancel. Type *booking* for a new one.',
+  },
+  noActiveAppts: {
+    ro: 'Nicio programare activă.',
+    en: 'No active appointments.',
+  },
+  myApptsEmptyHint: {
+    ro: 'Pentru una nouă: *luni la 17*',
+    en: 'For a new one: *Monday at 5pm*',
+  },
+  cancelledTitle: { ro: 'Am anulat programarea', en: 'Appointment cancelled' },
+  cancelledHint: {
+    ro: 'Când vrei din nou, scrie *programare* — te ajut eu.',
+    en: 'When you want another one, type *booking* — I can help.',
+  },
+  rescheduledTitle: { ro: 'Gata, am mutat programarea', en: 'Done — appointment moved' },
+  rescheduledHint: {
+    ro: 'Te așteptăm! Dacă mai schimbi ceva, scrie *reprogramare* sau *anulează*.',
+    en: 'See you soon! To change again, type *reschedule* or *cancel*.',
+  },
+  labelNewDate: { ro: 'Noua dată', en: 'New date' },
+  cancelAllBtn: { ro: 'Anulează toate', en: 'Cancel all' },
+  cancelAllDesc: { ro: 'programări active', en: 'active appointments' },
+  entryBooking: { ro: 'Programare', en: 'Booking' },
+  entryDetails: { ro: 'Detalii & Prețuri', en: 'Details & prices' },
+  entryContact: { ro: 'Contact & Locație', en: 'Contact & location' },
 };
 
 /**
@@ -190,7 +238,8 @@ export function detectSessionLanguageFromText(textBody) {
 
   const hasRoDiacritics = /[ăâîșț]/i.test(raw);
   const hasRo = hasRoDiacritics || /\b(salut|buna|buna ziua|buna seara|vraiu|vreau|programare|multumesc|te rog|maine|azi|serviciu|orar|cand|poftim|mersi|reprogramare|anuleaza|anulare)\b/.test(n);
-  const hasEn = /\b(hello|hi|hey|good morning|good afternoon|good evening|i want|i would like|i'd like|id like|i can|can i|do you|with my|pay with|my (dog|pet|cat)|appointment|booking|book a|please|thanks|thank you|how much|available|schedule|reschedule|cancel my|credit card|debit card)\b/.test(n);
+  // "move a anpointment" / similar typos: treat as English booking language markers.
+  const hasEn = /\b(hello|hi|hey|good morning|good afternoon|good evening|i want|i would like|i'd like|id like|i can|can i|do you|with my|pay with|my (dog|pet|cat)|appoint?ment|anpointment|booking|book a|please|thanks|thank you|how much|available|schedule|reschedule|cancel my|credit card|debit card|move (a |an |my )?)\b/.test(n);
 
   if (hasEn && !hasRo) return 'en';
   return null;
@@ -220,6 +269,16 @@ export function withEnglishSwitchOption(options, lang = 'ro') {
 }
 
 /**
+ * Strip leading emoji / pictographs so Admin button labels still match.
+ * @param {string} title
+ */
+function stripMenuDecor(title) {
+  return String(title || '')
+    .replace(/^[\p{Extended_Pictographic}\uFE0F\u200D\s]+/u, '')
+    .trim();
+}
+
+/**
  * Localize known RO button titles for EN sessions (ids stay unchanged).
  * @param {{ id?: string, title?: string, description?: string }[]} options
  * @param {UiLang} lang
@@ -228,34 +287,56 @@ export function localizeMenuOptions(options, lang = 'ro') {
   if (lang !== 'en' || !Array.isArray(options)) return options;
   return options.map((opt) => {
     const title = String(opt.title || '');
+    const bare = stripMenuDecor(title);
     const id = String(opt.id || '').toLowerCase();
     let next = title;
-    if (title === 'Confirmă' || id.includes('confirm')) next = t('confirmBtn', 'en');
-    else if (title === 'Anulează' || id.includes('cancel')) next = t('cancelBtn', 'en');
-    else if (/programare/i.test(title) || id.includes('book')) next = 'Booking';
-    else if (/detalii|pre[țt]uri|info/i.test(title) || id.includes('info') || id.includes('detail')) {
-      next = 'Details & prices';
+    if (title === 'Confirmă' || bare === 'Confirmă' || id.includes('confirm')) next = t('confirmBtn', 'en');
+    else if (title === 'Anulează' || bare === 'Anulează' || (id.includes('cancel') && !id.includes('cancel_all'))) {
+      next = t('cancelBtn', 'en');
     }
-    else if (/^orar$|program$/i.test(title.replace(/^[^\w]+/, '').trim()) || id.includes('hours')) next = 'Hours';
-    else if (/contact/i.test(title)) next = 'Contact';
-    else if (title === 'Servicii') next = t('listServices', 'en');
-    else if (title === 'Zile disponibile') next = t('listDays', 'en');
-    else if (title === 'Ore libere') next = t('listTimes', 'en');
-    else if (title === 'Programările tale') next = t('listAppointments', 'en');
+    else if (/anuleaz[aă]\s+toate/i.test(bare) || id.includes('cancel_all')) next = t('cancelAllBtn', 'en');
+    else if (/^programare$/i.test(bare) || id.includes('book')) next = t('entryBooking', 'en');
+    else if (/detalii|pre[țt]uri|info/i.test(bare) || id.includes('info') || id.includes('detail')) {
+      next = t('entryDetails', 'en');
+    }
+    else if (/^orar$|^program$/i.test(bare) || id.includes('hours')) next = 'Hours';
+    else if (/contact/i.test(bare) && /loca[țt]ie/i.test(bare)) next = t('entryContact', 'en');
+    else if (/contact/i.test(bare)) next = 'Contact';
+    else if (/renun[țt][aă]/i.test(bare) || id.includes('abort')) next = 'Never mind';
+    else if (bare === 'Servicii' || title === 'Servicii') next = t('listServices', 'en');
+    else if (bare === 'Zile disponibile' || title === 'Zile disponibile') next = t('listDays', 'en');
+    else if (bare === 'Ore libere' || title === 'Ore libere') next = t('listTimes', 'en');
+    else if (bare === 'Programările tale' || title === 'Programările tale') next = t('listAppointments', 'en');
+    else if (/programare/i.test(bare) && !/program[aă]rile/i.test(bare)) next = t('entryBooking', 'en');
     return {
       ...opt,
       title: String(next).slice(0, 20),
       ...(opt.description != null
         ? {
-          description: opt.description === 'Disponibil'
-            ? t('available', 'en')
-            : opt.description === 'Din catalog'
-              ? t('fromCatalog', 'en')
-              : opt.description === 'Programare activă'
-                ? t('activeBooking', 'en')
-                : opt.description === 'Liber'
-                  ? t('freeSlot', 'en')
-                  : opt.description,
+          description: (() => {
+            const desc = String(opt.description);
+            if (desc === 'Disponibil') return t('available', 'en');
+            if (desc === 'Din catalog') return t('fromCatalog', 'en');
+            if (desc === 'Programare activă') return t('activeBooking', 'en');
+            if (desc === 'Liber') return t('freeSlot', 'en');
+            // "Tuns + Barba · Miercuri" → keep service, localize weekday if RO weekday present
+            const weekdayMap = {
+              Luni: 'Monday', Marti: 'Tuesday', Marți: 'Tuesday',
+              Miercuri: 'Wednesday', Joi: 'Thursday', Vineri: 'Friday',
+              Sambata: 'Saturday', Sâmbătă: 'Saturday', Duminica: 'Sunday', Duminică: 'Sunday',
+            };
+            let out = desc;
+            for (const [ro, enLabel] of Object.entries(weekdayMap)) {
+              if (out.includes(ro)) out = out.replace(ro, enLabel);
+            }
+            if (/program[aă]ri active/i.test(out)) {
+              out = out.replace(/\d+\s*program[aă]ri active/i, (m) => {
+                const n = m.match(/\d+/)?.[0] || '';
+                return `${n} ${t('cancelAllDesc', 'en')}`;
+              });
+            }
+            return out;
+          })(),
         }
         : {}),
     };
