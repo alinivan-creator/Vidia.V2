@@ -778,11 +778,12 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  v_emp uuid;
-  v_ttl timestamptz;
   v_minutes integer;
-  v_row public.draft_bookings%ROWTYPE;
+  v_ttl timestamptz;
+  v_emp uuid;
   v_conflict uuid;
+  v_row public.draft_bookings%ROWTYPE;
+  v_hold_event text;
 BEGIN
   IF p_draft_id IS NULL OR p_business_id IS NULL
      OR p_slot_start IS NULL OR p_slot_end IS NULL
@@ -792,6 +793,7 @@ BEGIN
 
   v_minutes := GREATEST(1, LEAST(60, COALESCE(p_ttl_minutes, 5)));
   v_ttl := NOW() + (v_minutes || ' minutes')::interval;
+  v_hold_event := 'vidia_hold_' || p_draft_id::text;
 
   PERFORM pg_advisory_xact_lock(
     hashtext(p_business_id::text),
@@ -806,17 +808,30 @@ BEGIN
     updated_at = NOW()
   WHERE business_id = p_business_id
     AND state = 'pending_confirmation'
-    AND (locked_until IS NULL OR locked_until <= NOW());
+    AND (
+      locked_until IS NULL
+      OR locked_until <= NOW()
+    );
 
   SELECT employee_id INTO v_emp
   FROM public.draft_bookings
-  WHERE id = p_draft_id AND business_id = p_business_id;
+  WHERE id = p_draft_id AND business_id = p_business_id
+  FOR UPDATE;
 
   IF NOT FOUND THEN
     RETURN jsonb_build_object('ok', false, 'reason', 'not_found');
   END IF;
 
   v_emp := COALESCE(p_employee_id, v_emp);
+
+  IF v_emp IS NOT NULL AND NOT EXISTS (
+    SELECT 1
+    FROM public.employees e
+    WHERE e.id = v_emp
+      AND e.business_id = p_business_id
+  ) THEN
+    RETURN jsonb_build_object('ok', false, 'reason', 'invalid_employee');
+  END IF;
 
   SELECT d.id INTO v_conflict
   FROM public.draft_bookings d
@@ -825,10 +840,9 @@ BEGIN
     AND d.selected_slot_start IS NOT NULL
     AND d.selected_slot_end IS NOT NULL
     AND d.state IN ('pending_confirmation', 'confirmed')
-    AND tstzrange(d.selected_slot_start, d.selected_slot_end, '[)')
-        && tstzrange(p_slot_start, p_slot_end, '[)')
-    AND COALESCE(d.employee_id, '00000000-0000-0000-0000-000000000000'::uuid)
-        = COALESCE(v_emp, '00000000-0000-0000-0000-000000000000'::uuid)
+    AND EXTRACT(EPOCH FROM (
+      LEAST(d.selected_slot_end, p_slot_end) - GREATEST(d.selected_slot_start, p_slot_start)
+    )) / 60.0 > 5
     AND (
       d.state = 'confirmed'
       OR (d.state = 'pending_confirmation' AND d.locked_until IS NOT NULL AND d.locked_until > NOW())
@@ -844,12 +858,10 @@ BEGIN
     FROM public.calendar_cache c
     WHERE c.business_id = p_business_id
       AND c.status IN ('busy', 'blocked')
-      AND tstzrange(c.slot_start, c.slot_end, '[)')
-          && tstzrange(p_slot_start, p_slot_end, '[)')
-      AND (
-        (v_emp IS NULL AND c.employee_id IS NULL)
-        OR (v_emp IS NOT NULL AND c.employee_id = v_emp)
-      )
+      AND COALESCE(c.google_event_id, '') <> v_hold_event
+      AND EXTRACT(EPOCH FROM (
+        LEAST(c.slot_end, p_slot_end) - GREATEST(c.slot_start, p_slot_start)
+      )) / 60.0 > 5
   ) THEN
     RETURN jsonb_build_object('ok', false, 'reason', 'slot_taken');
   END IF;
@@ -879,6 +891,7 @@ BEGIN
       updated_at = NOW()
     WHERE id = p_draft_id
       AND business_id = p_business_id
+      AND state IN ('browsing', 'pending_confirmation')
     RETURNING * INTO v_row;
   END IF;
 
@@ -886,7 +899,41 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'reason', 'not_found');
   END IF;
 
-  RETURN jsonb_build_object('ok', true, 'reason', NULL, 'draft', to_jsonb(v_row));
+  IF p_mode IS DISTINCT FROM 'reschedule' THEN
+    DELETE FROM public.calendar_cache
+    WHERE business_id = p_business_id
+      AND google_event_id = v_hold_event;
+
+    INSERT INTO public.calendar_cache (
+      business_id,
+      employee_id,
+      slot_start,
+      slot_end,
+      status,
+      source,
+      google_event_id,
+      title,
+      metadata,
+      synced_at
+    ) VALUES (
+      p_business_id,
+      NULL,
+      p_slot_start,
+      p_slot_end,
+      'busy',
+      'vidia_booking',
+      v_hold_event,
+      'Pending WhatsApp booking',
+      jsonb_build_object('pending_hold', true, 'draft_id', p_draft_id),
+      NOW()
+    );
+  END IF;
+
+  RETURN jsonb_build_object(
+    'ok', true,
+    'reason', NULL,
+    'draft', to_jsonb(v_row)
+  );
 EXCEPTION
   WHEN exclusion_violation THEN
     RETURN jsonb_build_object('ok', false, 'reason', 'slot_taken');

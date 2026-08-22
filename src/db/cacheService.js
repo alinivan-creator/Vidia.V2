@@ -90,11 +90,11 @@ export async function getBusyIntervalsFromCache({
     .gte('slot_end', timeMin.toISOString())
     .lte('slot_start', timeMax.toISOString());
 
-  // Scope busy intervals to one staff calendar (external widgets on that calendar still sync in)
+  // Staff-scoped: that employee + unassigned business holds.
+  // Any-staff (null): all busy rows — otherwise pending/confirmed with employee_id
+  // were invisible and the same wall-clock slot looked free.
   if (employeeId) {
-    query = query.eq('employee_id', employeeId);
-  } else {
-    query = query.is('employee_id', null);
+    query = query.or(`employee_id.eq.${employeeId},employee_id.is.null`);
   }
 
   const { data, error } = await query;
@@ -184,6 +184,148 @@ export function softLockAppliesToEmployee(rowEmployeeId, queryEmployeeId) {
   if (!queryEmployeeId) return true;
   // Staff-scoped: that employee's holds + unassigned business-wide holds.
   return !rowEmployeeId || rowEmployeeId === queryEmployeeId;
+}
+
+/** Synthetic calendar_cache id for a WhatsApp pending hold (not a real Google event). */
+export function pendingHoldCacheEventId(draftId) {
+  return `vidia_hold_${String(draftId || '').trim()}`;
+}
+
+/**
+ * Write a busy block into calendar_cache as soon as a slot is soft-locked.
+ * Availability reads this cache — without it, Google Calendar stays empty until Confirm
+ * and a second client can grab the same time.
+ *
+ * @param {Object} params
+ * @param {string} params.businessId
+ * @param {string} params.draftId
+ * @param {string|Date} params.slotStart
+ * @param {string|Date} params.slotEnd
+ * @param {string | null} [params.employeeId]
+ * @param {string | null} [params.requestId]
+ * @param {string} [params.title]
+ */
+export async function registerPendingHoldInCache({
+  businessId,
+  draftId,
+  slotStart,
+  slotEnd,
+  employeeId = null,
+  requestId = null,
+  title = 'Pending WhatsApp hold',
+}) {
+  if (!businessId || !draftId || !slotStart || !slotEnd) return 0;
+  const startIso = slotStart instanceof Date ? slotStart.toISOString() : String(slotStart);
+  const endIso = slotEnd instanceof Date ? slotEnd.toISOString() : String(slotEnd);
+  return upsertBusyEvents({
+    businessId,
+    employeeId,
+    source: 'vidia_booking',
+    requestId,
+    events: [{
+      google_event_id: pendingHoldCacheEventId(draftId),
+      slot_start: startIso,
+      slot_end: endIso,
+      title,
+      metadata: { pending_hold: true, draft_id: draftId },
+    }],
+  });
+}
+
+/**
+ * Remove the synthetic pending hold from calendar_cache.
+ * @param {Object} params
+ * @param {string} params.businessId
+ * @param {string} params.draftId
+ * @param {string | null} [params.requestId]
+ */
+export async function clearPendingHoldFromCache({
+  businessId,
+  draftId,
+  requestId = null,
+}) {
+  if (!businessId || !draftId) return false;
+  const eventId = pendingHoldCacheEventId(draftId);
+  const { error } = await supabase
+    .from('calendar_cache')
+    .delete()
+    .eq('business_id', businessId)
+    .eq('google_event_id', eventId);
+
+  if (error) {
+    await logError({
+      message: 'clearPendingHoldFromCache failed',
+      source: 'database',
+      businessId,
+      requestId,
+      error,
+      details: { draftId, eventId },
+    });
+    return false;
+  }
+  return true;
+}
+
+/**
+ * True when another pending/confirmed draft already covers this interval (any staff).
+ * Used by the claim fallback when the atomic RPC is unavailable.
+ *
+ * @param {Object} params
+ * @param {string} params.businessId
+ * @param {string} params.draftId
+ * @param {string} params.startIso
+ * @param {string} params.endIso
+ */
+export async function hasOverlappingBookingLock({
+  businessId,
+  draftId,
+  startIso,
+  endIso,
+}) {
+  const start = new Date(startIso).getTime();
+  const end = new Date(endIso).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return false;
+
+  const { data, error } = await supabase
+    .from('draft_bookings')
+    .select('id, state, selected_slot_start, selected_slot_end, locked_until')
+    .eq('business_id', businessId)
+    .neq('id', draftId)
+    .in('state', ['pending_confirmation', 'confirmed'])
+    .not('selected_slot_start', 'is', null)
+    .not('selected_slot_end', 'is', null);
+
+  const now = Date.now();
+  if (!error && data?.length) {
+    const draftHit = data.some((row) => {
+      if (row.state === 'pending_confirmation') {
+        const lock = row.locked_until ? new Date(row.locked_until).getTime() : 0;
+        if (!lock || lock <= now) return false;
+      }
+      const a = new Date(/** @type {string} */ (row.selected_slot_start)).getTime();
+      const b = new Date(/** @type {string} */ (row.selected_slot_end)).getTime();
+      return Number.isFinite(a) && Number.isFinite(b) && a < end && start < b;
+    });
+    if (draftHit) return true;
+  }
+
+  const ownHold = pendingHoldCacheEventId(draftId);
+  const { data: busyRows, error: busyError } = await supabase
+    .from('calendar_cache')
+    .select('slot_start, slot_end, google_event_id')
+    .eq('business_id', businessId)
+    .in('status', ['busy', 'blocked'])
+    .gte('slot_end', startIso)
+    .lte('slot_start', endIso);
+
+  if (busyError || !busyRows?.length) return false;
+
+  return busyRows.some((row) => {
+    if (row.google_event_id === ownHold) return false;
+    const a = new Date(row.slot_start).getTime();
+    const b = new Date(row.slot_end).getTime();
+    return Number.isFinite(a) && Number.isFinite(b) && a < end && start < b;
+  });
 }
 
 /**

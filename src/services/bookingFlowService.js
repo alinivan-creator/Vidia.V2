@@ -1,4 +1,4 @@
-import { getAvailableSlots, isSlotAvailable, decodeSlotId } from '../db/cacheService.js';
+import { getAvailableSlots, isSlotAvailable, decodeSlotId, pendingHoldCacheEventId } from '../db/cacheService.js';
 import {
   getActiveDraftBooking,
   setSelectedService,
@@ -7,6 +7,7 @@ import {
   confirmDraftBooking,
   cancelActiveDraftsForPhone,
   startBrowsingFlow,
+  cancelOrResetDraft,
 } from '../db/draftBookingService.js';
 import {
   CONVERSATION_STEPS,
@@ -1092,17 +1093,26 @@ export async function handleBookingInteractiveReply({
       requestId,
     });
 
-    if (updated) {
-      await continueAfterSlotSelected({
+    if (!updated || updated.state !== 'pending_confirmation') {
+      await sendTextMessage({
         business,
         recipientPhone,
-        draft: updated,
-        service,
-        slotStart,
-        slotEnd,
         requestId,
+        text: 'Ne pare rău, acest interval tocmai a fost rezervat. Te rog alege altă oră:',
       });
+      await sendSlotPicker({ business, recipientPhone, draft, requestId });
+      return true;
     }
+
+    await continueAfterSlotSelected({
+      business,
+      recipientPhone,
+      draft: updated,
+      service,
+      slotStart,
+      slotEnd,
+      requestId,
+    });
     return true;
   }
 
@@ -1175,6 +1185,33 @@ async function handleConfirmBooking({ business, recipientPhone, draft, requestId
       requestId,
       text: hoursCheck.message,
     });
+    return;
+  }
+
+  const confirmSlotId = encodeSlotId(startDate, business.timezone);
+  const stillAvailable = await isSlotAvailable({
+    business,
+    slotId: confirmSlotId,
+    durationMinutes: duration,
+    excludeDraftId: draft.id,
+    employeeId: draftEmployeeId(draft),
+    excludeGoogleEventIds: [pendingHoldCacheEventId(draft.id)],
+  });
+  if (!stillAvailable) {
+    await cancelOrResetDraft({
+      draftId: draft.id,
+      businessId: business.id,
+      state: 'browsing',
+      context: { ...draft.conversation_context, step: 'slot_lost_on_confirm' },
+      requestId,
+    });
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: 'Ne pare rău, acest interval tocmai a fost ocupat. Te rog alege altă oră:',
+    });
+    await sendSlotPicker({ business, recipientPhone, draft, requestId });
     return;
   }
 
@@ -1539,7 +1576,16 @@ export async function applyPendingEmployeeChange({
         },
         requestId,
       });
-      const nextDraft = updated ?? withEmp ?? { ...draft, employee_id: mentioned.id };
+      if (!updated || updated.state !== 'pending_confirmation') {
+        await sendTextMessage({
+          business,
+          recipientPhone,
+          requestId,
+          text: 'Ne pare rău, acest interval tocmai a fost rezervat. Te rog alege altă oră:',
+        });
+        await sendSlotPicker({ business, recipientPhone, draft, requestId });
+        return true;
+      }
       await setConversationStep({
         businessId: business.id,
         rawPhone: recipientPhone,
@@ -1565,7 +1611,7 @@ export async function applyPendingEmployeeChange({
       await continueAfterSlotSelected({
         business,
         recipientPhone,
-        draft: nextDraft,
+        draft: updated,
         service,
         slotStart,
         slotEnd,
@@ -1936,20 +1982,27 @@ export async function handleFreeTextSlotRequest({
     requestId,
   });
 
-  if (updated) {
-    await continueAfterSlotSelected({
+  if (!updated || updated.state !== 'pending_confirmation') {
+    await simulateHumanDelay({ business, recipientPhone, requestId });
+    await sendTextMessage({
       business,
       recipientPhone,
-      draft: updated,
-      service,
-      slotStart: parsed,
-      slotEnd,
       requestId,
+      text: `Intervalul *${formatSlotLabel(parsed, business.timezone)}* tocmai a fost rezervat. Alege din listă:`,
     });
-    return true;
+    return false;
   }
 
-  return false;
+  await continueAfterSlotSelected({
+    business,
+    recipientPhone,
+    draft: updated,
+    service,
+    slotStart: parsed,
+    slotEnd,
+    requestId,
+  });
+  return true;
 }
 
 export { parseRomanianDateTime } from '../utils/roDateTime.js';

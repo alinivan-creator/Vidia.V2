@@ -4,7 +4,7 @@
  * Returns a HandlerResult; never sends WhatsApp.
  */
 
-import { getAvailableSlots, isSlotAvailable } from '../db/cacheService.js';
+import { getAvailableSlots, isSlotAvailable, pendingHoldCacheEventId } from '../db/cacheService.js';
 import {
   getActiveDraftBooking,
   setSelectedService,
@@ -1655,6 +1655,37 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
       employeeId: draftEmployeeId(draft),
       intent: 'book',
       requestId,
+    });
+  }
+
+  // Final lock check before Google write — refuse if another pending/confirmed took the slot.
+  const confirmSlotId = encodeSlotId(startDate, business.timezone);
+  const stillAvailable = await isSlotAvailable({
+    business,
+    slotId: confirmSlotId,
+    durationMinutes: duration,
+    excludeDraftId: draft.id,
+    employeeId: draftEmployeeId(draft),
+    excludeGoogleEventIds: [pendingHoldCacheEventId(draft.id)],
+  });
+  if (!stillAvailable) {
+    await cancelOrResetDraft({
+      draftId: draft.id,
+      businessId: business.id,
+      state: 'browsing',
+      context: { ...draft.conversation_context, step: 'slot_lost_on_confirm' },
+      requestId,
+    });
+    return missingSlotsResult({
+      business,
+      recipientPhone,
+      draft,
+      service,
+      employeeId: draftEmployeeId(draft),
+      dateKey: formatDateKey(startDate, business.timezone),
+      requestId,
+      reasonKey: 'SLOT_UNAVAILABLE',
+      occupiedLabel: formatSlotLabel(startDate, business.timezone),
     });
   }
 

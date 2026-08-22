@@ -3,6 +3,11 @@ import { logError } from './loggerService.js';
 import { reportQueryFailure } from './schemaHealth.js';
 import { toE164 } from '../utils/phone.js';
 import { getEmployeeById } from './employeeService.js';
+import {
+  clearPendingHoldFromCache,
+  hasOverlappingBookingLock,
+  registerPendingHoldInCache,
+} from './cacheService.js';
 
 /** @typedef {'browsing' | 'pending_confirmation' | 'confirmed' | 'cancelled' | 'expired'} DraftBookingState */
 
@@ -489,6 +494,9 @@ export async function claimSlotForDraft({
   const startIso = slotStart instanceof Date ? slotStart.toISOString() : String(slotStart);
   const endIso = slotEnd instanceof Date ? slotEnd.toISOString() : String(slotEnd);
 
+  /** @type {DraftBooking | null} */
+  let claimedDraft = null;
+
   if (claimRpcAvailable !== false) {
     const { data, error } = await supabase.rpc('claim_booking_slot', {
       p_draft_id: draftId,
@@ -520,74 +528,135 @@ export async function claimSlotForDraft({
       claimRpcAvailable = true;
       const payload = /** @type {{ ok?: boolean, reason?: string | null, draft?: DraftBooking | null }} */ (data || {});
       if (payload.ok && payload.draft) {
-        return { ok: true, draft: payload.draft, reason: null };
+        claimedDraft = payload.draft;
+      } else {
+        const reason = payload.reason === 'slot_taken' || payload.reason === 'not_found' || payload.reason === 'invalid_range'
+          ? payload.reason
+          : 'error';
+        return { ok: false, draft: null, reason };
       }
-      const reason = payload.reason === 'slot_taken' || payload.reason === 'not_found' || payload.reason === 'invalid_range'
-        ? payload.reason
-        : 'error';
-      return { ok: false, draft: null, reason };
     }
   }
 
-  /** @type {Record<string, unknown>} */
-  const payload = mode === 'reschedule'
-    ? {
-        selected_slot_start: startIso,
-        selected_slot_end: endIso,
-        conversation_context: mergedContext,
-      }
-    : {
-        state: 'pending_confirmation',
-        selected_slot_start: startIso,
-        selected_slot_end: endIso,
-        locked_until: ttl,
-        conversation_context: mergedContext,
-        expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-      };
-  if (mode !== 'reschedule' && pendingExpiresColumnAvailable !== false) {
-    payload.pending_expires_at = ttl;
-  }
-  if (employeeId && employeeColumnAvailable !== false) {
-    payload.employee_id = employeeId;
-  }
-
-  let query = supabase
-    .from('draft_bookings')
-    .update(payload)
-    .eq('id', draftId)
-    .eq('business_id', businessId);
-  if (mode === 'reschedule') query = query.eq('state', 'confirmed');
-
-  let { data, error } = await query.select(await draftSelectColumns()).single();
-
-  if (error && /pending_expires_at/i.test(error.message ?? '')) {
-    pendingExpiresColumnAvailable = false;
-    const { pending_expires_at: _p, ...without } = payload;
-    let retry = supabase
-      .from('draft_bookings')
-      .update(without)
-      .eq('id', draftId)
-      .eq('business_id', businessId);
-    if (mode === 'reschedule') retry = retry.eq('state', 'confirmed');
-    ({ data, error } = await retry.select(DRAFT_COLUMNS_NO_PENDING_EXPIRES).single());
-  }
-
-  if (error) {
-    await logError({
-      message: 'setSelectedSlot failed',
-      source: 'database',
-      requestId,
-      draftBookingId: draftId,
+  if (!claimedDraft && mode !== 'reschedule') {
+    // Fallback path (no RPC): refuse if any other pending/confirmed overlaps this interval.
+    const overlap = await hasOverlappingBookingLock({
       businessId,
-      error,
+      draftId,
+      startIso,
+      endIso,
     });
-    if (isSlotTakenDbError(error)) {
+    if (overlap) {
       return { ok: false, draft: null, reason: 'slot_taken' };
     }
+
+    /** @type {Record<string, unknown>} */
+    const payload = {
+      state: 'pending_confirmation',
+      selected_slot_start: startIso,
+      selected_slot_end: endIso,
+      locked_until: ttl,
+      conversation_context: mergedContext,
+      expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    };
+    if (pendingExpiresColumnAvailable !== false) {
+      payload.pending_expires_at = ttl;
+    }
+    if (employeeId && employeeColumnAvailable !== false) {
+      payload.employee_id = employeeId;
+    }
+
+    let query = supabase
+      .from('draft_bookings')
+      .update(payload)
+      .eq('id', draftId)
+      .eq('business_id', businessId)
+      .in('state', ['browsing', 'pending_confirmation']);
+
+    let { data, error } = await query.select(await draftSelectColumns()).single();
+
+    if (error && /pending_expires_at/i.test(error.message ?? '')) {
+      pendingExpiresColumnAvailable = false;
+      const { pending_expires_at: _p, ...without } = payload;
+      ({ data, error } = await supabase
+        .from('draft_bookings')
+        .update(without)
+        .eq('id', draftId)
+        .eq('business_id', businessId)
+        .in('state', ['browsing', 'pending_confirmation'])
+        .select(DRAFT_COLUMNS_NO_PENDING_EXPIRES)
+        .single());
+    }
+
+    if (error) {
+      await logError({
+        message: 'claimSlotForDraft fallback update failed',
+        source: 'database',
+        requestId,
+        draftBookingId: draftId,
+        businessId,
+        error,
+      });
+      if (isSlotTakenDbError(error)) {
+        return { ok: false, draft: null, reason: 'slot_taken' };
+      }
+      return { ok: false, draft: null, reason: 'error' };
+    }
+
+    claimedDraft = /** @type {DraftBooking} */ (data);
+  } else if (!claimedDraft && mode === 'reschedule') {
+    /** @type {Record<string, unknown>} */
+    const payload = {
+      selected_slot_start: startIso,
+      selected_slot_end: endIso,
+      conversation_context: mergedContext,
+    };
+    let { data, error } = await supabase
+      .from('draft_bookings')
+      .update(payload)
+      .eq('id', draftId)
+      .eq('business_id', businessId)
+      .eq('state', 'confirmed')
+      .select(await draftSelectColumns())
+      .single();
+
+    if (error) {
+      await logError({
+        message: 'claimSlotForDraft reschedule update failed',
+        source: 'database',
+        requestId,
+        draftBookingId: draftId,
+        businessId,
+        error,
+      });
+      return { ok: false, draft: null, reason: 'error' };
+    }
+    claimedDraft = /** @type {DraftBooking} */ (data);
+  }
+
+  if (!claimedDraft) {
     return { ok: false, draft: null, reason: 'error' };
   }
 
-  return { ok: true, draft: /** @type {DraftBooking} */ (data), reason: null };
+  // Hold must block availability immediately via calendar_cache (not only draft soft-lock).
+  if (mode !== 'reschedule' && claimedDraft.state === 'pending_confirmation') {
+    try {
+      await registerPendingHoldInCache({
+        businessId,
+        draftId: claimedDraft.id,
+        slotStart: claimedDraft.selected_slot_start || startIso,
+        slotEnd: claimedDraft.selected_slot_end || endIso,
+        // Store as business-wide busy (null employee) so any-staff availability sees it.
+        employeeId: null,
+        requestId,
+        title: 'Pending WhatsApp booking',
+      });
+    } catch (error) {
+      console.error('[booking] registerPendingHoldInCache failed', error);
+    }
+  }
+
+  return { ok: true, draft: claimedDraft, reason: null };
 }
 
 /**
@@ -662,6 +731,9 @@ export async function confirmDraftBooking({
     });
     return null;
   }
+
+  // Real Google event now occupies the slot — drop the synthetic pending hold.
+  await clearPendingHoldFromCache({ businessId, draftId, requestId }).catch(() => false);
 
   return /** @type {DraftBooking} */ (data);
 }
@@ -740,6 +812,8 @@ export async function cancelOrResetDraft({
     return null;
   }
 
+  await clearPendingHoldFromCache({ businessId, draftId, requestId }).catch(() => false);
+
   return /** @type {DraftBooking} */ (data);
 }
 
@@ -805,7 +879,17 @@ export async function cancelActiveDraftsForPhone({
     return [];
   }
 
-  return /** @type {DraftBooking[]} */ (data ?? []);
+  const cancelled = /** @type {DraftBooking[]} */ (data ?? []);
+  await Promise.all(
+    cancelled.map((row) =>
+      clearPendingHoldFromCache({
+        businessId,
+        draftId: row.id,
+        requestId,
+      }).catch(() => false),
+    ),
+  );
+  return cancelled;
 }
 
 export async function updateDraftContext({ draftId, businessId, context, requestId = null }) {
@@ -1204,6 +1288,10 @@ export async function markDraftExpired({
       error,
     });
     return null;
+  }
+
+  if (data) {
+    await clearPendingHoldFromCache({ businessId, draftId, requestId }).catch(() => false);
   }
 
   return /** @type {DraftBooking | null} */ (data);
