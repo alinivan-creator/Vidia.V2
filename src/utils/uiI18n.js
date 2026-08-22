@@ -53,6 +53,26 @@ const UI = {
     ro: 'Perfect! Continuăm în română.',
     en: 'Perfect! We will continue in Romanian.',
   },
+  bookedTitle: { ro: 'Programare confirmată', en: 'Booking confirmed' },
+  bookedSeeYou: { ro: 'Ne vedem curând.', en: 'See you soon.' },
+  bookedFooterReschedule: { ro: '*reprogramare*', en: '*reschedule*' },
+  bookedFooterCancel: { ro: '*anulează*', en: '*cancel*' },
+  gdprTitle: { ro: 'Confidențialitate', en: 'Privacy' },
+  gdprBody: {
+    ro: 'Folosim datele pentru această programare și pentru comunicări utile (inclusiv SMS).',
+    en: 'We use your data for this booking and useful updates (including SMS).',
+  },
+  gdprStopSms: {
+    ro: 'Poți opri SMS-urile scriind *stop sms*.',
+    en: 'You can stop SMS messages by typing *stop sms*.',
+  },
+  gdprLink: { ro: 'Detalii termeni / GDPR', en: 'Terms / privacy details' },
+  gdprContact: {
+    ro: 'Pentru detalii, scrie *contact*.',
+    en: 'For details, type *contact*.',
+  },
+  mapsAnchor: { ro: 'Pornește spre locație', en: 'Get directions' },
+  mapsShort: { ro: 'hartă', en: 'map' },
 };
 
 /**

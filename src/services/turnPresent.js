@@ -3,7 +3,7 @@
  * Must not decide availability, confirm bookings, or invent hours.
  */
 
-import { buildAiTransparencyWelcome, buildBookingConfirmationMessage, buildGdprNote, buildMapsInviteLine, MAPS_ANCHOR_LABEL } from '../utils/businessMessages.js';
+import { buildAiTransparencyWelcome, buildBookingConfirmationMessage, buildGdprNote, buildMapsInviteLine, MAPS_ANCHOR_LABEL, mapsAnchorLabel } from '../utils/businessMessages.js';
 import { WA_DIVIDER, waField, waFooter, waJoin, waServiceMeta, waTitle } from '../utils/waCopy.js';
 import { timeWindowBounds } from '../utils/timeWindow.js';
 import { formatContactMessage } from './contactService.js';
@@ -25,22 +25,43 @@ import { missingBusinessInfoMessage } from '../utils/businessInfoLookup.js';
 import { formatServiceAskMessage, bookingExamplePhrase } from '../utils/serviceMatch.js';
 import { mergeMenuOptions } from '../utils/bookingGrid.js';
 import { t, localizeMenuOptions, normalizeUiLang } from '../utils/uiI18n.js';
+import { formatSlotLabel, localToUtc } from '../utils/datetime.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 /** @typedef {import('./handlerResult.js').HandlerResult} HandlerResult */
 
 /**
+ * Prefer rebuilding the slot label in the session language when date+time are known.
+ * @param {Business} business
+ * @param {Record<string, unknown>} d
+ * @param {'ro' | 'en'} lang
+ */
+function slotLabelForLang(business, d, lang) {
+  const dateKey = typeof d.date_key === 'string' ? d.date_key : null;
+  const time = typeof d.time_hhmm === 'string' ? d.time_hhmm : null;
+  if (dateKey && time && /^\d{4}-\d{2}-\d{2}$/.test(dateKey) && /^\d{2}:\d{2}$/.test(time)) {
+    const start = localToUtc(dateKey, time, business.timezone || 'Europe/Bucharest');
+    if (start && !Number.isNaN(start.getTime())) {
+      return formatSlotLabel(start, business.timezone || 'Europe/Bucharest', lang);
+    }
+  }
+  return String(d.slot_label || '');
+}
+
+/**
  * Ensure the Admin maps CTA survives AI polish (which often drops markdown links).
  * @param {Business} business
  * @param {string} text
+ * @param {'ro' | 'en'} [lang]
  * @returns {string}
  */
-function ensureMapsInviteOnConfirmation(business, text) {
+function ensureMapsInviteOnConfirmation(business, text, lang = 'ro') {
   const body = String(text || '').trimEnd();
   if (!body) return body;
-  const maps = buildMapsInviteLine(business);
+  const maps = buildMapsInviteLine(business, lang);
   if (!maps?.messageLine || !maps.url) return body;
-  if (body.includes(maps.url) || body.includes(MAPS_ANCHOR_LABEL)) return body;
+  const anchor = mapsAnchorLabel(lang);
+  if (body.includes(maps.url) || body.includes(anchor) || body.includes(MAPS_ANCHOR_LABEL)) return body;
   return `${body}\n\n${maps.messageLine}`;
 }
 
@@ -97,6 +118,7 @@ export function renderHandlerResult(business, result) {
         )
       );
     case 'ASK_CONFIRM': {
+      const when = slotLabelForLang(business, d, lang) || String(d.slot_label || '');
       if (en) {
         return waJoin(
           waTitle(t('confirmTitle', 'en')),
@@ -104,7 +126,7 @@ export function renderHandlerResult(business, result) {
           waField(t('labelClient', 'en'), d.client_name),
           waField(t('labelSpecialist', 'en'), d.employee_name),
           waField(t('labelService', 'en'), d.service_name || t('labelService', 'en')),
-          waField(t('labelWhen', 'en'), d.slot_label || ''),
+          waField(t('labelWhen', 'en'), when),
         );
       }
       return waJoin(
@@ -113,18 +135,19 @@ export function renderHandlerResult(business, result) {
         waField('Client', d.client_name),
         waField('Specialist', d.employee_name),
         waField('Serviciu', d.service_name || 'Serviciu'),
-        waField('Când', d.slot_label || ''),
+        waField('Când', when || d.slot_label || ''),
       );
     }
     case 'CONFIRMATION_BOOKED':
       return buildBookingConfirmationMessage({
         business,
-        serviceName: String(d.service_name || 'Serviciu'),
-        slotLabel: String(d.slot_label || ''),
+        serviceName: String(d.service_name || (en ? 'Service' : 'Serviciu')),
+        slotLabel: slotLabelForLang(business, d, lang) || String(d.slot_label || ''),
         clientName: String(d.client_name || ''),
         calendarLine: '',
         // mapsLine omitted → Admin Link hartă / adresă (buildMapsInviteLine)
         includeGdpr: false,
+        lang,
       });
     case 'CONFIRMATION_RESCHEDULE': {
       if (typeof d.client_message === 'string' && d.client_message.trim()) {
@@ -488,14 +511,15 @@ export async function presentTurn({
     || result.user_message_template_key === 'STALE_CHOICE'
     || result.user_message_template_key === 'CONTACT'
     || result.user_message_template_key === 'ASK_CONFIRM'
-    || result.user_message_template_key === 'CONFIRM_CANCEL';
+    || result.user_message_template_key === 'CONFIRM_CANCEL'
+    || result.user_message_template_key === 'CONFIRMATION_BOOKED';
   const polished = skipPolish ? null : await polishWithAi(business, result, rendered);
   let text = polished || rendered;
   if (
     result.user_message_template_key === 'CONFIRMATION_BOOKED'
     || result.action_performed === 'BOOKED'
   ) {
-    text = ensureMapsInviteOnConfirmation(business, text);
+    text = ensureMapsInviteOnConfirmation(business, text, normalizeUiLang(result.data?.ui_language));
   }
   const d = result.data || {};
   const lang = normalizeUiLang(d.ui_language);
@@ -510,7 +534,7 @@ export async function presentTurn({
       business,
       recipientPhone,
       requestId,
-      text: buildGdprNote(business),
+      text: buildGdprNote(business, lang),
     });
   }
 

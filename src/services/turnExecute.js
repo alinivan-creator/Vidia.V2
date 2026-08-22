@@ -1754,6 +1754,8 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
       slot_label: slotLabel,
       client_name: clientName,
       employee_name: employee?.name ?? null,
+      date_key: formatDateKey(startDate, business.timezone),
+      time_hhmm: formatTime(startDate, business.timezone),
     },
     calendar_cta: calendarCta(business, service.name, startDate, endDate),
   });

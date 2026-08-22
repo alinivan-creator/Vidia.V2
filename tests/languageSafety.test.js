@@ -67,7 +67,7 @@ describe('minimal bilingual UI layer', () => {
     assert.doesNotMatch(text, /Confirm this booking/);
   });
 
-  it('ASK_CONFIRM uses English overlay when ui_language is en', () => {
+  it('ASK_CONFIRM uses English date in summary when ui_language is en', () => {
     const text = renderHandlerResult(
       { id: 'b1', name: 'Salon', timezone: 'Europe/Bucharest' },
       {
@@ -76,13 +76,36 @@ describe('minimal bilingual UI layer', () => {
           ui_language: 'en',
           client_name: 'Ana',
           service_name: 'Tuns',
-          slot_label: 'Monday 10:00',
+          date_key: '2026-08-24',
+          time_hhmm: '10:00',
+          slot_label: 'Luni, 24 Aug. — Ora 10:00',
         },
       },
     );
     assert.match(text, /Confirm this booking/);
-    assert.match(text, /Ana/);
-    assert.match(text, /Tuns/);
+    assert.match(text, /Monday/i);
+    assert.doesNotMatch(text, /\bLuni\b/);
+  });
+
+  it('CONFIRMATION_BOOKED renders English success copy', () => {
+    const text = renderHandlerResult(
+      { id: 'b1', name: 'Salon', timezone: 'Europe/Bucharest', booking_settings: {} },
+      {
+        user_message_template_key: 'CONFIRMATION_BOOKED',
+        data: {
+          ui_language: 'en',
+          client_name: 'Ana',
+          service_name: 'Tuns',
+          date_key: '2026-08-24',
+          time_hhmm: '10:00',
+          slot_label: 'Luni, 24 Aug. — Ora 10:00',
+        },
+      },
+    );
+    assert.match(text, /Booking confirmed/);
+    assert.match(text, /See you soon/);
+    assert.match(text, /Monday/i);
+    assert.doesNotMatch(text, /Programare confirmată/);
   });
 
   it('scrubs legacy gate fields without requiring session_language clear', () => {

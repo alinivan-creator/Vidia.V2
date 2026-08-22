@@ -6,6 +6,7 @@
 
 import { getBusinessContactInfo } from '../services/contactService.js';
 import { WA_DIVIDER, waField, waFooter, waJoin, waTitle } from './waCopy.js';
+import { t, normalizeUiLang } from './uiI18n.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -14,6 +15,20 @@ export const MAPS_ANCHOR_LABEL = 'Pornește spre locație';
 
 /** Visible link text after the colon — keep tiny so the confirmation stays compact. */
 export const MAPS_SHORT_LINK_LABEL = 'hartă';
+
+/**
+ * @param {'ro' | 'en'} [lang]
+ */
+export function mapsAnchorLabel(lang = 'ro') {
+  return lang === 'en' ? t('mapsAnchor', 'en') : MAPS_ANCHOR_LABEL;
+}
+
+/**
+ * @param {'ro' | 'en'} [lang]
+ */
+export function mapsShortLinkLabel(lang = 'ro') {
+  return lang === 'en' ? t('mapsShort', 'en') : MAPS_SHORT_LINK_LABEL;
+}
 
 /**
  * @param {Business} business
@@ -170,40 +185,47 @@ export function buildBusinessMapsLink(business) {
 /**
  * WhatsApp line with masked Maps anchor (markdown link — no bare long URL dump).
  * @param {Business} business
+ * @param {'ro' | 'en'} [lang]
  * @returns {{ url: string; messageLine: string; address: string | null } | null}
  */
-export function buildMapsInviteLine(business) {
+export function buildMapsInviteLine(business, lang = 'ro') {
+  const uiLang = normalizeUiLang(lang);
   const maps = buildBusinessMapsLink(business);
   if (!maps?.url) return null;
 
   const url = String(maps.url).trim().replace(/\s+/g, '');
   if (!url) return null;
 
+  const anchor = mapsAnchorLabel(uiLang);
+  const short = mapsShortLinkLabel(uiLang);
+
   return {
     url,
     address: maps.address,
     // Markdown keeps the body short: WhatsApp renders the label, not the long Maps URL.
-    messageLine: `${MAPS_ANCHOR_LABEL}: [${MAPS_SHORT_LINK_LABEL}](${url})`,
+    messageLine: `${anchor}: [${short}](${url})`,
   };
 }
 
 /**
  * Discreet GDPR / privacy note — send as a *separate* WhatsApp message.
  * @param {Business} business
+ * @param {'ro' | 'en'} [lang]
  * @returns {string}
  */
-export function buildGdprNote(business) {
+export function buildGdprNote(business, lang = 'ro') {
+  const uiLang = normalizeUiLang(lang);
   const { termsUrl, gdprUrl } = getMessagingSettings(business);
   const link = (gdprUrl || termsUrl || '').trim().replace(/\s+/g, '');
   const body = waJoin(
-    waTitle('Confidențialitate'),
-    'Folosim datele pentru această programare și pentru comunicări utile (inclusiv SMS).',
-    'Poți opri SMS-urile scriind *stop sms*.',
+    waTitle(t('gdprTitle', uiLang)),
+    t('gdprBody', uiLang),
+    t('gdprStopSms', uiLang),
   );
   if (link) {
-    return waJoin(body, '', `[Detalii termeni / GDPR](${link})`);
+    return waJoin(body, '', `[${t('gdprLink', uiLang)}](${link})`);
   }
-  return waJoin(body, '', 'Pentru detalii, scrie *contact*.');
+  return waJoin(body, '', t('gdprContact', uiLang));
 }
 
 /**
@@ -218,6 +240,7 @@ export function buildGdprNote(business) {
  * @param {string} [params.calendarLine]
  * @param {string} [params.mapsLine]
  * @param {boolean} [params.includeGdpr=false]
+ * @param {'ro' | 'en'} [params.lang='ro']
  * @returns {string}
  */
 export function buildBookingConfirmationMessage({
@@ -228,30 +251,33 @@ export function buildBookingConfirmationMessage({
   calendarLine = '',
   mapsLine = undefined,
   includeGdpr = false,
+  lang = 'ro',
 }) {
+  const uiLang = normalizeUiLang(lang);
   const { confirmationMessage } = getMessagingSettings(business);
   // Explicit mapsLine (including '') wins — do not auto-append a duplicate Maps markdown.
   const resolvedMapsLine = mapsLine === undefined
-    ? (buildMapsInviteLine(business)?.messageLine || '')
+    ? (buildMapsInviteLine(business, uiLang)?.messageLine || '')
     : String(mapsLine || '');
 
-  const custom = confirmationMessage
+  // Admin custom confirmation is usually Romanian — use bilingual default when EN.
+  const custom = (confirmationMessage && uiLang !== 'en')
     ? confirmationMessage
       .replace(/\{\{service\}\}/gi, serviceName)
       .replace(/\{\{datetime\}\}/gi, slotLabel)
       .replace(/\{\{name\}\}/gi, clientName || '')
       .replace(/\{\{business\}\}/gi, business.name)
     : waJoin(
-      'Ne vedem curând.',
-      waFooter(['*reprogramare*', '*anulează*']),
+      t('bookedSeeYou', uiLang),
+      waFooter([t('bookedFooterReschedule', uiLang), t('bookedFooterCancel', uiLang)]),
     );
 
   const parts = [
-    waTitle('Programare confirmată'),
+    waTitle(t('bookedTitle', uiLang)),
     '',
-    waField('Client', clientName || null),
-    waField('Serviciu', serviceName),
-    waField('Când', slotLabel),
+    waField(t('labelClient', uiLang), clientName || null),
+    waField(t('labelService', uiLang), serviceName),
+    waField(t('labelWhen', uiLang), slotLabel),
   ].filter(Boolean);
 
   if (calendarLine || resolvedMapsLine) {
@@ -262,7 +288,7 @@ export function buildBookingConfirmationMessage({
 
   parts.push('', WA_DIVIDER, '', custom);
   if (includeGdpr) {
-    parts.push('', buildGdprNote(business));
+    parts.push('', buildGdprNote(business, uiLang));
   }
   return parts.join('\n');
 }

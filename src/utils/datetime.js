@@ -152,28 +152,33 @@ export function formatTime(date, timezone) {
 /**
  * @param {Date} date
  * @param {string} timezone
- * @returns {string} e.g. "Marți, 4 Aug. — Ora 09:00"
+ * @param {'ro' | 'en'} [lang='ro']
+ * @returns {string} e.g. "Marți, 4 Aug. — Ora 09:00" / "Tuesday, 4 Aug — 09:00"
  */
-export function formatSlotLabel(date, timezone) {
-  const weekday = new Intl.DateTimeFormat('ro-RO', {
+export function formatSlotLabel(date, timezone, lang = 'ro') {
+  const locale = lang === 'en' ? 'en-GB' : 'ro-RO';
+  const weekday = new Intl.DateTimeFormat(locale, {
     timeZone: timezone,
     weekday: 'long',
   }).format(date);
 
-  const day = new Intl.DateTimeFormat('ro-RO', {
+  const day = new Intl.DateTimeFormat(locale, {
     timeZone: timezone,
     day: 'numeric',
   }).format(date);
 
-  const month = new Intl.DateTimeFormat('ro-RO', {
+  const month = new Intl.DateTimeFormat(locale, {
     timeZone: timezone,
     month: 'short',
   }).format(date);
 
   const time = formatTime(date, timezone);
   const weekdayCap = weekday.charAt(0).toUpperCase() + weekday.slice(1);
-
   const monthCap = month.charAt(0).toUpperCase() + month.slice(1).replace(/\.$/, '');
+
+  if (lang === 'en') {
+    return `${weekdayCap}, ${day} ${monthCap} — ${time}`;
+  }
   // e.g. "Luni, 10 Aug. — Ora 11:30"
   return `${weekdayCap}, ${day} ${monthCap}. — Ora ${time}`;
 }
