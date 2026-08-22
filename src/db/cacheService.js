@@ -134,9 +134,14 @@ export async function getBusyIntervalsFromCache({
 
 /**
  * Active soft locks from other pending drafts.
+ * Pending holds must block the same wall-clock slot for other clients.
+ *
  * @param {Object} params
  * @param {string} params.businessId
  * @param {string | null} [params.excludeDraftId]
+ * @param {string | null} [params.employeeId] — when set, include that staff's locks
+ *   plus unassigned locks; when null (any-staff grid), include *all* active pending locks
+ *   so a held slot cannot look free.
  */
 export async function getSoftLockIntervals({
   businessId,
@@ -163,14 +168,22 @@ export async function getSoftLockIntervals({
   }
 
   return (data ?? [])
-    .filter((row) => {
-      if (!employeeId) return !row.employee_id;
-      return row.employee_id === employeeId || !row.employee_id;
-    })
+    .filter((row) => softLockAppliesToEmployee(row.employee_id, employeeId))
     .map((row) => ({
       start: new Date(/** @type {string} */ (row.selected_slot_start)),
       end: new Date(/** @type {string} */ (row.selected_slot_end)),
     }));
+}
+
+/**
+ * @param {string | null | undefined} rowEmployeeId
+ * @param {string | null | undefined} queryEmployeeId
+ */
+export function softLockAppliesToEmployee(rowEmployeeId, queryEmployeeId) {
+  // Any-staff availability: every active pending hold blocks that interval.
+  if (!queryEmployeeId) return true;
+  // Staff-scoped: that employee's holds + unassigned business-wide holds.
+  return !rowEmployeeId || rowEmployeeId === queryEmployeeId;
 }
 
 /**

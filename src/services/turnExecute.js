@@ -1184,6 +1184,24 @@ async function missingSlotsResult({
 }
 
 async function afterHold({ business, recipientPhone, draft, service, slotStart, slotEnd, requestId }) {
+  // Never show Confirmă/Anulează unless the slot is soft-locked in DB.
+  if (!draft?.id || draft.state !== 'pending_confirmation' || !draft.selected_slot_start) {
+    console.error('[booking] afterHold refused: draft is not pending_confirmation', {
+      draftId: draft?.id ?? null,
+      state: draft?.state ?? null,
+      hasSlot: Boolean(draft?.selected_slot_start),
+      requestId,
+    });
+    return handlerResult({
+      status: 'ERROR',
+      user_message_template_key: 'ERROR_GENERIC',
+      data: {
+        client_message:
+          'Nu am putut bloca intervalul în sistem. Te rog alege din nou ora.',
+      },
+    });
+  }
+
   const client = await getClientByPhone({
     businessId: business.id,
     rawPhone: recipientPhone,
@@ -1365,6 +1383,27 @@ async function holdRequestedSlot({
       data: { client_message: 'Nu am putut reține intervalul. Încearcă din nou.' },
     });
   }
+
+  if (claimed.draft.state !== 'pending_confirmation' || !claimed.draft.selected_slot_start) {
+    console.error('[booking] claimSlotForDraft returned non-pending draft', {
+      draftId: claimed.draft.id,
+      state: claimed.draft.state,
+      requestId,
+    });
+    return handlerResult({
+      status: 'ERROR',
+      user_message_template_key: 'ERROR_GENERIC',
+      data: { client_message: 'Nu am putut bloca intervalul. Te rog alege din nou ora.' },
+    });
+  }
+
+  console.log('[booking] Slot held pending_confirmation', {
+    draftId: claimed.draft.id,
+    slotStart: slotStart.toISOString(),
+    lockedUntil: claimed.draft.locked_until ?? claimed.draft.pending_expires_at ?? null,
+    requestId,
+  });
+
   return afterHold({
     business,
     recipientPhone,
@@ -2803,13 +2842,17 @@ async function executeSetName({ business, recipientPhone, extract, activeDraft, 
       requestId,
     });
   }
+  // Never show Confirmă without a DB soft-lock — name alone is not enough.
   return handlerResult({
     status: 'SUCCESS',
     action_performed: 'NAME_SAVED',
     next_required_step: null,
-    user_message_template_key: 'ASK_CONFIRM',
-    data: { client_name: name },
-    menu: confirmMenu(),
+    user_message_template_key: 'THANKS',
+    data: {
+      client_name: name,
+      client_message: 'Am salvat numele. Scrie *programare* ca să alegi din nou serviciul și ora.',
+    },
+    menu: entryMenu(business),
   });
 }
 

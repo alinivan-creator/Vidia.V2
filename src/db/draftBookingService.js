@@ -547,6 +547,9 @@ export async function claimSlotForDraft({
   if (mode !== 'reschedule' && pendingExpiresColumnAvailable !== false) {
     payload.pending_expires_at = ttl;
   }
+  if (employeeId && employeeColumnAvailable !== false) {
+    payload.employee_id = employeeId;
+  }
 
   let query = supabase
     .from('draft_bookings')

@@ -31,7 +31,9 @@
  *   Stale button walls never intercept free-text mid-flow.
  *
  * TTLs (independent):
- *   pending_ttl_minutes (default 5) — calendar hold for pending_confirmation only
+ *   pending_ttl_minutes (default 5) — calendar hold for pending_confirmation only.
+ *     Choosing a time calls claim_booking_slot → state pending_confirmation + locked_until;
+ *     soft locks hide that interval from other clients until Confirm / Cancel / TTL.
  *   session_ttl_minutes (default 10) — idle booking/modify conversation; last client inbound
  *
  * Background:
