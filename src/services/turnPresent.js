@@ -24,7 +24,7 @@ import { unknownInfoClientMessage } from '../utils/workingHours.js';
 import { missingBusinessInfoMessage } from '../utils/businessInfoLookup.js';
 import { formatServiceAskMessage, bookingExamplePhrase } from '../utils/serviceMatch.js';
 import { mergeMenuOptions } from '../utils/bookingGrid.js';
-import { t, localizeMenuOptions, normalizeUiLang } from '../utils/uiI18n.js';
+import { t, localizeMenuOptions, normalizeUiLang, entryMenuBodyText, withEnglishSwitchOption } from '../utils/uiI18n.js';
 import { formatSlotLabel, localToUtc } from '../utils/datetime.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
@@ -633,12 +633,15 @@ export async function presentTurn({
     if (result.user_message_template_key === 'MENU') {
       await sendTextMessage({ business, recipientPhone, requestId, text });
       await simulateHumanDelay({ business, recipientPhone, requestId, delayMs: 800 });
-      const menuButtons = localizeMenuOptions(result.menu.options, lang);
+      const menuButtons = localizeMenuOptions(
+        withEnglishSwitchOption(result.menu.options, lang),
+        lang,
+      );
       await sendInteractiveButtons({
         business,
         recipientPhone,
         requestId,
-        bodyText: en ? t('menuFooter', 'en') : 'Cu ce te putem ajuta?',
+        bodyText: entryMenuBodyText(lang),
         buttons: menuButtons,
         footerText: business.name,
         menuKind: result.menu.kind || 'entry',

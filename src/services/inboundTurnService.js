@@ -7,13 +7,70 @@
 
 import { processTurnPipeline } from './turnPipeline.js';
 import { setClientSmsOptIn } from './smsMarketingService.js';
-import { sendTextMessage } from './whatsappService.js';
+import {
+  sendTextMessage,
+  sendInteractiveButtons,
+  clearRememberedMenuOptions,
+  simulateHumanDelay,
+} from './whatsappService.js';
 import { triageUserIntent } from './intentTriageService.js';
 import { getBookingConfig } from '../utils/datetime.js';
 import { setConversationStep } from '../db/conversationStateService.js';
-import { languageAck, parseLanguageChoice } from '../utils/uiI18n.js';
+import {
+  languageAck,
+  parseLanguageChoice,
+  isRestartSessionCommand,
+  hasExplicitSessionLanguage,
+  detectSessionLanguageFromText,
+  entryMenuBodyText,
+  withEnglishSwitchOption,
+  localizeMenuOptions,
+  t,
+} from '../utils/uiI18n.js';
+import { resetExpiredSessionForRestart } from './pendingExpiryCron.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
+
+/**
+ * @param {Business} business
+ */
+function entryMenuButtons(business) {
+  return (business.menu_buttons ?? []).slice(0, 3).map((btn) => ({
+    id: btn.id,
+    title: String(btn.label || '').slice(0, 20),
+  }));
+}
+
+/**
+ * @param {Object} params
+ * @param {Business} params.business
+ * @param {string} params.recipientPhone
+ * @param {string | null} [params.requestId]
+ * @param {'ro' | 'en'} [params.lang]
+ * @param {string} [params.bodyText]
+ */
+async function sendFreshEntryMenu({
+  business,
+  recipientPhone,
+  requestId = null,
+  lang = 'ro',
+  bodyText = null,
+}) {
+  const options = withEnglishSwitchOption(entryMenuButtons(business), lang);
+  if (!options.length) return;
+  const buttons = localizeMenuOptions(options, lang);
+  await simulateHumanDelay({ business, recipientPhone, requestId, delayMs: 600 });
+  await sendInteractiveButtons({
+    business,
+    recipientPhone,
+    requestId,
+    bodyText: bodyText || entryMenuBodyText(lang),
+    buttons,
+    footerText: business.name,
+    menuKind: 'entry',
+    rememberOptions: buttons,
+  });
+}
 
 /**
  * @param {Object} ctx
@@ -76,25 +133,82 @@ export async function routeInboundTurn({
   void pendingDismissed;
   void pendingExpired;
 
-  // Soft language pick — only when the whole message is a language word / button.
-  // Does not interrupt booking; RO remains default when nothing is chosen.
-  const langPick = parseLanguageChoice({ textBody, buttonPayload });
-  if (langPick) {
-    await setConversationStep({
-      businessId: business.id,
+  // Universal hard reset — clears stuck mid-flow state during tests or for clients.
+  if (isRestartSessionCommand(textBody) || isRestartSessionCommand(typedText)) {
+    clearRememberedMenuOptions(business.id, recipientPhone);
+    const restarted = await resetExpiredSessionForRestart({
+      business,
       rawPhone: recipientPhone,
-      step: convState?.current_step || 'IDLE',
-      context: { session_language: langPick },
-      mergeContext: true,
+      clientId,
       requestId,
     });
     await sendTextMessage({
       business,
       recipientPhone,
       requestId,
-      text: languageAck(langPick),
+      text: t('sessionRestarted', 'en'),
+    });
+    await sendFreshEntryMenu({
+      business,
+      recipientPhone,
+      requestId,
+      lang: 'ro',
+      bodyText: entryMenuBodyText('ro'),
+    });
+    console.log('[session] restart session — hard reset to entry menu', {
+      businessId: business.id,
+      requestId,
+      message: restarted.message,
     });
     return;
+  }
+
+  let nextConv = convState;
+
+  // Soft language pick — only when the whole message is a language word / button.
+  const langPick = parseLanguageChoice({ textBody, buttonPayload });
+  if (langPick) {
+    const step = nextConv?.current_step || 'IDLE';
+    nextConv = await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step,
+      context: { session_language: langPick },
+      mergeContext: true,
+      requestId,
+    }) || nextConv;
+    await sendTextMessage({
+      business,
+      recipientPhone,
+      requestId,
+      text: languageAck(langPick),
+    });
+    // Offer the entry menu only when idle — mid-flow just switches language for later copy.
+    if (step === 'IDLE' || step === 'idle') {
+      await sendFreshEntryMenu({
+        business,
+        recipientPhone,
+        requestId,
+        lang: langPick,
+      });
+    }
+    return;
+  }
+
+  // First free-text on a fresh session: auto-detect English and continue the same turn.
+  if (!hasExplicitSessionLanguage(nextConv?.context_data)) {
+    const guessed = detectSessionLanguageFromText(textBody || typedText);
+    if (guessed === 'en') {
+      nextConv = await setConversationStep({
+        businessId: business.id,
+        rawPhone: recipientPhone,
+        step: nextConv?.current_step || 'IDLE',
+        context: { session_language: 'en' },
+        mergeContext: true,
+        requestId,
+      }) || nextConv;
+      console.log('[session] Smart language detection → en', { requestId });
+    }
   }
 
   await processTurnPipeline({
@@ -106,7 +220,7 @@ export async function routeInboundTurn({
     typedText,
     clientId,
     requestId,
-    convState,
+    convState: nextConv,
     activeDraft,
   });
 }

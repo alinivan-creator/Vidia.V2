@@ -11,6 +11,11 @@ import {
   parseLanguageChoice,
   readSessionLanguage,
   localizeMenuOptions,
+  detectSessionLanguageFromText,
+  isRestartSessionCommand,
+  hasExplicitSessionLanguage,
+  entryMenuBodyText,
+  withEnglishSwitchOption,
 } from '../src/utils/uiI18n.js';
 import { renderHandlerResult } from '../src/services/turnPresent.js';
 import { isConversationSessionExpired } from '../src/services/sessionValidator.js';
@@ -38,7 +43,37 @@ describe('minimal bilingual UI layer', () => {
   it('parses language choice from typed words', () => {
     assert.equal(parseLanguageChoice({ textBody: 'English' }), 'en');
     assert.equal(parseLanguageChoice({ textBody: 'Română' }), 'ro');
+    assert.equal(parseLanguageChoice({ textBody: 'Switch to English' }), 'en');
+    assert.equal(parseLanguageChoice({ buttonPayload: 'lang_en' }), 'en');
     assert.equal(parseLanguageChoice({ textBody: 'programare' }), null);
+  });
+
+  it('detects English from first free-text without locking Romanian phrases', () => {
+    assert.equal(detectSessionLanguageFromText('Hello, I want an appointment'), 'en');
+    assert.equal(detectSessionLanguageFromText('Hi'), 'en');
+    assert.equal(detectSessionLanguageFromText('Vreau o programare mâine'), null);
+    assert.equal(detectSessionLanguageFromText('salut'), null);
+    assert.equal(detectSessionLanguageFromText('English'), null);
+  });
+
+  it('recognizes restart session and English switch helpers', () => {
+    assert.equal(isRestartSessionCommand('restart session'), true);
+    assert.equal(isRestartSessionCommand('Restart Session'), true);
+    assert.equal(isRestartSessionCommand('hello'), false);
+    assert.equal(hasExplicitSessionLanguage({}), false);
+    assert.equal(hasExplicitSessionLanguage({ session_language: 'en' }), true);
+    assert.match(entryMenuBodyText('ro'), /Cu ce te putem ajuta/);
+    assert.match(entryMenuBodyText('ro'), /Switch to English/);
+    assert.equal(entryMenuBodyText('en'), 'How can we help you?');
+    const withBtn = withEnglishSwitchOption([{ id: 'book', title: 'Programare' }], 'ro');
+    assert.equal(withBtn.length, 2);
+    assert.equal(withBtn[1].id, 'lang_en');
+    const full = withEnglishSwitchOption([
+      { id: 'a', title: 'A' },
+      { id: 'b', title: 'B' },
+      { id: 'c', title: 'C' },
+    ], 'ro');
+    assert.equal(full.length, 3);
   });
 
   it('localizes confirm buttons for EN without changing ids', () => {
@@ -120,7 +155,7 @@ describe('minimal bilingual UI layer', () => {
   });
 
   it('session TTL expires idle sessions that only hold language choice', () => {
-    const now = Date.parse('2026-08-22T20:20:00.000Z');
+    const now = Date.parse('2026-08-22T20:50:00.000Z');
     const conv = {
       current_step: 'IDLE',
       context_data: {
@@ -128,9 +163,9 @@ describe('minimal bilingual UI layer', () => {
         session_language: 'en',
       },
     };
-    assert.equal(isConversationSessionExpired(conv, 10, now), true);
+    assert.equal(isConversationSessionExpired(conv, 45, now), true);
     assert.equal(
-      isConversationSessionExpired(conv, 10, Date.parse('2026-08-22T20:05:00.000Z')),
+      isConversationSessionExpired(conv, 45, Date.parse('2026-08-22T20:40:00.000Z')),
       false,
     );
   });

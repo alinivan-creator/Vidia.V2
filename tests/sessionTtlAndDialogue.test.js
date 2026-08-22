@@ -11,10 +11,10 @@ import { toGeminiContents } from '../src/services/llmProvider.js';
 import { toExecutionEnvelope } from '../src/services/executionAgent.js';
 
 describe('session TTL', () => {
-  it('defaults to 10 minutes and clamps Admin values', () => {
-    assert.equal(DEFAULT_SESSION_TTL_MINUTES, 10);
-    assert.equal(getSessionTtlMinutes(null), 10);
-    assert.equal(getSessionTtlMinutes({ booking_settings: {} }), 10);
+  it('defaults to 45 minutes and clamps Admin values', () => {
+    assert.equal(DEFAULT_SESSION_TTL_MINUTES, 45);
+    assert.equal(getSessionTtlMinutes(null), 45);
+    assert.equal(getSessionTtlMinutes({ booking_settings: {} }), 45);
     assert.equal(getSessionTtlMinutes({ booking_settings: { session_ttl_minutes: 15 } }), 15);
     assert.equal(getSessionTtlMinutes({ booking_settings: { session_ttl_minutes: 1 } }), 2);
     assert.equal(getSessionTtlMinutes({ booking_settings: { session_ttl_minutes: 999 } }), 120);
@@ -31,24 +31,28 @@ describe('session TTL', () => {
     );
   });
 
-  it('IDLE without in-flight context is not expired', () => {
-    const now = Date.parse('2026-08-18T18:20:00.000Z');
+  it('IDLE also expires after session TTL (anti-stuck recovery)', () => {
+    const now = Date.parse('2026-08-18T18:50:00.000Z');
     const conv = {
       current_step: 'IDLE',
       context_data: { session_timestamp: '2026-08-18T18:00:00.000Z' },
     };
-    assert.equal(isConversationSessionExpired(conv, 10, now), false);
+    assert.equal(isConversationSessionExpired(conv, 45, now), true);
+    assert.equal(
+      isConversationSessionExpired(conv, 45, Date.parse('2026-08-18T18:40:00.000Z')),
+      false,
+    );
   });
 
   it('active booking step expires after session TTL', () => {
-    const now = Date.parse('2026-08-18T18:11:00.000Z');
+    const now = Date.parse('2026-08-18T18:50:00.000Z');
     const conv = {
       current_step: 'SELECTING_SLOT',
       context_data: { session_timestamp: '2026-08-18T18:00:00.000Z' },
     };
-    assert.equal(isConversationSessionExpired(conv, 10, now), true);
+    assert.equal(isConversationSessionExpired(conv, 45, now), true);
     assert.equal(
-      isConversationSessionExpired(conv, 10, Date.parse('2026-08-18T18:09:00.000Z')),
+      isConversationSessionExpired(conv, 45, Date.parse('2026-08-18T18:40:00.000Z')),
       false,
     );
   });

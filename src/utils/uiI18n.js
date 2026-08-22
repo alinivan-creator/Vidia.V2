@@ -73,6 +73,15 @@ const UI = {
   },
   mapsAnchor: { ro: 'Pornește spre locație', en: 'Get directions' },
   mapsShort: { ro: 'hartă', en: 'map' },
+  switchToEnglishHint: {
+    ro: '🇬🇧 Switch to English — type *English*',
+    en: '🇬🇧 Switch to English — type *English*',
+  },
+  switchToEnglishBtn: { ro: 'English', en: 'English' },
+  sessionRestarted: {
+    ro: 'Sesiune repornită. Cu ce te putem ajuta?',
+    en: 'Session restarted. How can we help you?',
+  },
 };
 
 /**
@@ -127,9 +136,87 @@ export function parseLanguageChoice({ textBody, buttonPayload }) {
     .replace(/\s+/g, ' ')
     .trim();
   if (!n) return null;
-  if (/^(english|engleza|engleză|en)$/.test(n)) return 'en';
-  if (/^(romana|română|ro)$/.test(n)) return 'ro';
+  if (/^(english|engleza|engleza|en)$/.test(n)) return 'en';
+  if (/^(romana|romana|ro)$/.test(n)) return 'ro';
+  if (/^(switch to english|switch english|in english)$/.test(n)) return 'en';
+  if (/^(switch to romanian|in romanian|in romana)$/.test(n)) return 'ro';
   return null;
+}
+
+/**
+ * True when the client typed the universal hard-reset command.
+ * @param {string | null | undefined} textBody
+ */
+export function isRestartSessionCommand(textBody) {
+  const n = String(textBody ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return n === 'restart session' || n === 'reset session' || n === 'reporneste sesiunea';
+}
+
+/**
+ * Whether the conversation already has an explicit RO/EN choice.
+ * @param {Record<string, unknown> | null | undefined} ctx
+ */
+export function hasExplicitSessionLanguage(ctx) {
+  return ctx?.session_language === 'en' || ctx?.session_language === 'ro';
+}
+
+/**
+ * Infer English from free text on a fresh session (no explicit language yet).
+ * Returns 'en' only when English markers are clear and Romanian is absent.
+ * Otherwise null → keep Romanian default without locking the session.
+ *
+ * @param {string | null | undefined} textBody
+ * @returns {UiLang | null}
+ */
+export function detectSessionLanguageFromText(textBody) {
+  const raw = String(textBody ?? '').trim();
+  if (!raw || raw.length < 2) return null;
+
+  // Explicit language words are handled by parseLanguageChoice — skip here.
+  if (parseLanguageChoice({ textBody: raw })) return null;
+
+  const n = raw
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\p{L}\p{N}\s']/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const hasRoDiacritics = /[ăâîșț]/i.test(raw);
+  const hasRo = hasRoDiacritics || /\b(salut|buna|buna ziua|buna seara|vraiu|vreau|programare|multumesc|te rog|maine|azi|serviciu|orar|cand|poftim|mersi|reprogramare|anuleaza|anulare)\b/.test(n);
+  const hasEn = /\b(hello|hi|hey|good morning|good afternoon|good evening|i want|i would like|i'd like|id like|appointment|booking|book a|please|thanks|thank you|can i|how much|available|schedule|reschedule|cancel my)\b/.test(n);
+
+  if (hasEn && !hasRo) return 'en';
+  return null;
+}
+
+/**
+ * Romanian entry-menu body with a discrete English switch hint.
+ * @param {UiLang} [lang]
+ */
+export function entryMenuBodyText(lang = 'ro') {
+  if (lang === 'en') return t('menuFooter', 'en');
+  return `${t('menuFooter', 'ro')}\n\n${t('switchToEnglishHint', 'ro')}`;
+}
+
+/**
+ * When the RO menu has a free WhatsApp button slot (max 3), add English.
+ * @param {{ id?: string, title?: string }[]} options
+ * @param {UiLang} [lang]
+ */
+export function withEnglishSwitchOption(options, lang = 'ro') {
+  const list = Array.isArray(options) ? [...options] : [];
+  if (lang === 'en') return list;
+  if (list.some((o) => String(o.id || '').toLowerCase() === 'lang_en')) return list;
+  if (list.length >= 3) return list;
+  list.push({ id: 'lang_en', title: t('switchToEnglishBtn', 'ro') });
+  return list;
 }
 
 /**

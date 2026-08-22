@@ -27,14 +27,19 @@
  *   No greeting gate — "vreau să fac o programare" / "vreau să reprogramez" run without "Salut".
  *   UI copy defaults to Romanian. Optional EN overlay via uiI18n (`session_language`
  *   for the active conversation only; cleared on session TTL / hardReset).
- *   Type *English* / *Română* to switch for the current session.
+ *   First free-text can auto-set `en` when English is clear; RO menus include
+ *   a Switch to English hint (and a button when a WhatsApp slot is free).
+ *   Type *English* / *Română*, tap `lang_en`, or *restart session* anytime.
  *   Stale button walls never intercept free-text mid-flow.
  *
  * TTLs (independent):
  *   pending_ttl_minutes (default 5) — calendar hold for pending_confirmation only.
- *     Choosing a time calls claim_booking_slot → state pending_confirmation + locked_until;
- *     soft locks hide that interval from other clients until Confirm / Cancel / TTL.
- *   session_ttl_minutes (default 10) — idle booking/modify conversation; last client inbound
+ *     Choosing a time calls claim_booking_slot → state pending_confirmation + locked_until
+ *     and writes a synthetic calendar_cache busy row (`vidia_hold_<draftId>`).
+ *     Soft locks + cache hide that interval from other clients until Confirm / Cancel / TTL.
+ *   session_ttl_minutes (default 45) — idle conversation; last client inbound.
+ *     After TTL, silent hard reset to IDLE before processing the next message.
+ *     Type *restart session* for an immediate hard reset during tests.
  *
  * Background:
  *   GET/POST /cron/expire-pending every minute (vercel.json)

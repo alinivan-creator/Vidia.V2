@@ -8,6 +8,10 @@ import { rememberOfferFromAssistant } from './pendingOfferService.js';
 import { formatContactMessage } from './contactService.js';
 import { buildAiTransparencyWelcome, buildContactLinkButtons } from '../utils/businessMessages.js';
 import {
+  entryMenuBodyText,
+  withEnglishSwitchOption,
+} from '../utils/uiI18n.js';
+import {
   sendInteractiveButtons,
   sendTextMessage,
   sendMessageWithUrlButton,
@@ -74,7 +78,7 @@ export async function sendAiTransparencyWelcome({
 
   if (!withMenu) return;
 
-  const buttons = buildInteractiveButtons(business);
+  const buttons = withEnglishSwitchOption(buildInteractiveButtons(business), 'ro');
   if (buttons.length === 0) return;
 
   await simulateHumanDelay({ business, recipientPhone, requestId, delayMs: 800 });
@@ -82,7 +86,7 @@ export async function sendAiTransparencyWelcome({
     business,
     recipientPhone,
     requestId,
-    bodyText: 'Cu ce te putem ajuta? Alege o opțiune:',
+    bodyText: entryMenuBodyText('ro'),
     buttons: buttons.map(({ id, title }) => ({ id, title })),
     footerText: business.name,
     menuKind: 'entry',

@@ -149,8 +149,8 @@ describe('State Machine & Atomic Context Pivots', () => {
 });
 
 describe('Silent Session TTL Check & NLU Classification', () => {
-  it('session TTL resets idle conversation past 10 minutes silently', () => {
-    const now = Date.parse('2026-08-19T10:15:00.000Z');
+  it('session TTL resets idle conversation past TTL silently', () => {
+    const now = Date.parse('2026-08-19T10:50:00.000Z');
     const conv = {
       current_step: CONVERSATION_STEPS.SELECTING_SLOT,
       context_data: {
@@ -159,11 +159,11 @@ describe('Silent Session TTL Check & NLU Classification', () => {
       },
     };
 
-    assert.equal(isConversationSessionExpired(conv, 10, now), true);
+    assert.equal(isConversationSessionExpired(conv, 45, now), true);
   });
 
-  it('session TTL does not expire recent conversation within 10 minutes', () => {
-    const now = Date.parse('2026-08-19T10:08:00.000Z');
+  it('session TTL does not expire recent conversation within TTL', () => {
+    const now = Date.parse('2026-08-19T10:40:00.000Z');
     const conv = {
       current_step: CONVERSATION_STEPS.SELECTING_SLOT,
       context_data: {
@@ -171,7 +171,7 @@ describe('Silent Session TTL Check & NLU Classification', () => {
       },
     };
 
-    assert.equal(isConversationSessionExpired(conv, 10, now), false);
+    assert.equal(isConversationSessionExpired(conv, 45, now), false);
   });
 
   it('classifyInboundMessage passes free-text directly to NLU without treating as stale button', () => {

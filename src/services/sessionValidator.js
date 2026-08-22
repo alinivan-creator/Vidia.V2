@@ -6,25 +6,8 @@
 /** @typedef {import('../db/businessService.js').Business} Business */
 /** @typedef {import('../db/conversationStateService.js').ConversationState} ConversationState */
 
-export const DEFAULT_SESSION_TTL_MINUTES = 10;
-
-const ACTIVE_STEPS = new Set([
-  'CHOOSING_SERVICE',
-  'CHOOSING_EMPLOYEE',
-  'SELECTING_SLOT',
-  'ASKING_NAME',
-  'CONFIRMING',
-  'OFFERING_RESUME',
-  'MODIFYING',
-  'RESCHEDULING',
-  'CONFIRMING_CANCEL',
-  'waiting_for_service',
-  'waiting_for_date',
-  'waiting_for_time',
-  'waiting_for_date_time',
-  'waiting_for_confirmation',
-  'waiting_for_clarification',
-]);
+/** Default idle timeout before silent reset to the entry menu (Admin can override). */
+export const DEFAULT_SESSION_TTL_MINUTES = 45;
 
 /**
  * @param {Business | null | undefined} business
@@ -68,40 +51,20 @@ export function readInboundStamp(convState) {
   return Number.isFinite(ms) ? ms : 0;
 }
 
-function hasInFlightContext(convState) {
-  const ctx = convState?.context_data && typeof convState.context_data === 'object'
-    ? convState.context_data
-    : {};
-  return Boolean(
-    ctx.draft_id
-    || ctx.appointment_id
-    || ctx.booking_wait
-    || ctx.last_menu
-    || ctx.pending_date_text
-    || ctx.intent,
-  );
-}
-
 /**
- * True when the booking/modify session has been idle longer than TTL.
- * Also expires IDLE sessions that only hold an ephemeral language choice,
- * so the next conversation can pick RO/EN again.
+ * True when idle longer than TTL since the last client inbound.
+ * Any step (including IDLE) resets so tests and returning clients
+ * never stay stuck on a stale conversation state.
  *
  * @param {ConversationState | null | undefined} convState
  * @param {number} ttlMinutes
  * @param {number} [now]
  */
 export function isConversationSessionExpired(convState, ttlMinutes, now = Date.now()) {
-  const step = String(convState?.current_step || 'IDLE');
-  const ctx = convState?.context_data && typeof convState.context_data === 'object'
-    ? convState.context_data
-    : {};
-  const stickyLang = ctx.session_language === 'en' || ctx.session_language === 'ro';
-  const active = ACTIVE_STEPS.has(step) || hasInFlightContext(convState) || stickyLang;
-  if (!active) return false;
+  if (!convState) return false;
   const ts = readSessionTimestamp(convState);
   if (!ts) return false;
-  const ttlMs = Math.max(1, Number(ttlMinutes) || DEFAULT_SESSION_TTL_MINUTES) * 60 * 1000;
+  const ttlMs = Math.max(1, Number(ttlMinutes) || DEFAULT_SESSION_TTL_MINUTES) * 60_000;
   return now - ts > ttlMs;
 }
 
