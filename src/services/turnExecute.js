@@ -47,7 +47,7 @@ import {
   formatTime,
   localToUtc,
 } from '../utils/datetime.js';
-import { formatRomanianDate, formatDisplayDate } from '../lib/ai/responseFormatter.js';
+import { formatRomanianDate } from '../lib/ai/responseFormatter.js';
 import {
   listOpenDayWindows,
   listTimeWindows,
@@ -56,7 +56,6 @@ import {
   formatTimeGridMessage,
   GRID_PREFIX,
   QUICK_REPLY_MAX,
-  LIST_PAGE_SIZE,
   mergeMenuOptions,
 } from '../utils/bookingGrid.js';
 import { createFlowToken, flowsEnabled, getConfiguredFlowId } from './whatsappFlowService.js';
@@ -80,8 +79,7 @@ import {
   formatBusinessInfoReply,
   missingBusinessInfoMessage,
 } from '../utils/businessInfoLookup.js';
-import { resolveClientLanguage } from '../utils/clientLanguage.js';
-import { bookingUi } from '../utils/bookingI18n.js';
+import { detectClientLanguage } from '../utils/clientLanguage.js';
 import {
   detectModificationIntent,
   refersToSavedAppointments,
@@ -454,13 +452,12 @@ function employeeMenu(employees) {
   };
 }
 
-function confirmMenu(lang = 'ro') {
-  const uiLang = lang === 'en' ? 'en' : 'ro';
+function confirmMenu() {
   return {
     kind: 'confirm',
     options: [
-      { id: PREFIX.CONFIRM, title: bookingUi('confirmBooking', uiLang) },
-      { id: PREFIX.CANCEL, title: bookingUi('cancelBooking', uiLang) },
+      { id: PREFIX.CONFIRM, title: 'Confirmă' },
+      { id: PREFIX.CANCEL, title: 'Anulează' },
     ],
   };
 }
@@ -475,16 +472,15 @@ function entryMenu(business) {
     : null;
 }
 
-function calendarCta(business, serviceName, start, end, lang = 'ro') {
-  const uiLang = lang === 'en' ? 'en' : 'ro';
+function calendarCta(business, serviceName, start, end) {
   const invite = buildBookingCalendarInvite({
     business,
-    serviceName: serviceName || (uiLang === 'en' ? 'Booking' : 'Programare'),
+    serviceName: serviceName || 'Programare',
     startIso: start,
     endIso: end,
   });
   if (!invite?.url) return null;
-  return { url: invite.url, title: invite.buttonTitle || bookingUi('addCalendar', uiLang) };
+  return { url: invite.url, title: invite.buttonTitle || 'Adaugă în calendar' };
 }
 
 /**
@@ -875,8 +871,7 @@ async function listBookableDayWindows({
   return checks.filter(Boolean);
 }
 
-async function missingService(business, recipientPhone, draft, requestId, lang = 'ro') {
-  const uiLang = lang === 'en' ? 'en' : 'ro';
+async function missingService(business, recipientPhone, draft, requestId) {
   const services = getBookingConfig(business).services;
   if (!services.length) {
     return handlerResult({
@@ -910,9 +905,8 @@ async function missingService(business, recipientPhone, draft, requestId, lang =
         duration_minutes: s.duration_minutes,
         price_ron: s.price_ron ?? null,
       })),
-      list_button: bookingUi('listServices', uiLang),
+      list_button: 'Servicii',
       ui: 'list_picker',
-      client_language: uiLang,
     },
     menu,
     machine_action: MACHINE_ACTIONS.ACTION_ASK_SERVICE,
@@ -930,21 +924,15 @@ async function askDateGridResult({
   conversationStep = CONVERSATION_STEPS.WAITING_FOR_DATE,
   extraContext = {},
   notice = null,
-  lang = 'ro',
 }) {
-  const uiLang = lang === 'en' ? 'en' : 'ro';
   const intent = extraContext.intent || 'book';
   // Richer Meta Flow UI when the tenant has published a WhatsApp Flow.
   // A notice must stay visible, so keep the text grid in that case.
   if (flowsEnabled(business) && page === 0 && !clientMessage && !notice && intent !== 'reschedule') {
     const flowId = getConfiguredFlowId(business);
     const body = service?.name
-      ? (uiLang === 'en'
-        ? `🗓️ Open the calendar for *${service.name}* — pick a free day and time.`
-        : `🗓️ Deschide calendarul pentru *${service.name}* — alege ziua și ora liberă.`)
-      : (uiLang === 'en'
-        ? '🗓️ Open the calendar — pick a free day and time.'
-        : '🗓️ Deschide calendarul — alege ziua și ora liberă.');
+      ? `🗓️ Deschide calendarul pentru *${service.name}* — alege ziua și ora liberă.`
+      : '🗓️ Deschide calendarul — alege ziua și ora liberă.';
     await setConversationStep({
       businessId: business.id,
       rawPhone: recipientPhone,
@@ -969,7 +957,6 @@ async function askDateGridResult({
         ui: 'whatsapp_flow',
         flow_id: flowId,
         flow_token: createFlowToken(business.id),
-        client_language: uiLang,
       },
       menu: null,
       machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE,
@@ -992,19 +979,16 @@ async function askDateGridResult({
         service_name: service?.name,
         client_message: withNotice(
           notice,
-          uiLang === 'en'
-            ? `No days with free slots in the next 14 days. Contact ${business.name || 'us'} or try again later.`
-            : `Nu am zile cu ore libere în următoarele 14 zile. Contactează ${business.name || 'locația'} sau încearcă mai târziu.`,
+          `Nu am zile cu ore libere în următoarele 14 zile. Contactează ${business.name || 'locația'} sau încearcă mai târziu.`,
         ),
-        client_language: uiLang,
       },
       machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE,
     });
   }
-  const listPage = buildListPickerPage(days, page, LIST_PAGE_SIZE, uiLang);
+  const listPage = buildListPickerPage(days, page);
   const body = withNotice(
     notice,
-    clientMessage || formatDayGridMessage(days, business.timezone, service?.name, uiLang),
+    clientMessage || formatDayGridMessage(days, business.timezone, service?.name),
   );
   const pageOptions = listPage.items.map((i) => ({
     id: i.id,
@@ -1041,8 +1025,7 @@ async function askDateGridResult({
       client_message: body,
       grid_page: listPage.page,
       ui: 'list_picker',
-      list_button: bookingUi('listDays', uiLang),
-      client_language: uiLang,
+      list_button: 'Zile disponibile',
     },
     menu: {
       kind: 'day_grid',
@@ -1068,9 +1051,7 @@ async function missingSlotsResult({
   timeWindow = null,
   page = 0,
   notice = null,
-  lang = 'ro',
 }) {
-  const uiLang = lang === 'en' ? 'en' : 'ro';
   // "mâine seara" is a day-part, not a clock time: clip it to the Admin hours of that
   // date, and when nothing free is left inside it fall back to the whole day with a
   // notice instead of dropping the client back to the day picker.
@@ -1116,12 +1097,12 @@ async function missingSlotsResult({
       data: { client_message: listed.error },
     });
   }
-  const times = listTimeWindows(listed.slots, business.timezone, uiLang);
-  const listPage = buildListPickerPage(times, page, LIST_PAGE_SIZE, uiLang);
-  const datePretty = dateKey ? formatDisplayDate(dateKey, business.timezone, uiLang) : null;
+  const times = listTimeWindows(listed.slots, business.timezone);
+  const listPage = buildListPickerPage(times, page);
+  const datePretty = dateKey ? formatRomanianDate(dateKey, business.timezone) : null;
   const body = withNotice(
     bodyNotice,
-    formatTimeGridMessage(times, dateKey, business.timezone, service?.name, uiLang),
+    formatTimeGridMessage(times, dateKey, business.timezone, service?.name),
   );
   const useQuickReply = times.length > 0 && times.length <= QUICK_REPLY_MAX && listPage.pageCount <= 1;
   const pageOptions = useQuickReply
@@ -1165,13 +1146,10 @@ async function missingSlotsResult({
       extraContext: extraContext.intent === 'reschedule' ? extraContext : {},
       notice: bodyNotice,
       clientMessage:
-        (uiLang === 'en'
-          ? `No free times for *${service?.name || 'service'}*`
-          : `Nu am găsit ore libere pentru *${service?.name || 'serviciu'}*`) +
-        (datePretty ? (uiLang === 'en' ? ` on *${datePretty}*` : ` pe *${datePretty}*`) : '') +
+        `Nu am găsit ore libere pentru *${service?.name || 'serviciu'}*` +
+        (datePretty ? ` pe *${datePretty}*` : '') +
         '.\n\n' +
-        formatDayGridMessage(listOpenDayWindows(business, { lang: uiLang }), business.timezone, service?.name, uiLang),
-      lang: uiLang,
+        formatDayGridMessage(listOpenDayWindows(business), business.timezone, service?.name),
     });
   }
   return handlerResult({
@@ -1192,8 +1170,7 @@ async function missingSlotsResult({
       })),
       grid_page: listPage.page,
       ui: useQuickReply ? 'quick_reply' : 'list_picker',
-      list_button: bookingUi('listTimes', uiLang),
-      client_language: uiLang,
+      list_button: 'Ore libere',
     },
     menu: {
       kind: 'time_grid',
@@ -1206,8 +1183,7 @@ async function missingSlotsResult({
   });
 }
 
-async function afterHold({ business, recipientPhone, draft, service, slotStart, slotEnd, requestId, lang = 'ro' }) {
-  const uiLang = lang === 'en' ? 'en' : 'ro';
+async function afterHold({ business, recipientPhone, draft, service, slotStart, slotEnd, requestId }) {
   const client = await getClientByPhone({
     businessId: business.id,
     rawPhone: recipientPhone,
@@ -1251,7 +1227,6 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
         service_name: service.name,
         slot_label: slotLabel,
         employee_name: employee?.name ?? null,
-        client_language: uiLang,
       },
     });
   }
@@ -1267,7 +1242,7 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
         slot_end: slotEnd.toISOString(),
         intent: 'book',
         booking_wait: BOOKING_WAIT.CONFIRMATION,
-        last_menu: confirmMenu(uiLang),
+        last_menu: confirmMenu(),
         draft_booking: {
           service_id: service.id || service.service_id || null,
           service_name: service.name,
@@ -1292,9 +1267,8 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
       client_name: client.display_name,
       date_key: formatDateKey(slotStart, business.timezone),
       time_hhmm: formatTime(slotStart, business.timezone),
-      client_language: uiLang,
     },
-    menu: confirmMenu(uiLang),
+    menu: confirmMenu(),
     machine_action: MACHINE_ACTIONS.ACTION_SHOW_CONFIRMATION,
   });
 }
@@ -1307,7 +1281,6 @@ async function holdRequestedSlot({
   slotStart,
   employeeId,
   requestId,
-  lang = 'ro',
 }) {
   const duration = catalogDuration(business, service);
   if (!duration) {
@@ -1359,7 +1332,6 @@ async function holdRequestedSlot({
       requestId,
       reasonKey: 'SLOT_UNAVAILABLE',
       occupiedLabel: formatSlotLabel(slotStart, business.timezone),
-      lang,
     });
   }
 
@@ -1385,7 +1357,6 @@ async function holdRequestedSlot({
         requestId,
         reasonKey: 'SLOT_UNAVAILABLE',
         occupiedLabel: formatSlotLabel(slotStart, business.timezone),
-        lang,
       });
     }
     return handlerResult({
@@ -1402,12 +1373,10 @@ async function holdRequestedSlot({
     slotStart,
     slotEnd,
     requestId,
-    lang,
   });
 }
 
 async function executeBook({ business, recipientPhone, extract, clientId, requestId, activeDraft, convState }) {
-  const lang = resolveClientLanguage('', convState?.context_data?.client_language, convState?.context_data);
   // Never spawn a parallel booking while a reschedule is in flight.
   const modifyInFlight = convState?.context_data?.intent === 'reschedule'
     || convState?.current_step === CONVERSATION_STEPS.RESCHEDULING
@@ -1459,7 +1428,7 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
   }
 
   if (!service) {
-    return missingService(business, recipientPhone, draft, requestId, lang);
+    return missingService(business, recipientPhone, draft, requestId);
   }
 
   if (extract.employee_name && !extract.employee_id) {
@@ -1531,26 +1500,22 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
       slotStart,
       employeeId: extract.employee_id === 'any' ? null : (extract.employee_id || draftEmployeeId(working)),
       requestId,
-      lang,
     });
   }
 
   if (!extract.date_text) {
     // Soft window without a day: still require a day window first (click grid).
     if (extract.time_window) {
-      const uiLang = lang === 'en' ? 'en' : 'ro';
       return askDateGridResult({
         business,
         recipientPhone,
         draft: working,
         service,
         requestId,
-        lang,
         clientMessage:
-          formatDayGridMessage(listOpenDayWindows(business, { lang: uiLang }), business.timezone, service.name, uiLang)
-          + (uiLang === 'en'
-            ? `\n\nPreferred window: *${timeWindowLabel(extract.time_window) || extract.time_window}*. Pick a day, then a time.`
-            : `\n\nInterval preferat: *${timeWindowLabel(extract.time_window) || extract.time_window}*. Alege ziua, apoi ora.`),
+          formatDayGridMessage(listOpenDayWindows(business), business.timezone, service.name)
+          + `\n\nInterval preferat: *${timeWindowLabel(extract.time_window) || extract.time_window}*.`
+          + ' Alege ziua, apoi ora.',
       });
     }
     return askDateGridResult({
@@ -1559,27 +1524,22 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
       draft: working,
       service,
       requestId,
-      lang,
     });
   }
 
   // Free-text / Flow may name a closed Admin day — never offer hours for it.
   {
-    const uiLang = lang === 'en' ? 'en' : 'ro';
     const noon = localToUtc(extract.date_text, '12:00', business.timezone);
     const dayInfo = getHoursForDate(business, noon);
     if (!dayInfo.open) {
-      const pretty = formatDisplayDate(extract.date_text, business.timezone, uiLang);
+      const pretty = formatRomanianDate(extract.date_text, business.timezone);
       return askDateGridResult({
         business,
         recipientPhone,
         draft: working,
         service,
         requestId,
-        lang,
-        notice: uiLang === 'en'
-          ? `We're *CLOSED* on *${pretty}*. Pick an open day from the list:`
-          : `*${pretty}* suntem *INCHIS*. Alege o zi deschisă din listă:`,
+        notice: `*${pretty}* suntem *INCHIS*. Alege o zi deschisă din listă:`,
       });
     }
   }
@@ -1595,7 +1555,6 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
     requestId,
     reasonKey: 'ASK_TIME',
     conversationStep: CONVERSATION_STEPS.WAITING_FOR_TIME,
-    lang,
   });
 }
 
@@ -2761,7 +2720,7 @@ async function executeContact(business) {
   });
 }
 
-async function executeMenu(business, recipientPhone, requestId, convState = null) {
+async function executeMenu(business, recipientPhone, requestId) {
   if (business?.id && recipientPhone) {
     await cancelActiveDraftsForPhone({
       businessId: business.id,
@@ -2775,17 +2734,12 @@ async function executeMenu(business, recipientPhone, requestId, convState = null
       requestId,
     });
   }
-  const lang = resolveClientLanguage('', convState?.context_data?.client_language, convState?.context_data);
   return handlerResult({
     status: 'SUCCESS',
     action_performed: 'MENU',
     next_required_step: null,
     user_message_template_key: 'MENU',
-    data: {
-      business_name: business.name,
-      welcome: business.welcome_message || null,
-      client_language: lang,
-    },
+    data: { business_name: business.name, welcome: business.welcome_message || null },
     menu: entryMenu(business),
   });
 }
@@ -2908,23 +2862,21 @@ async function executeChat(business, textBody = '', lang = 'ro') {
   });
 }
 
-function executeStaleChoice({ business, convState, lang = 'ro' }) {
-  const uiLang = lang === 'en' ? 'en' : 'ro';
+function executeStaleChoice({ business, convState }) {
   const last = readLastMenu(convState);
-  const clientMessage = uiLang === 'en'
-    ? 'That option is no longer on the current list. Please pick from the latest message (or type *booking*).'
-    : 'Opțiunea aia nu mai e pe lista curentă. Te rog alege din mesajul cel mai recent (sau scrie *programare*).';
+  const clientMessage =
+    'Opțiunea aia nu mai e pe lista curentă. Te rog alege din mesajul cel mai recent (sau scrie *programare*).';
   if (last?.options?.length) {
     const kind = last.kind || 'generic';
     const listButton = kind === 'day_grid'
-      ? bookingUi('listDays', uiLang)
+      ? 'Zile disponibile'
       : kind === 'time_grid'
-        ? bookingUi('listTimes', uiLang)
+        ? 'Ore libere'
         : kind === 'modify'
-          ? bookingUi('listAppointments', uiLang)
+          ? 'Programările tale'
           : kind === 'service'
-            ? bookingUi('listServices', uiLang)
-            : bookingUi('listChoose', uiLang);
+            ? 'Servicii'
+            : 'Alege';
     return handlerResult({
       status: 'MISSING_INFO',
       action_performed: null,
@@ -2933,7 +2885,6 @@ function executeStaleChoice({ business, convState, lang = 'ro' }) {
       data: {
         client_message: clientMessage,
         list_button: listButton,
-        client_language: uiLang,
       },
       menu: { kind, options: last.options, catalog: last.options },
     });
@@ -2942,7 +2893,7 @@ function executeStaleChoice({ business, convState, lang = 'ro' }) {
     status: 'SUCCESS',
     action_performed: 'STALE_CHOICE',
     user_message_template_key: 'STALE_CHOICE',
-    data: { client_message: clientMessage, client_language: uiLang },
+    data: { client_message: clientMessage },
     menu: entryMenu(business),
   });
 }
@@ -3135,7 +3086,7 @@ async function dispatchExecute({
 }) {
   const action = extract.action;
   const intent = convState.context_data?.intent;
-  const lang = resolveClientLanguage(textBody, convState?.context_data?.client_language, convState?.context_data);
+  const lang = detectClientLanguage(textBody, convState?.context_data?.client_language);
 
   // Courtesy must never confirm a hold (stray confirm_booking payload + "Mulțumesc").
   if (action === 'thanks') {
@@ -3197,7 +3148,7 @@ async function dispatchExecute({
   }
 
   if (action === 'stale_choice') {
-    return executeStaleChoice({ business, convState, lang });
+    return executeStaleChoice({ business, convState });
   }
 
   if (action === 'clarify_needed') {
@@ -3318,11 +3269,9 @@ async function dispatchExecute({
           }
           : {},
         page,
-        lang,
       });
     }
 
-    const uiLang = lang === 'en' ? 'en' : 'ro';
     return askDateGridResult({
       business,
       recipientPhone,
@@ -3346,9 +3295,8 @@ async function dispatchExecute({
         }
         : {},
       clientMessage: action === 'reprompt_grid'
-        ? `${formatDayGridMessage(listOpenDayWindows(business, { limit: 14, lang: uiLang }), business.timezone, service.name, uiLang)}\n\n${uiLang === 'en' ? '_Pick from the list or type, e.g. *tomorrow at 10*._' : '_Poți alege din listă sau scrie, ex: *mâine la 10*._'}`
+        ? `${formatDayGridMessage(listOpenDayWindows(business, { limit: 14 }), business.timezone, service.name)}\n\n_Poți alege din listă sau scrie, ex: *mâine la 10*._`
         : null,
-      lang,
     });
   }
 
@@ -3527,7 +3475,7 @@ async function dispatchExecute({
   if (action === 'services') return executeServices(business, lang);
   if (action === 'hours_and_services') return executeHoursAndServices(business, lang);
   if (action === 'contact') return executeContact(business);
-  if (action === 'menu') return executeMenu(business, recipientPhone, requestId, convState);
+  if (action === 'menu') return executeMenu(business, recipientPhone, requestId);
   if (action === 'callback') {
     return executeCallback({ business, recipientPhone, extract, clientId, requestId, textBody });
   }
@@ -3537,7 +3485,7 @@ async function dispatchExecute({
   if (action === 'off_topic') return executeOffTopic(business, lang);
   if (action === 'missing_info') return executeMissingInfo(business, textBody, lang);
   if (action === 'show_services') {
-    return missingService(business, recipientPhone, draft, requestId, lang);
+    return missingService(business, recipientPhone, draft, requestId);
   }
   if (action === 'unknown_service') {
     const asked = String(extract.unknown_service_name || '').trim();
@@ -3635,7 +3583,6 @@ function bookingMachineHandles(action) {
  */
 async function runBookingMachine(params) {
   const { business, recipientPhone, extract, convState, activeDraft, requestId, textBody } = params;
-  const lang = resolveClientLanguage(textBody, convState?.context_data?.client_language, convState?.context_data);
   // Defense in depth: never collect a new service / draft while modify is active.
   const modifyGuard = convState?.context_data?.intent === 'reschedule'
     || convState?.context_data?.intent === 'cancel'
@@ -3763,9 +3710,8 @@ async function runBookingMachine(params) {
           price_ron: s.price_ron ?? null,
         })),
         service_name: reduced.draft.service_name,
-        list_button: bookingUi('listServices', lang === 'en' ? 'en' : 'ro'),
+        list_button: 'Servicii',
         ui: 'list_picker',
-        client_language: lang === 'en' ? 'en' : 'ro',
       },
       menu,
       machine_action: MACHINE_ACTIONS.ACTION_ASK_SERVICE,
@@ -3787,7 +3733,6 @@ async function runBookingMachine(params) {
       draft: activeDraft,
       service,
       requestId,
-      lang,
     });
   }
 
@@ -3808,7 +3753,6 @@ async function runBookingMachine(params) {
       dateKey: reduced.draft.date,
       requestId,
       reasonKey: 'ASK_TIME',
-      lang,
     });
   }
 

@@ -1,53 +1,73 @@
 /**
- * Client language from the latest free-text turn. Default Romanian.
+ * Client UI language helpers.
+ *
+ * Bilingual gate/i18n was rolled back for stability. Templates stay Romanian.
+ * These helpers only normalize / scrub leftover session fields so old Supabase
+ * rows never crash or lock the booking flow.
  */
 
 /**
- * @param {string} text
- * @param {'ro' | 'en' | null | undefined} [previous]
- * @param {Record<string, unknown> | null | undefined} [context]
+ * @param {unknown} value
  * @returns {'ro' | 'en'}
  */
-export function resolveClientLanguage(text, previous = null, context = null) {
-  if (context?.language_confirmed === true) {
-    return context.client_language === 'en' ? 'en' : 'ro';
+export function normalizeClientLanguage(value) {
+  if (value === 'en' || value === 'EN') return 'en';
+  if (value === 'ro' || value === 'RO') return 'ro';
+  return 'ro';
+}
+
+/**
+ * Resolve presentation language. Always Romanian until a clean bilingual layer ships.
+ * Corrupt / null / unknown session values must never block the flow.
+ *
+ * @param {string} [_text]
+ * @param {unknown} [_previous]
+ * @param {Record<string, unknown> | null | undefined} [_context]
+ * @returns {'ro'}
+ */
+export function resolveClientLanguage(_text = '', _previous = null, _context = null) {
+  return 'ro';
+}
+
+/**
+ * @param {string} _text
+ * @param {unknown} [_previous]
+ * @returns {'ro'}
+ */
+export function detectClientLanguage(_text, _previous = null) {
+  return 'ro';
+}
+
+/**
+ * Fields left by the rolled-back language gate. Clearing them on inbound
+ * unsticks numbers that tested English / got language_confirmed stuck.
+ *
+ * @param {Record<string, unknown> | null | undefined} ctx
+ * @returns {Record<string, unknown>}
+ */
+export function languageScrubPatch(ctx) {
+  const hasSticky =
+    ctx?.language_confirmed != null
+    || ctx?.language_gate_pending != null
+    || ctx?.deferred_inbound != null
+    || (ctx?.client_language != null && ctx.client_language !== 'ro' && ctx.client_language !== 'en');
+
+  if (!hasSticky && (ctx?.client_language === 'ro' || ctx?.client_language == null)) {
+    return {};
   }
-  return detectClientLanguage(text, previous);
+
+  return {
+    language_confirmed: null,
+    language_gate_pending: null,
+    deferred_inbound: null,
+    client_language: 'ro',
+  };
 }
-
-function normalize(text) {
-  return String(text ?? '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-const EN_HINTS = [
-  'hello', 'hi', 'hey', 'please', 'thanks', 'thank', 'want', 'book', 'booking',
-  'haircut', 'beard', 'tomorrow', 'today', 'appointment', 'reschedule', 'cancel',
-  'hours', 'price', 'prices', 'parking', 'women', 'kids', 'children', 'weather',
-  'sorry', 'wrong',
-];
-
-const RO_HINTS = [
-  'salut', 'buna', 'vreau', 'programare', 'tuns', 'barba', 'maine', 'azi',
-  'reprogramare', 'anuleaza', 'orar', 'pret', 'parcare', 'femei', 'copii',
-  'scuze', 'gresit', 'va rog', 'multumesc',
-];
 
 /**
- * @param {string} text
- * @param {'ro' | 'en' | null} [previous]
- * @returns {'ro' | 'en'}
+ * True when context still carries experimental language-gate residue.
+ * @param {Record<string, unknown> | null | undefined} ctx
  */
-export function detectClientLanguage(text, previous = null) {
-  const n = normalize(text);
-  if (!n) return previous === 'en' ? 'en' : 'ro';
-  const en = EN_HINTS.filter((w) => new RegExp(`\\b${w}\\b`).test(n)).length;
-  const ro = RO_HINTS.filter((w) => new RegExp(`\\b${w}\\b`).test(n)).length;
-  if (en > ro) return 'en';
-  if (ro > en) return 'ro';
-  return previous === 'en' ? 'en' : 'ro';
+export function needsLanguageScrub(ctx) {
+  return Object.keys(languageScrubPatch(ctx)).length > 0;
 }

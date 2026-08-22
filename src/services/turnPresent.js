@@ -3,7 +3,7 @@
  * Must not decide availability, confirm bookings, or invent hours.
  */
 
-import { buildAiTransparencyWelcome, buildEnglishTransparencyWelcome, buildBookingConfirmationMessage, buildGdprNote, buildMapsInviteLine, MAPS_ANCHOR_LABEL } from '../utils/businessMessages.js';
+import { buildAiTransparencyWelcome, buildBookingConfirmationMessage, buildGdprNote, buildMapsInviteLine, MAPS_ANCHOR_LABEL } from '../utils/businessMessages.js';
 import { WA_DIVIDER, waField, waFooter, waJoin, waServiceMeta, waTitle } from '../utils/waCopy.js';
 import { timeWindowBounds } from '../utils/timeWindow.js';
 import { formatContactMessage } from './contactService.js';
@@ -24,8 +24,6 @@ import { unknownInfoClientMessage } from '../utils/workingHours.js';
 import { missingBusinessInfoMessage } from '../utils/businessInfoLookup.js';
 import { formatServiceAskMessage, bookingExamplePhrase } from '../utils/serviceMatch.js';
 import { mergeMenuOptions } from '../utils/bookingGrid.js';
-import { bookingUi, localizeMenuOptions } from '../utils/bookingI18n.js';
-import { formatDisplayDate } from '../lib/ai/responseFormatter.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 /** @typedef {import('./handlerResult.js').HandlerResult} HandlerResult */
@@ -53,8 +51,7 @@ function ensureMapsInviteOnConfirmation(business, text) {
 export function renderHandlerResult(business, result) {
   const d = result.data || {};
   const key = result.user_message_template_key;
-  const lang = d.client_language === 'en' ? 'en' : 'ro';
-  const en = lang === 'en';
+  const lang = 'ro';
 
   // Grid window bodies are authoritative — do not let machine polish overwrite them.
   if (
@@ -92,18 +89,18 @@ export function renderHandlerResult(business, result) {
       return (
         (typeof d.client_message === 'string' && d.client_message)
         || waJoin(
-          waTitle(en ? 'What is your name?' : 'Cum te cheamă?'),
-          en ? 'First and last name — e.g. *Ana Popescu*' : 'Prenume și nume — ex: *Ana Popescu*',
+          waTitle('Cum te cheamă?'),
+          'Prenume și nume — ex: *Ana Popescu*',
         )
       );
     case 'ASK_CONFIRM': {
       return waJoin(
-        waTitle(en ? 'Confirm this booking?' : 'Confirmi programarea?'),
+        waTitle('Confirmi programarea?'),
         '',
-        waField(en ? 'Client' : 'Client', d.client_name),
-        waField(en ? 'Specialist' : 'Specialist', d.employee_name),
-        waField(en ? 'Service' : 'Serviciu', d.service_name || (en ? 'Service' : 'Serviciu')),
-        waField(en ? 'When' : 'Când', d.slot_label || ''),
+        waField('Client', d.client_name),
+        waField('Specialist', d.employee_name),
+        waField('Serviciu', d.service_name || 'Serviciu'),
+        waField('Când', d.slot_label || ''),
       );
     }
     case 'CONFIRMATION_BOOKED':
@@ -149,9 +146,7 @@ export function renderHandlerResult(business, result) {
       );
     case 'THANKS':
       return (typeof d.client_message === 'string' && d.client_message.trim())
-        || (en
-          ? "You're welcome! If you need anything else — booking, hours, or contact — just write here."
-          : 'Cu plăcere! Dacă mai ai nevoie — o programare, orarul sau contact — scrie-mi oricând.');
+        || 'Cu plăcere! Dacă mai ai nevoie — o programare, orarul sau contact — scrie-mi oricând.';
     case 'MISSING_EMPLOYEE': {
       const names = (d.services || []).map((e) => e.name).filter(Boolean);
       const intro = d.client_message || 'Nu am găsit specialistul. Alege din echipă:';
@@ -160,15 +155,13 @@ export function renderHandlerResult(business, result) {
         : intro;
     }
     case 'MISSING_SERVICE':
-      return formatServiceAskMessage(d.services || [], lang);
+      return formatServiceAskMessage(d.services || []);
     case 'ASK_DATE':
       return (
         (typeof d.client_message === 'string' && d.client_message)
         || waJoin(
-          waTitle(d.service_name
-            ? (en ? `Choose a day — ${d.service_name}` : `Alege ziua — ${d.service_name}`)
-            : (en ? 'Choose a day' : 'Alege ziua')),
-          en ? 'Tap *Available days* and pick a date.' : 'Apasă *Zile disponibile* și selectează data.',
+          waTitle(d.service_name ? `Alege ziua — ${d.service_name}` : 'Alege ziua'),
+          'Apasă *Zile disponibile* și selectează data.',
         )
       );
     case 'ASK_TIME': {
@@ -176,14 +169,11 @@ export function renderHandlerResult(business, result) {
         return d.client_message.trim();
       }
       const bounds = timeWindowBounds(d.time_window);
-      const windowHint = bounds ? ` (${en ? bounds.labelEn : bounds.labelRo})` : '';
-      const dateLabel = d.date_label || (d.date_key ? formatDisplayDate(String(d.date_key), business.timezone, lang) : null);
+      const windowHint = bounds ? ` (${bounds.labelRo})` : '';
       return waJoin(
-        waTitle(d.service_name
-          ? (en ? `Choose a time — ${d.service_name}${windowHint}` : `Alege ora — ${d.service_name}${windowHint}`)
-          : (en ? `Choose a time${windowHint}` : `Alege ora${windowHint}`)),
-        dateLabel ? (en ? `*Date*\n${dateLabel}` : `*Data*\n${dateLabel}`) : null,
-        en ? 'Tap your preferred time below.' : 'Atinge ora dorită mai jos.',
+        waTitle(d.service_name ? `Alege ora — ${d.service_name}${windowHint}` : `Alege ora${windowHint}`),
+        d.date_label ? `*Data*\n${d.date_label}` : null,
+        'Atinge ora dorită mai jos.',
       );
     }
     case 'ASK_CLARIFY_DATE_OR_TIME':
@@ -199,14 +189,11 @@ export function renderHandlerResult(business, result) {
         return d.client_message.trim();
       }
       const bounds = timeWindowBounds(d.time_window);
-      const windowHint = bounds ? ` (${en ? bounds.labelEn : bounds.labelRo})` : '';
-      const dateLabel = d.date_label || (d.date_key ? formatDisplayDate(String(d.date_key), business.timezone, lang) : null);
+      const windowHint = bounds ? ` (${bounds.labelRo})` : '';
       return waJoin(
-        waTitle(d.service_name
-          ? (en ? `Choose a time — ${d.service_name}${windowHint}` : `Alege ora — ${d.service_name}${windowHint}`)
-          : (en ? `Choose a time${windowHint}` : `Alege ora${windowHint}`)),
-        dateLabel ? (en ? `*Date*\n${dateLabel}` : `*Data*\n${dateLabel}`) : null,
-        en ? 'Tap your preferred time below.' : 'Atinge ora dorită mai jos.',
+        waTitle(d.service_name ? `Alege ora — ${d.service_name}${windowHint}` : `Alege ora${windowHint}`),
+        d.date_label ? `*Data*\n${d.date_label}` : null,
+        'Atinge ora dorită mai jos.',
       );
     }
     case 'SLOT_UNAVAILABLE': {
@@ -214,13 +201,13 @@ export function renderHandlerResult(business, result) {
         return d.client_message.trim();
       }
       const occupied = d.occupied_label
-        ? (en ? `Got it — *${d.occupied_label}* is no longer free.` : `Înțeleg — *${d.occupied_label}* nu mai e liber.`)
-        : (en ? 'That slot is no longer free.' : 'Înțeleg, intervalul ăsta nu mai e liber.');
+        ? `Înțeleg — *${d.occupied_label}* nu mai e liber.`
+        : 'Înțeleg, intervalul ăsta nu mai e liber.';
       return waJoin(
-        waTitle(en ? "Let's pick something else" : 'Hai să alegem altceva'),
+        waTitle('Hai să alegem altceva'),
         occupied,
         '',
-        en ? 'Please choose another time from the list (or another day if you prefer).' : 'Te rog alege altă oră din listă (sau altă zi, dacă preferi).',
+        'Te rog alege altă oră din listă (sau altă zi, dacă preferi).',
       );
     }
     case 'MISSING_APPOINTMENT': {
@@ -250,16 +237,14 @@ export function renderHandlerResult(business, result) {
     case 'SERVICES_LIST': {
       const services = d.services || [];
       if (!services.length) return unknownInfoClientMessage();
-      const blocks = [waTitle(en ? `Services — ${business.name}` : `Servicii — ${business.name}`), ''];
+      const blocks = [waTitle(`Servicii — ${business.name}`), ''];
       services.forEach((s, i) => {
         const meta = waServiceMeta(s);
         blocks.push(`*${i + 1}. ${s.name}*`);
         if (meta) blocks.push(meta);
         blocks.push('');
       });
-      blocks.push(WA_DIVIDER, '', en
-        ? `To book: *${bookingExamplePhrase(services, lang)}*`
-        : `Pentru programare: *${bookingExamplePhrase(services, lang)}*`);
+      blocks.push(WA_DIVIDER, '', `Pentru programare: *${bookingExamplePhrase(services)}*`);
       return blocks.join('\n');
     }
     case 'HOURS_LIST':
@@ -288,9 +273,7 @@ export function renderHandlerResult(business, result) {
     case 'CONTACT':
       return formatContactMessage(business);
     case 'MENU':
-      return lang === 'en'
-        ? buildEnglishTransparencyWelcome(business)
-        : buildAiTransparencyWelcome(business);
+      return buildAiTransparencyWelcome(business);
     case 'CALLBACK_SENT':
       return waJoin(
         waTitle('Cerere înregistrată'),
@@ -353,9 +336,7 @@ export function renderHandlerResult(business, result) {
           : 'Din păcate nu oferim acest serviciu. Te rog alege din listă.');
     case 'STALE_CHOICE':
       return (typeof d.client_message === 'string' && d.client_message.trim())
-        || (en
-          ? 'That option is no longer on the current list. Please pick from the latest message (or type *booking*).'
-          : 'Opțiunea aia nu mai e pe lista curentă. Te rog alege din mesajul cel mai recent (sau scrie *programare*).');
+        || 'Opțiunea aia nu mai e pe lista curentă. Te rog alege din mesajul cel mai recent (sau scrie *programare*).';
     case 'MISSING_INFO':
       return d.client_message
         || missingBusinessInfoMessage(d.topic_label || null, lang)
@@ -363,7 +344,7 @@ export function renderHandlerResult(business, result) {
     case 'ADMIN_FACT':
       return String(d.fact || unknownInfoClientMessage());
     default:
-      return String(d.client_message || (en ? 'Tell me how I can help.' : 'Spune-mi cum te pot ajuta.'));
+      return String(d.client_message || 'Spune-mi cum te pot ajuta.');
   }
 }
 
@@ -456,10 +437,7 @@ export async function presentTurn({
     clearRememberedMenuOptions(business.id, recipientPhone);
   }
 
-  const d = result.data || {};
   const rendered = renderHandlerResult(business, result);
-  const lang = d.client_language === 'en' ? 'en' : 'ro';
-  const en = lang === 'en';
   // Do not polish grid layouts — AI would flatten the window framing.
   const skipPolish = result.menu?.kind === 'day_grid'
     || result.menu?.kind === 'time_grid'
@@ -474,7 +452,8 @@ export async function presentTurn({
     || result.user_message_template_key === 'UNKNOWN_SERVICE'
     || result.user_message_template_key === 'STALE_CHOICE'
     || result.user_message_template_key === 'CONTACT'
-    || result.user_message_template_key === 'MENU';
+    || result.user_message_template_key === 'ASK_CONFIRM'
+    || result.user_message_template_key === 'CONFIRM_CANCEL';
   const polished = skipPolish ? null : await polishWithAi(business, result, rendered);
   let text = polished || rendered;
   if (
@@ -483,6 +462,7 @@ export async function presentTurn({
   ) {
     text = ensureMapsInviteOnConfirmation(business, text);
   }
+  const d = result.data || {};
 
   await simulateHumanDelay({ business, recipientPhone, requestId });
 
@@ -504,7 +484,7 @@ export async function presentTurn({
       recipientPhone,
       requestId,
       text,
-      buttonTitle: result.calendar_cta.title || bookingUi('addCalendar', lang),
+      buttonTitle: result.calendar_cta.title || 'Adaugă în calendar',
       buttonUrl: result.calendar_cta.url,
     });
     return;
@@ -514,7 +494,7 @@ export async function presentTurn({
     const buttons = Array.isArray(d.link_ctas) && d.link_ctas.length
       ? d.link_ctas
       : [
-        d.maps_cta?.url ? { title: d.maps_cta.title || bookingUi('seeLocation', lang), url: d.maps_cta.url } : null,
+        d.maps_cta?.url ? { title: d.maps_cta.title || 'Vezi locația', url: d.maps_cta.url } : null,
         d.website_cta?.url ? { title: d.website_cta.title || 'Website', url: d.website_cta.url } : null,
       ].filter(Boolean);
     const [first, ...rest] = buttons;
@@ -539,7 +519,7 @@ export async function presentTurn({
       recipientPhone,
       flowId: String(d.flow_id),
       bodyText: text,
-      cta: bookingUi('openCalendar', lang),
+      cta: 'Deschide calendarul',
       requestId,
       flowToken: typeof d.flow_token === 'string' ? d.flow_token : null,
     });
@@ -553,14 +533,14 @@ export async function presentTurn({
         business,
         recipientPhone,
         requestId,
-        bodyText: formatDayGridMessage(days, business.timezone, d.service_name ? String(d.service_name) : null, lang),
-        buttonText: bookingUi('listDays', lang),
+        bodyText: formatDayGridMessage(days, business.timezone, d.service_name ? String(d.service_name) : null),
+        buttonText: 'Zile disponibile',
         sections: [{
-          title: bookingUi('sectionDays', lang),
+          title: 'Zile',
           rows: listPage.items.map((i) => ({
             id: i.id,
             title: i.title,
-            description: i.description || bookingUi('available', lang),
+            description: i.description || 'Disponibil',
           })),
         }],
         footerText: business.name,
@@ -592,16 +572,15 @@ export async function presentTurn({
     if (result.user_message_template_key === 'MENU') {
       await sendTextMessage({ business, recipientPhone, requestId, text });
       await simulateHumanDelay({ business, recipientPhone, requestId, delayMs: 800 });
-      const menuButtons = localizeMenuOptions(result.menu.options, lang);
       await sendInteractiveButtons({
         business,
         recipientPhone,
         requestId,
-        bodyText: bookingUi('menuFooter', lang),
-        buttons: menuButtons,
+        bodyText: 'Cu ce te putem ajuta?',
+        buttons: result.menu.options,
         footerText: business.name,
         menuKind: result.menu.kind || 'entry',
-        rememberOptions: mergeMenuOptions(menuButtons, localizeMenuOptions(result.menu.catalog || [], lang)),
+        rememberOptions: mergeMenuOptions(result.menu.options, result.menu.catalog || []),
       });
       return;
     }
@@ -616,18 +595,7 @@ export async function presentTurn({
     if (wantsList) {
       const buttonLabel = typeof d.list_button === 'string' && d.list_button
         ? d.list_button
-        : (kind === 'day_grid' ? bookingUi('listDays', lang)
-          : kind === 'service' ? bookingUi('listServices', lang)
-            : kind === 'modify' ? bookingUi('listAppointments', lang)
-              : bookingUi('listTimes', lang));
-      const sectionTitle = kind === 'day_grid' ? bookingUi('sectionDays', lang)
-        : kind === 'service' ? bookingUi('sectionServices', lang)
-          : kind === 'modify' ? bookingUi('sectionAppointments', lang)
-            : bookingUi('sectionTimes', lang);
-      const rowDesc = kind === 'day_grid' ? bookingUi('available', lang)
-        : kind === 'service' ? bookingUi('fromCatalog', lang)
-          : kind === 'modify' ? bookingUi('activeBooking', lang)
-            : bookingUi('freeSlot', lang);
+        : (kind === 'day_grid' ? 'Zile disponibile' : kind === 'service' ? 'Servicii' : kind === 'modify' ? 'Programările tale' : 'Ore libere');
       await sendInteractiveList({
         business,
         recipientPhone,
@@ -635,11 +603,11 @@ export async function presentTurn({
         bodyText: text,
         buttonText: buttonLabel,
         sections: [{
-          title: sectionTitle,
+          title: kind === 'day_grid' ? 'Zile' : kind === 'service' ? 'Servicii' : kind === 'modify' ? 'Programări' : 'Ore',
           rows: result.menu.options.map((opt) => ({
             id: opt.id,
             title: opt.title,
-            description: opt.description || rowDesc,
+            description: opt.description || (kind === 'day_grid' ? 'Disponibil' : kind === 'service' ? 'Din catalog' : kind === 'modify' ? 'Programare activă' : 'Liber'),
           })),
         }],
         footerText: business.name,
@@ -655,13 +623,10 @@ export async function presentTurn({
       recipientPhone,
       requestId,
       bodyText: text,
-      buttons: localizeMenuOptions(result.menu.options, lang),
+      buttons: result.menu.options,
       footerText: business.name,
       menuKind: kind || 'generic',
-      rememberOptions: mergeMenuOptions(
-        localizeMenuOptions(result.menu.options, lang),
-        localizeMenuOptions(result.menu.catalog || [], lang),
-      ),
+      rememberOptions: mergeMenuOptions(result.menu.options, result.menu.catalog || []),
     });
     return;
   }

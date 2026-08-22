@@ -5,7 +5,7 @@ import {
   isBusinessOperational,
   getCachedBusinessForWhatsAppTo,
 } from '../db/businessService.js';
-import { appendRecentTurn, touchSessionTimestamp } from '../db/conversationStateService.js';
+import { appendRecentTurn, touchSessionTimestamp, setConversationStep } from '../db/conversationStateService.js';
 import { logError } from '../db/loggerService.js';
 import { loadBusinessContext } from '../services/businessContext.js';
 import { routeInboundTurn } from '../services/inboundTurnService.js';
@@ -33,6 +33,7 @@ import {
   isConversationSessionExpired,
 } from '../services/sessionValidator.js';
 import { beginInboundTurn } from '../services/turnSequencer.js';
+import { languageScrubPatch, needsLanguageScrub } from '../utils/clientLanguage.js';
 
 /**
  * Twilio WhatsApp inbound webhook.
@@ -312,6 +313,19 @@ async function processTwilioWebhook(body, requestId) {
         idleExpired: Boolean(swept.idleExpired),
         pendingExpired: Boolean(swept.expired),
       });
+    }
+
+    // Unstick rolled-back language-gate fields left in Supabase from EN tests.
+    if (needsLanguageScrub(convState?.context_data)) {
+      const scrubbed = await setConversationStep({
+        businessId: business.id,
+        rawPhone: recipientPhone,
+        step: convState.current_step || 'IDLE',
+        context: languageScrubPatch(convState.context_data),
+        mergeContext: true,
+        requestId,
+      });
+      if (scrubbed) convState = scrubbed;
     }
 
     convState = await touchSessionTimestamp({

@@ -25,16 +25,13 @@
  * Cold-start:
  *   First inbound text is parsed for NEW_BOOKING / RESCHEDULE / CANCEL / FAQ immediately.
  *   No greeting gate — "vreau să fac o programare" / "vreau să reprogramez" run without "Salut".
- *   Optional language gate (OFF by default): LANGUAGE_GATE_ENABLED or booking_settings.language_gate_enabled.
- *   When enabled, first contact shows RO/EN quick-reply before the booking pipeline.
- *   Confirmed language sticks within the session (soft resets / post-booking) but is cleared
- *   when session_ttl expires — returning after idle is never locked on an old language.
+ *   UI copy is Romanian (bilingual gate rolled back for stability). Leftover language_confirmed
+ *   fields from old EN tests are scrubbed on inbound and never block booking.
  *   Stale button walls never intercept free-text mid-flow.
  *
  * TTLs (independent):
  *   pending_ttl_minutes (default 5) — calendar hold for pending_confirmation only
- *   session_ttl_minutes (default 10) — last client inbound; past TTL silently clears
- *     in-flight booking state AND sticky language so the next turn is a clean slate
+ *   session_ttl_minutes (default 10) — idle booking/modify conversation; last client inbound
  *
  * Background:
  *   GET/POST /cron/expire-pending every minute (vercel.json)
@@ -51,4 +48,4 @@
  *   Confirmation + Adaugă în calendar URL button.
  *   Name is never asked when Twilio ProfileName / display_name exists.
  */
-export const BOOKING_ARCHITECTURE_VERSION = 'dual-ai-text-first-nlu-v19';
+export const BOOKING_ARCHITECTURE_VERSION = 'dual-ai-text-first-nlu-v18';

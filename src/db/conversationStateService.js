@@ -2,7 +2,6 @@ import { supabase } from '../config/supabase.js';
 import { logError } from './loggerService.js';
 import { toE164 } from '../utils/phone.js';
 import { isTableAvailable, reportQueryFailure } from './schemaHealth.js';
-import { preservedLanguageContext } from '../config/languageGate.js';
 
 /**
  * @typedef {'IDLE' | 'CHOOSING_SERVICE' | 'CHOOSING_EMPLOYEE' | 'SELECTING_SLOT' | 'ASKING_NAME' | 'CONFIRMING' | 'OFFERING_RESUME' | 'MODIFYING' | 'RESCHEDULING' | 'CONFIRMING_CANCEL' | 'MODIFIED' | 'waiting_for_service' | 'waiting_for_date' | 'waiting_for_time' | 'waiting_for_date_time' | 'waiting_for_confirmation' | 'waiting_for_clarification' | 'CONFIRMED'} ConversationStep
@@ -189,23 +188,14 @@ export async function resetConversationState({
   keepLastIntent = true,
   /** After a successful booking — drop recent turns / offers so the next message starts clean. */
   hardReset = false,
-  /**
-   * Keep RO/EN choice across soft resets (menu, abort, post-booking).
-   * Session TTL restart must pass false so the language gate can run again.
-   */
-  preserveLanguage = true,
   requestId = null,
 }) {
   let lastIntent = null;
   let recentTurns = null;
-  let languagePreserve = {};
-  const existingBeforeReset = await getOrCreateConversationState(businessId, rawPhone);
-  if (preserveLanguage) {
-    languagePreserve = preservedLanguageContext(existingBeforeReset?.context_data);
-  }
   if (keepLastIntent && !hardReset) {
-    lastIntent = existingBeforeReset.context_data?.last_booking_intent ?? null;
-    recentTurns = existingBeforeReset.context_data?.recent_turns ?? null;
+    const existing = await getOrCreateConversationState(businessId, rawPhone);
+    lastIntent = existing.context_data?.last_booking_intent ?? null;
+    recentTurns = existing.context_data?.recent_turns ?? null;
   }
 
   return setConversationStep({
@@ -213,7 +203,6 @@ export async function resetConversationState({
     rawPhone,
     step: CONVERSATION_STEPS.IDLE,
     context: {
-      ...languagePreserve,
       ...(hardReset
         ? { last_booking_intent: null }
         : (lastIntent ? { last_booking_intent: lastIntent } : {})),
@@ -242,6 +231,11 @@ export async function resetConversationState({
       google_event_id: null,
       slot_start: null,
       slot_end: null,
+      // Scrub rolled-back language-gate residue so old sessions never stick.
+      language_confirmed: null,
+      language_gate_pending: null,
+      deferred_inbound: null,
+      client_language: 'ro',
     },
     mergeContext: false,
     requestId,

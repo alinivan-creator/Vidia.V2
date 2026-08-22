@@ -124,7 +124,9 @@ function isStructuralBookingTapId(tap) {
     || id.startsWith(MOD_PREFIX.APPT)
     || id.startsWith('menu_')
     || id.startsWith('clarify_')
-    || id.startsWith('resume_');
+    || id.startsWith('resume_')
+    || id === 'lang_ro'
+    || id === 'lang_en';
 }
 
 /**

@@ -97,42 +97,6 @@ export function buildAiTransparencyWelcome(business) {
 }
 
 /**
- * English welcome after language pick (same facts as buildAiTransparencyWelcome).
- * @param {Business} business
- */
-export function buildEnglishTransparencyWelcome(business) {
-  // Admin welcome_message is usually Romanian — English flow uses a dedicated template.
-  const base = `Welcome to *${business.name}*.`;
-
-  const disclosure = alreadyDisclosesAi(base)
-    ? ''
-    : `I'm the *virtual assistant* for *${business.name}*.`;
-
-  const { termsUrl, gdprUrl } = getMessagingSettings(business);
-  const legalLink = (gdprUrl || termsUrl || '').trim().replace(/\s+/g, '');
-  const policyBit = legalLink
-    ? ` in line with our [privacy policy](${legalLink})`
-    : ' in line with our privacy policy';
-
-  const privacyBlock = waJoin(
-    waTitle('Privacy'),
-    `We process your data${policyBit}.`,
-    'By continuing and sending details, you agree to this.',
-  );
-
-  return waJoin(
-    privacyBlock,
-    '',
-    disclosure || null,
-    disclosure ? '' : null,
-    base,
-    '',
-    WA_DIVIDER,
-    waFooter(['Bookings', 'Hours', 'Contact']),
-  );
-}
-
-/**
  * HTTPS URL suitable for WhatsApp CTA buttons (no javascript:, no bare host).
  * @param {string | null | undefined} raw
  * @returns {string | null}

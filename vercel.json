@@ -1,9 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "express",
-  "env": {
-    "LANGUAGE_GATE_ENABLED": "true"
-  },
   "functions": {
     "src/index.js": {
       "maxDuration": 60

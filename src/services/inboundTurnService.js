@@ -10,10 +10,6 @@ import { setClientSmsOptIn } from './smsMarketingService.js';
 import { sendTextMessage } from './whatsappService.js';
 import { triageUserIntent } from './intentTriageService.js';
 import { getBookingConfig } from '../utils/datetime.js';
-import {
-  handleLanguageOnboarding,
-  reloadConversationState,
-} from './languageOnboardingService.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -77,63 +73,6 @@ export async function routeInboundTurn({
   void lastIntent;
   void pendingDismissed;
   void pendingExpired;
-
-  const langGate = await handleLanguageOnboarding({
-    business,
-    recipientPhone,
-    textBody,
-    buttonPayload,
-    requestId,
-    convState,
-    activeDraft,
-  });
-  if (langGate.handled) {
-    if (!langGate.languageChosen) return;
-
-    const freshConv = await reloadConversationState(business, recipientPhone);
-    if (langGate.replayText) {
-      await processTurnPipeline({
-        business,
-        recipientPhone,
-        textBody: langGate.replayText,
-        buttonPayload: null,
-        buttonTitle: null,
-        typedText: langGate.replayText,
-        clientId,
-        requestId,
-        convState: freshConv,
-        activeDraft,
-      });
-    } else {
-      // Language chosen with nothing deferred — show the entry menu in that language.
-      const { executeTurn } = await import('./turnExecute.js');
-      const { presentTurn } = await import('./turnPresent.js');
-      const { stampResultLanguage } = await import('../utils/bookingI18n.js');
-      const { resolveClientLanguage } = await import('../utils/clientLanguage.js');
-      const result = await executeTurn({
-        business,
-        recipientPhone,
-        extract: {
-          action: 'menu',
-          source: 'language_gate',
-          extraction: { intent: 'menu' },
-        },
-        clientId,
-        requestId,
-        convState: freshConv,
-        activeDraft: null,
-        textBody: '',
-      });
-      const lang = resolveClientLanguage('', freshConv?.context_data?.client_language, freshConv?.context_data);
-      await presentTurn({
-        business,
-        recipientPhone,
-        result: stampResultLanguage(result, lang),
-        requestId,
-      });
-    }
-    return;
-  }
 
   await processTurnPipeline({
     business,

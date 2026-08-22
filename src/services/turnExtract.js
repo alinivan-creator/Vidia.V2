@@ -237,16 +237,6 @@ function extractFromChoiceId(choiceId, base, business) {
       source: 'menu',
     });
   }
-  if (choiceId === 'lang_ro' || choiceId === 'lang_en') {
-    return emptyExtract({
-      ...base,
-      action: 'set_language',
-      choice_id: choiceId,
-      confidence: 'high',
-      source: 'menu',
-      language: choiceId === 'lang_en' ? 'en' : 'ro',
-    });
-  }
   if (choiceId.startsWith(GRID_PREFIX.DAY)) {
     const dateKey = choiceId.slice(GRID_PREFIX.DAY.length);
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {

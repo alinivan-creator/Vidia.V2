@@ -31,30 +31,13 @@ describe('session TTL', () => {
     );
   });
 
-  it('IDLE without sticky state is not expired', () => {
+  it('IDLE without in-flight context is not expired', () => {
     const now = Date.parse('2026-08-18T18:20:00.000Z');
     const conv = {
       current_step: 'IDLE',
       context_data: { session_timestamp: '2026-08-18T18:00:00.000Z' },
     };
     assert.equal(isConversationSessionExpired(conv, 10, now), false);
-  });
-
-  it('IDLE with confirmed language expires after session TTL', () => {
-    const now = Date.parse('2026-08-18T18:20:00.000Z');
-    const conv = {
-      current_step: 'IDLE',
-      context_data: {
-        session_timestamp: '2026-08-18T18:00:00.000Z',
-        language_confirmed: true,
-        client_language: 'en',
-      },
-    };
-    assert.equal(isConversationSessionExpired(conv, 10, now), true);
-    assert.equal(
-      isConversationSessionExpired(conv, 10, Date.parse('2026-08-18T18:05:00.000Z')),
-      false,
-    );
   });
 
   it('active booking step expires after session TTL', () => {
