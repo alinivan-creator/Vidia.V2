@@ -190,7 +190,7 @@ export function detectSessionLanguageFromText(textBody) {
 
   const hasRoDiacritics = /[ăâîșț]/i.test(raw);
   const hasRo = hasRoDiacritics || /\b(salut|buna|buna ziua|buna seara|vraiu|vreau|programare|multumesc|te rog|maine|azi|serviciu|orar|cand|poftim|mersi|reprogramare|anuleaza|anulare)\b/.test(n);
-  const hasEn = /\b(hello|hi|hey|good morning|good afternoon|good evening|i want|i would like|i'd like|id like|appointment|booking|book a|please|thanks|thank you|can i|how much|available|schedule|reschedule|cancel my)\b/.test(n);
+  const hasEn = /\b(hello|hi|hey|good morning|good afternoon|good evening|i want|i would like|i'd like|id like|i can|can i|do you|with my|pay with|my (dog|pet|cat)|appointment|booking|book a|please|thanks|thank you|how much|available|schedule|reschedule|cancel my|credit card|debit card)\b/.test(n);
 
   if (hasEn && !hasRo) return 'en';
   return null;

@@ -10,7 +10,7 @@ import { extractTurnIntent } from './turnExtract.js';
 import { runExecutionAgent } from './executionAgent.js';
 import { presentTurn } from './turnPresent.js';
 import { readInboundStamp } from './sessionValidator.js';
-import { readSessionLanguage } from '../utils/uiI18n.js';
+import { readSessionLanguage, hasExplicitSessionLanguage, detectSessionLanguageFromText } from '../utils/uiI18n.js';
 import { needsAiDisclosure } from '../utils/businessMessages.js';
 import { setConversationStep } from '../db/conversationStateService.js';
 
@@ -62,19 +62,35 @@ export async function processTurnPipeline({
     is_ambiguous: extract.extraction?.is_ambiguous ?? null,
   });
 
+  let workingConv = convState;
+  let uiLang = readSessionLanguage(workingConv?.context_data);
+  if (!hasExplicitSessionLanguage(workingConv?.context_data)) {
+    const guessed = detectSessionLanguageFromText(textBody || typedText);
+    if (guessed) {
+      uiLang = guessed;
+      workingConv = await setConversationStep({
+        businessId: business.id,
+        rawPhone: recipientPhone,
+        step: workingConv?.current_step || 'IDLE',
+        context: { session_language: guessed },
+        mergeContext: true,
+        requestId,
+      }) || workingConv;
+    }
+  }
+
   const { handler: result, envelope } = await runExecutionAgent({
     business,
     recipientPhone,
     extract,
     clientId,
     requestId,
-    convState,
+    convState: workingConv,
     activeDraft,
     textBody,
   });
 
-  const uiLang = readSessionLanguage(convState?.context_data);
-  const attachDisclosure = needsAiDisclosure(convState?.context_data);
+  const attachDisclosure = needsAiDisclosure(workingConv?.context_data);
   const localized = {
     ...result,
     data: {
@@ -99,14 +115,14 @@ export async function processTurnPipeline({
     recipientPhone,
     result: localized,
     requestId,
-    turnStamp: readInboundStamp(convState),
+    turnStamp: readInboundStamp(workingConv),
   });
 
   if (attachDisclosure) {
     await setConversationStep({
       businessId: business.id,
       rawPhone: recipientPhone,
-      step: convState?.current_step || 'IDLE',
+      step: workingConv?.current_step || 'IDLE',
       context: { ai_disclosed: true },
       mergeContext: true,
       requestId,

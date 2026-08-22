@@ -816,6 +816,9 @@ export async function cancelOrResetDraft({
     locked_until: null,
     cancelled_at: state === 'cancelled' ? new Date().toISOString() : null,
     conversation_context: context,
+    // Release calendar soft-lock ids — Google HOLD is deleted by the caller.
+    google_event_id: null,
+    google_event_link: null,
   };
   if (pendingExpiresColumnAvailable !== false) {
     updates.pending_expires_at = null;

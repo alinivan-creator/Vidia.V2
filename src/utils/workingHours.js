@@ -332,8 +332,12 @@ export function hoursUnsetClientMessage() {
 
 /**
  * Unknown business fact (parking, prices extras, etc.). Never mentions Admin.
+ * @param {'ro' | 'en'} [lang]
  */
-export function unknownInfoClientMessage() {
+export function unknownInfoClientMessage(lang = 'ro') {
+  if (lang === 'en') {
+    return "Unfortunately I don't have that information, so I can't answer this question.";
+  }
   return 'Nu dețin această informație, din păcate nu vă pot răspunde la această întrebare.';
 }
 

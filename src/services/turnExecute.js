@@ -80,7 +80,7 @@ import {
   formatBusinessInfoReply,
   missingBusinessInfoMessage,
 } from '../utils/businessInfoLookup.js';
-import { detectClientLanguage } from '../utils/clientLanguage.js';
+import { resolveClientLanguage } from '../utils/clientLanguage.js';
 import {
   detectModificationIntent,
   refersToSavedAppointments,
@@ -1913,7 +1913,26 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
   });
 }
 
+async function releaseDraftGoogleHold(business, draft, requestId = null) {
+  if (!draft?.google_event_id || isMockEventId(draft.google_event_id)) return;
+  try {
+    const { calendarId } = await resolveStaff(business, draft);
+    await deleteCalendarEvent({
+      business,
+      eventId: draft.google_event_id,
+      calendarId,
+      requestId,
+    });
+  } catch (error) {
+    console.warn('[booking] failed to delete Google HOLD on cancel/revise', error);
+  }
+}
+
 async function executeCancelPending({ business, recipientPhone, requestId }) {
+  const live = await getActiveDraftBooking(business.id, recipientPhone);
+  if (live?.state === 'pending_confirmation') {
+    await releaseDraftGoogleHold(business, live, requestId);
+  }
   await cancelActiveDraftsForPhone({
     businessId: business.id,
     rawPhone: recipientPhone,
@@ -1992,6 +2011,8 @@ async function executeReviseDraft({
       },
       requestId,
     });
+    // Cancel/revise must delete the visible Google HOLD immediately (TTL only if idle).
+    await releaseDraftGoogleHold(business, draft, requestId);
     const working = reset || draft;
 
     if (!service?.id && !service?.name) {
@@ -3283,7 +3304,7 @@ async function dispatchExecute({
 }) {
   const action = extract.action;
   const intent = convState.context_data?.intent;
-  const lang = detectClientLanguage(textBody, convState?.context_data?.client_language);
+  const lang = resolveClientLanguage(textBody, null, convState?.context_data);
 
   // Courtesy must never confirm a hold (stray confirm_booking payload + "Mulțumesc").
   if (action === 'thanks') {

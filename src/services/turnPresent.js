@@ -173,10 +173,15 @@ export function renderHandlerResult(business, result) {
         'Când vrei din nou, scrie *programare* — te ajut eu.',
       );
     case 'CANCEL_PENDING':
-      return waJoin(
-        waTitle('Anulat'),
-        'Pentru o programare nouă, scrie *programare*.',
-      );
+      return lang === 'en'
+        ? waJoin(
+          waTitle('Cancelled'),
+          'For a new booking, type *booking*.',
+        )
+        : waJoin(
+          waTitle('Anulat'),
+          'Pentru o programare nouă, scrie *programare*.',
+        );
     case 'FLOW_ABORTED':
       return waJoin(
         waTitle('Ok, m-am oprit'),
@@ -392,12 +397,12 @@ export function renderHandlerResult(business, result) {
     case 'STALE_CHOICE':
       return (typeof d.client_message === 'string' && d.client_message.trim())
         || 'Opțiunea aia nu mai e pe lista curentă. Te rog alege din mesajul cel mai recent (sau scrie *programare*).';
+    case 'ADMIN_FACT':
+      return String(d.fact || unknownInfoClientMessage(lang));
     case 'MISSING_INFO':
       return d.client_message
         || missingBusinessInfoMessage(d.topic_label || null, lang)
-        || unknownInfoClientMessage();
-    case 'ADMIN_FACT':
-      return String(d.fact || unknownInfoClientMessage());
+        || unknownInfoClientMessage(lang);
     default:
       return String(d.client_message || 'Spune-mi cum te pot ajuta.');
   }

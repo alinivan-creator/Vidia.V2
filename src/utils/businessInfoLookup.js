@@ -244,35 +244,79 @@ export function matchBusinessFaq(faqs, text) {
 
 /**
  * Natural reply from Admin data only — never invents a location or extra amenity.
+ * When session language is EN, never return raw Romanian FAQ copy.
  * @param {ReturnType<typeof lookupBusinessInfo>} looked
  * @param {'ro' | 'en'} [lang]
  */
 export function formatBusinessInfoReply(looked, lang = 'ro') {
   if (!looked?.found) return null;
-  if (looked.polarity === 'fact' && looked.text) return looked.text;
-  if (looked.text && looked.text.length > 12) return looked.text;
-  const label = lang === 'en' ? looked.topicLabelEn : looked.topicLabelRo;
+  const en = lang === 'en';
+  const label = en ? looked.topicLabelEn : looked.topicLabelRo;
+  const raw = typeof looked.text === 'string' ? looked.text.trim() : '';
+  const rawIsRo = looksMostlyRomanian(raw);
+
   if (looked.polarity === 'yes') {
-    if (looked.text) {
-      return lang === 'en' ? `Yes — ${looked.text}.` : `Sigur că da, ${looked.text}.`;
+    if (en) {
+      if (looked.topic === 'parking') return 'Yes, we have parking.';
+      if (looked.topic === 'card' || /card|payment/i.test(String(label || ''))) {
+        return 'Yes, you can pay by card.';
+      }
+      if (looked.topic === 'pets' || /pet|dog|animal/i.test(String(label || ''))) {
+        return 'Yes, pets are welcome.';
+      }
+      if (raw && !rawIsRo) return `Yes — ${raw}.`;
+      return label ? `Yes, we offer ${label}.` : 'Yes.';
     }
-    if (looked.topic === 'parking') {
-      return lang === 'en' ? 'Yes, we have parking.' : 'Sigur că da, avem parcare.';
-    }
-    return lang === 'en'
-      ? `Yes, we offer ${label}.`
-      : `Sigur că da, oferim ${label}.`;
+    if (raw) return `Sigur că da, ${raw}.`;
+    if (looked.topic === 'parking') return 'Sigur că da, avem parcare.';
+    return label ? `Sigur că da, oferim ${label}.` : 'Sigur că da.';
   }
+
   if (looked.polarity === 'no') {
-    if (looked.text) return looked.text;
-    if (looked.topic === 'parking') {
-      return lang === 'en' ? 'Unfortunately we do not have parking.' : 'Din păcate nu avem parcare.';
+    if (en) {
+      if (looked.topic === 'parking') return 'Unfortunately we do not have parking.';
+      if (looked.topic === 'pets' || /pet|dog|animal/i.test(String(label || ''))) {
+        return 'Unfortunately pets are not allowed.';
+      }
+      if (raw && !rawIsRo) return raw;
+      return label
+        ? `Unfortunately we do not offer ${label}.`
+        : 'Unfortunately we do not offer that.';
     }
-    return lang === 'en'
-      ? `Unfortunately we do not offer ${label}.`
-      : `Din păcate nu oferim ${label}.`;
+    if (raw) return raw;
+    if (looked.topic === 'parking') return 'Din păcate nu avem parcare.';
+    return label ? `Din păcate nu oferim ${label}.` : 'Din păcate nu oferim asta.';
   }
-  return looked.text;
+
+  // polarity === 'fact' (FAQ / ai_facts line)
+  if (raw) {
+    if (en && rawIsRo) {
+      // Structured EN fallback — never leak RO admin copy into an EN session.
+      if (looked.topic === 'card' || /card|plăt|plat/i.test(raw)) {
+        return 'Yes, you can pay by card.';
+      }
+      if (looked.topic === 'pets' || /caine|câine|animal|pet|dog/i.test(raw)) {
+        return /nu|not|no\b/i.test(raw)
+          ? 'Unfortunately pets are not allowed.'
+          : 'Yes, pets are welcome.';
+      }
+      return label
+        ? `Here is what I know about ${label}: please ask the front desk for details in English, or type *contact*.`
+        : missingBusinessInfoMessage(null, 'en');
+    }
+    return raw;
+  }
+
+  return null;
+}
+
+/**
+ * @param {string} text
+ */
+export function looksMostlyRomanian(text) {
+  const s = String(text || '');
+  if (/[ăâîșțĂÂÎȘȚ]/u.test(s)) return true;
+  return /\b(nu|da|sigur|puteti|puteți|avem|din pacate|din păcate|informație|intrebare|întrebare|plati|plăti|cardul|caine|câine)\b/i.test(s);
 }
 
 /**

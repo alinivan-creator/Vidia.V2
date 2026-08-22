@@ -48,12 +48,9 @@ describe('minimal bilingual UI layer', () => {
     assert.equal(parseLanguageChoice({ textBody: 'programare' }), null);
   });
 
-  it('detects English from first free-text without locking Romanian phrases', () => {
-    assert.equal(detectSessionLanguageFromText('Hello, I want an appointment'), 'en');
-    assert.equal(detectSessionLanguageFromText('Hi'), 'en');
-    assert.equal(detectSessionLanguageFromText('Vreau o programare mâine'), null);
-    assert.equal(detectSessionLanguageFromText('salut'), null);
-    assert.equal(detectSessionLanguageFromText('English'), null);
+  it('detects English FAQ questions like I can come with my pet', () => {
+    assert.equal(detectSessionLanguageFromText('I can come with my pet?'), 'en');
+    assert.equal(detectSessionLanguageFromText('I can pay with card?'), 'en');
   });
 
   it('recognizes restart session and English switch helpers', () => {

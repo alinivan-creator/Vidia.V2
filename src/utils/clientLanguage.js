@@ -3,10 +3,16 @@
  *
  * - Default / corrupt / unknown → Romanian (`ro`)
  * - Active choice lives in `context_data.session_language` for the conversation TTL
+ * - Free-text English can set/keep `en` when no explicit choice exists yet
  * - Legacy language-gate fields are scrubbed and never block booking
  */
 
-import { normalizeUiLang, readSessionLanguage } from './uiI18n.js';
+import {
+  normalizeUiLang,
+  readSessionLanguage,
+  hasExplicitSessionLanguage,
+  detectSessionLanguageFromText,
+} from './uiI18n.js';
 
 /**
  * @param {unknown} value
@@ -17,22 +23,29 @@ export function normalizeClientLanguage(value) {
 }
 
 /**
- * @param {string} [_text]
+ * Resolve UI language for this turn (session sticky → detect from text → ro).
+ * @param {string} [text]
  * @param {unknown} [_previous]
  * @param {Record<string, unknown> | null | undefined} [context]
  * @returns {'ro' | 'en'}
  */
-export function resolveClientLanguage(_text = '', _previous = null, context = null) {
-  return readSessionLanguage(context);
+export function resolveClientLanguage(text = '', _previous = null, context = null) {
+  if (hasExplicitSessionLanguage(context)) {
+    return readSessionLanguage(context);
+  }
+  const guessed = detectSessionLanguageFromText(text);
+  if (guessed) return guessed;
+  return 'ro';
 }
 
 /**
- * @param {string} [_text]
+ * @param {string} [text]
  * @param {unknown} [_previous]
+ * @param {Record<string, unknown> | null | undefined} [context]
  * @returns {'ro' | 'en'}
  */
-export function detectClientLanguage(_text, _previous = null) {
-  return normalizeUiLang(_previous);
+export function detectClientLanguage(text = '', _previous = null, context = null) {
+  return resolveClientLanguage(text, _previous, context);
 }
 
 /**
