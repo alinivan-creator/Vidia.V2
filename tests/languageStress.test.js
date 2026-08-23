@@ -181,8 +181,8 @@ describe('zero hardcoded RO leaks in EN UI shells', () => {
   });
 
   it('unknown service copy localized via tf()', () => {
-    const en = tf('unknownServiceBody', 'en', { label: 'massage' });
-    assert.match(en, /massage/);
+    const en = t('unknownServiceNotInList', 'en');
+    assert.match(en, /not in our list/i);
     assert.doesNotMatch(en, /Din păcate/);
   });
 

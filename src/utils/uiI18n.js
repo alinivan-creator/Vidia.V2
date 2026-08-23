@@ -130,6 +130,11 @@ const UI = {
   entryBooking: { ro: 'Programare', en: 'Booking' },
   entryDetails: { ro: 'Detalii & Prețuri', en: 'Details & prices' },
   entryContact: { ro: 'Contact & Locație', en: 'Contact & location' },
+  /** Typed service not in admin catalog — deterministic, no AI guess. */
+  unknownServiceNotInList: {
+    ro: 'Ne pare rău, serviciul introdus nu se află în lista noastră. Vă rugăm să alegeți un serviciu din listă.',
+    en: "We're sorry, the entered service is not in our list. Please select a service from the list.",
+  },
   unknownServiceBody: {
     ro: 'Serviciul *{label}* nu este disponibil în catalogul nostru. Puteți alege din lista de servicii sau solicita contact de la locație.',
     en: 'The service *{label}* is not available in our catalog. You may choose from the service list or request a callback from the business.',

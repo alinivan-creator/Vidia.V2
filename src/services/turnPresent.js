@@ -106,7 +106,7 @@ export function renderHandlerResult(business, result) {
       lang,
     })
     : null;
-  if (machineText) return machineText;
+  if (machineText && key !== 'UNKNOWN_SERVICE') return machineText;
 
   const menuBlock = '';
 
@@ -421,11 +421,9 @@ export function renderHandlerResult(business, result) {
           '',
           waFooter(['programare', 'orar', 'contact']),
         );
-    case 'UNKNOWN_SERVICE': {
-      const label = String(d.service_name || d.unknown_service_name || '').trim()
-        || (en ? 'that service' : 'acest serviciu');
-      return tf('unknownServiceBody', lang, { label });
-    }
+    case 'UNKNOWN_SERVICE':
+      return (typeof d.client_message === 'string' && d.client_message.trim())
+        || t('unknownServiceNotInList', lang);
     case 'STALE_CHOICE':
       return (typeof d.client_message === 'string' && d.client_message.trim())
         || t('staleChoiceBody', lang);

@@ -58,24 +58,44 @@ describe('unknown_service end-to-end (semantic null → catalog offer)', () => {
     assert.equal(grounded.action, 'unknown_service');
   });
 
-  it('UNKNOWN_SERVICE template stays EN when ui_language is en (catalog names may stay RO)', () => {
+  it('UNKNOWN_SERVICE shows fixed EN error then service list picker', () => {
     const text = renderHandlerResult(business, {
       user_message_template_key: 'UNKNOWN_SERVICE',
       data: {
         ui_language: 'en',
-        unknown_service_name: 'quantum flux haircut',
-        service_name: 'quantum flux haircut',
+        client_message: 'We\'re sorry, the entered service is not in our list. Please select a service from the list.',
         services: CATALOG,
+        ui: 'list_picker',
+        list_button: 'Services',
+      },
+      menu: {
+        kind: 'service',
+        options: [
+          { id: 'svc_svc-tuns', title: 'Classic Haircut' },
+          { id: 'svc_svc-barba', title: 'Haircut & Beard Trim' },
+        ],
       },
     });
-    assert.match(text, /not available in our catalog/i);
-    assert.match(text, /quantum flux haircut/i);
-    assert.match(text, /service list/i);
+    assert.match(text, /entered service is not in our list/i);
+    assert.match(text, /Please select a service from the list/i);
+    assert.doesNotMatch(text, /quantum flux/i);
+    assert.doesNotMatch(text, /callback/i);
     assert.doesNotMatch(text, /Din păcate/);
-    assert.doesNotMatch(text, /Poți alege/);
   });
 
-  it('executeTurn unknown_service path returns localized handler for EN session', async () => {
+  it('UNKNOWN_SERVICE shows fixed RO error message', () => {
+    const text = renderHandlerResult(business, {
+      user_message_template_key: 'UNKNOWN_SERVICE',
+      data: {
+        ui_language: 'ro',
+        client_message: 'Ne pare rău, serviciul introdus nu se află în lista noastră. Vă rugăm să alegeți un serviciu din listă.',
+      },
+    });
+    assert.match(text, /serviciul introdus nu se află în lista noastră/i);
+    assert.match(text, /alegeți un serviciu din listă/i);
+  });
+
+  it('executeTurn unknown_service path returns service list picker (no callback menu)', async () => {
     const result = await executeTurn({
       business,
       recipientPhone: '+40700000099',
@@ -95,19 +115,15 @@ describe('unknown_service end-to-end (semantic null → catalog offer)', () => {
 
     assert.equal(result.user_message_template_key, 'UNKNOWN_SERVICE');
     assert.equal(result.data?.ui_language, 'en');
+    assert.match(result.data?.client_message || '', /not in our list/i);
+    assert.equal(result.data?.ui, 'list_picker');
+    assert.equal(result.menu?.kind, 'service');
     const rendered = renderHandlerResult(business, result);
-    assert.match(rendered, /not available in our catalog/i);
-    assert.match(rendered, /quantum flux/i);
-    assert.doesNotMatch(rendered, /Din păcate/);
-    assert.ok(result.menu?.options?.length >= 2, 'should offer catalog + callback buttons');
-    const catalogTitles = (result.menu?.catalog || result.menu?.options || [])
-      .filter((o) => String(o.id || '').startsWith('svc_') || String(o.id || '').includes('SERVICE'))
-      .map((o) => o.title);
-    if (catalogTitles.length) {
-      assert.ok(
-        catalogTitles.some((t) => /Classic|Haircut|Beard/i.test(t)),
-        `EN session should show translated service titles, got: ${catalogTitles.join(', ')}`,
-      );
-    }
+    assert.match(rendered, /not in our list/i);
+    assert.doesNotMatch(rendered, /quantum flux/i);
+    assert.doesNotMatch(rendered, /Call me back/i);
+    assert.ok(result.menu?.options?.length >= 1, 'should offer catalog service rows');
+    const ids = (result.menu?.options || []).map((o) => o.id);
+    assert.ok(ids.every((id) => String(id).startsWith('svc_')), 'menu must be service list only');
   });
 });

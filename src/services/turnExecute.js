@@ -87,7 +87,6 @@ import {
   runWithServiceDisplay,
   svcDisplay,
   localizeServicesList,
-  translateClientRequestLabel,
 } from './serviceDisplayI18n.js';
 import {
   detectModificationIntent,
@@ -432,24 +431,6 @@ function serviceMenu(business, lang = 'ro') {
         description: (meta || t('available', uiLang)).slice(0, 72),
       };
     }),
-  };
-}
-
-/** Quick-replies after an unknown service: catalog again + human callback. */
-function unknownServiceOfferMenu(business, lang = 'ro') {
-  const see = t('seeServicesBtn', lang);
-  const callback = t('callbackBtn', lang);
-  return {
-    kind: 'unknown_service',
-    options: [
-      { id: 'show_services', title: see },
-      { id: 'offer_callback', title: callback },
-    ],
-    catalog: [
-      ...serviceMenu(business, lang).options,
-      { id: 'show_services', title: see },
-      { id: 'offer_callback', title: callback },
-    ],
   };
 }
 
@@ -3888,13 +3869,17 @@ async function dispatchExecute({
     return missingService(business, recipientPhone, draft, requestId, lang);
   }
   if (action === 'unknown_service') {
-    const asked = String(extract.unknown_service_name || extract.client_service_label || '').trim();
     const uiLang = lang === 'en' ? 'en' : 'ro';
-    const displayLabel = asked && uiLang === 'en'
-      ? await translateClientRequestLabel({ business, text: asked, requestId })
-      : asked;
-    const label = displayLabel || (uiLang === 'en' ? 'that service' : 'acest serviciu');
-    const menu = unknownServiceOfferMenu(business, lang);
+    const services = getBookingConfig(business).services;
+    if (!services.length) {
+      return handlerResult({
+        status: 'ERROR',
+        user_message_template_key: 'ERROR_GENERIC',
+        data: { client_message: unknownInfoClientMessage(lang), ui_language: uiLang },
+      });
+    }
+    const menu = serviceMenu(business, lang);
+    const clientMessage = t('unknownServiceNotInList', uiLang);
     await setConversationStep({
       businessId: business.id,
       rawPhone: recipientPhone,
@@ -3913,16 +3898,16 @@ async function dispatchExecute({
       next_required_step: 'CHOOSE_SERVICE',
       user_message_template_key: 'UNKNOWN_SERVICE',
       data: {
-        business_name: business.name,
-        service_name: label,
-        unknown_service_name: label,
+        client_message: clientMessage,
         ui_language: uiLang,
-        services: localizeServicesList(getBookingConfig(business).services.slice(0, 10).map((s) => ({
+        services: localizeServicesList(services.slice(0, 10).map((s) => ({
           id: s.id,
           name: s.name,
           duration_minutes: s.duration_minutes,
           price_ron: s.price_ron ?? null,
         })), lang),
+        list_button: t('listServices', uiLang),
+        ui: 'list_picker',
       },
       menu,
     });

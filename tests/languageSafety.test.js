@@ -104,8 +104,8 @@ describe('minimal bilingual UI layer', () => {
   });
 
   it('unknown service copy is localized via tf()', () => {
-    assert.match(tf('unknownServiceBody', 'en', { label: 'teeth whitening' }), /teeth whitening/i);
-    assert.match(tf('unknownServiceBody', 'ro', { label: 'albire' }), /albire/);
+    assert.match(t('unknownServiceNotInList', 'en'), /not in our list/i);
+    assert.match(t('unknownServiceNotInList', 'ro'), /lista noastră/i);
   });
 
   it('recognizes restart session and English switch helpers', () => {
