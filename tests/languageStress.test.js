@@ -132,7 +132,7 @@ describe('zero hardcoded RO leaks in EN UI shells', () => {
     });
     assert.match(text, /Hours/);
     assert.match(text, /Monday/);
-    assert.match(text, /We are here for you/);
+    assert.match(text, /We are at your service/);
     assert.doesNotMatch(text, /\bLuni\b/);
     assert.doesNotMatch(text, /Program\b/);
     assert.doesNotMatch(text, /Suntem aici/);
@@ -199,7 +199,7 @@ describe('zero hardcoded RO leaks in EN UI shells', () => {
       user_message_template_key: 'STALE_CHOICE',
       data: { ui_language: 'en', client_message: t('staleChoiceBody', 'en') },
     });
-    assert.match(text, /no longer on the current list/i);
+    assert.match(text, /no longer available on the current list/i);
     assert.doesNotMatch(text, /Opțiunea aia/);
   });
 });

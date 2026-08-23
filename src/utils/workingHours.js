@@ -347,6 +347,6 @@ export function unknownInfoClientMessage(lang = 'ro') {
 export function durationMissingClientMessage(serviceName, lang = 'ro') {
   void serviceName;
   return lang === 'en'
-    ? 'Unfortunately I cannot confirm this booking right now.'
-    : 'Din păcate nu pot confirma această programare momentan.';
+    ? 'This booking cannot be confirmed at this time.'
+    : 'Această programare nu poate fi confirmată momentan.';
 }

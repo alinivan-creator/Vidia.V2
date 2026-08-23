@@ -788,6 +788,7 @@ async function applyCatalogMatchesWithSemantic(extract, textBody, services, empl
   let next = applyCatalogMatches(extract, textBody, services, employees, timezone, opts);
 
   const needsSemantic = !next.service_id
+    && !next.unknown_service_name
     && business?.id
     && (next.service_name || (next.action === 'book' && textBody));
 
@@ -807,6 +808,12 @@ async function applyCatalogMatchesWithSemantic(extract, textBody, services, empl
         client_service_label: semantic.client_label,
         unknown_service_name: null,
       };
+    } else if (!next.service_id && !next.unknown_service_name) {
+      const leftover = String(next.service_name || '').trim();
+      if (leftover) {
+        next.unknown_service_name = leftover;
+        next.service_name = null;
+      }
     }
   }
 

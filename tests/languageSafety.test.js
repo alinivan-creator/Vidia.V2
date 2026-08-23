@@ -230,7 +230,7 @@ describe('minimal bilingual UI layer', () => {
     );
     assert.match(text, /Phone/i);
     assert.doesNotMatch(text, /Telefon/);
-    assert.match(text, /We are here for you/i);
+    assert.match(text, /We are at your service/i);
     assert.match(text, /Monday/i);
     assert.doesNotMatch(text, /\bLuni\b/);
     assert.doesNotMatch(text, /închis/);
@@ -261,7 +261,7 @@ describe('minimal bilingual UI layer', () => {
         data: { ui_language: 'en', business_name: 'VIDIA' },
       },
     );
-    assert.match(text, /didn't catch that/i);
+    assert.match(text, /could not be understood/i);
     assert.doesNotMatch(text, /Nu am înțeles/);
   });
 

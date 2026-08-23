@@ -83,28 +83,28 @@ const UI = {
     en: 'Session restarted. How can we help you?',
   },
   whichToMove: {
-    ro: 'Am găsit câteva programări. Pe care o mutăm?',
-    en: 'I found a few appointments. Which one should we move?',
+    ro: 'Au fost identificate mai multe programări. Selectați programarea pe care doriți să o reprogramați:',
+    en: 'Several appointments were found. Please select the appointment you would like to reschedule:',
   },
   whichToCancel: {
-    ro: 'Am găsit câteva programări. Pe care o anulăm?',
-    en: 'I found a few appointments. Which one should we cancel?',
+    ro: 'Au fost identificate mai multe programări. Selectați programarea pe care doriți să o anulați:',
+    en: 'Several appointments were found. Please select the appointment you would like to cancel:',
   },
   whichAmbiguousMove: {
-    ro: 'Am găsit mai multe programări pe intervalul menționat. Care o mutăm?',
-    en: 'I found several appointments in that window. Which one should we move?',
+    ro: 'Au fost identificate mai multe programări în intervalul menționat. Selectați programarea pe care doriți să o reprogramați:',
+    en: 'Several appointments were found in the specified period. Please select the appointment you would like to reschedule:',
   },
   whichAmbiguousCancel: {
-    ro: 'Am găsit mai multe programări pe intervalul menționat. Care o anulăm?',
-    en: 'I found several appointments in that window. Which one should we cancel?',
+    ro: 'Au fost identificate mai multe programări în intervalul menționat. Selectați programarea pe care doriți să o anulați:',
+    en: 'Several appointments were found in the specified period. Please select the appointment you would like to cancel:',
   },
   noApptReschedule: {
-    ro: 'Nu am găsit o programare activă de modificat. Scrie *programare* pentru una nouă.',
-    en: 'I could not find an active appointment to change. Type *booking* for a new one.',
+    ro: 'Nu a fost găsită o programare activă de reprogramat. Scrieți *programare* pentru o solicitare nouă.',
+    en: 'No active appointment was found to reschedule. Type *booking* to start a new request.',
   },
   noApptCancel: {
-    ro: 'Nu am găsit o programare activă de anulat. Scrie *programare* pentru una nouă.',
-    en: 'I could not find an active appointment to cancel. Type *booking* for a new one.',
+    ro: 'Nu a fost găsită o programare activă de anulat. Scrieți *programare* pentru o solicitare nouă.',
+    en: 'No active appointment was found to cancel. Type *booking* to start a new request.',
   },
   noActiveAppts: {
     ro: 'Nicio programare activă.',
@@ -116,13 +116,13 @@ const UI = {
   },
   cancelledTitle: { ro: 'Am anulat programarea', en: 'Appointment cancelled' },
   cancelledHint: {
-    ro: 'Când vrei din nou, scrie *programare* — te ajut eu.',
-    en: 'When you want another one, type *booking* — I can help.',
+    ro: 'Pentru o programare nouă, scrieți *programare*.',
+    en: 'To book a new appointment, type *booking*.',
   },
-  rescheduledTitle: { ro: 'Gata, am mutat programarea', en: 'Done — appointment moved' },
+  rescheduledTitle: { ro: 'Programare reprogramată', en: 'Appointment rescheduled' },
   rescheduledHint: {
-    ro: 'Te așteptăm! Dacă mai schimbi ceva, scrie *reprogramare* sau *anulează*.',
-    en: 'See you soon! To change again, type *reschedule* or *cancel*.',
+    ro: 'Vă așteptăm. Pentru modificări ulterioare, scrieți *reprogramare* sau *anulează*.',
+    en: 'We look forward to seeing you. To make further changes, type *reschedule* or *cancel*.',
   },
   labelNewDate: { ro: 'Noua dată', en: 'New date' },
   cancelAllBtn: { ro: 'Anulează toate', en: 'Cancel all' },
@@ -131,8 +131,8 @@ const UI = {
   entryDetails: { ro: 'Detalii & Prețuri', en: 'Details & prices' },
   entryContact: { ro: 'Contact & Locație', en: 'Contact & location' },
   unknownServiceBody: {
-    ro: 'Din păcate nu oferim *{label}*. Poți alege din catalogul nostru sau te pot pune în legătură cu cineva de la locație.',
-    en: 'Unfortunately we don\'t offer *{label}*. Pick from our catalog or ask for a callback.',
+    ro: 'Serviciul *{label}* nu este disponibil în catalogul nostru. Puteți alege din lista de servicii sau solicita contact de la locație.',
+    en: 'The service *{label}* is not available in our catalog. You may choose from the service list or request a callback from the business.',
   },
   seeServicesBtn: { ro: 'Vezi servicii', en: 'See services' },
   callbackBtn: { ro: 'Contactează-mă', en: 'Call me back' },
@@ -140,7 +140,7 @@ const UI = {
   contactEmail: { ro: 'Email', en: 'Email' },
   contactAddress: { ro: 'Adresă', en: 'Address' },
   contactHours: { ro: 'Program', en: 'Hours' },
-  contactFooter: { ro: 'Suntem aici pentru tine.', en: 'We are here for you.' },
+  contactFooter: { ro: 'Vă stăm la dispoziție.', en: 'We are at your service.' },
   firstAvailable: { ro: 'Primul disponibil', en: 'First available' },
   hoursClosed: { ro: 'închis', en: 'closed' },
   languageInfoEn: {
@@ -152,8 +152,8 @@ const UI = {
     en: 'Yes — this chat is in Romanian. Type *Română* if you prefer Romanian explicitly.',
   },
   staleChoiceBody: {
-    ro: 'Opțiunea aia nu mai e pe lista curentă. Te rog alege din mesajul cel mai recent (sau scrie *programare*).',
-    en: 'That option is no longer on the current list. Please choose from the latest message (or type *booking*).',
+    ro: 'Opțiunea selectată nu mai este disponibilă în lista curentă. Vă rugăm alegeți din cel mai recent mesaj sau scrieți *programare*.',
+    en: 'The selected option is no longer available on the current list. Please choose from the most recent message or type *booking*.',
   },
   flowCalendarPrompt: {
     ro: '🗓️ Deschide calendarul — alege ziua și ora liberă.',
@@ -164,12 +164,33 @@ const UI = {
     en: '🗓️ Open the calendar for *{service}* — pick an open day and time.',
   },
   noFreeTimesForService: {
-    ro: 'Nu am găsit ore libere pentru *{service}*{date}.\n\n',
-    en: 'No free times for *{service}*{date}.\n\n',
+    ro: 'Nu există intervale disponibile pentru *{service}*{date}.\n\n',
+    en: 'There are no available time slots for *{service}*{date}.\n\n',
   },
   emptyInboundHint: {
-    ro: 'Nu am primit un mesaj text. Alege din meniu sau scrie *programare*, *orar* sau *contact*.',
-    en: 'I did not receive any text. Pick from the menu or type *booking*, *hours*, or *contact*.',
+    ro: 'Nu a fost primit niciun mesaj text. Selectați din meniu sau scrieți *programare*, *orar* sau *contact*.',
+    en: 'No text message was received. Please select from the menu or type *booking*, *hours*, or *contact*.',
+  },
+  chatFallbackBody: {
+    ro: 'Mesajul nu a putut fi interpretat. Vă rugăm selectați o opțiune din meniu sau reformulați solicitarea (ex.: *vineri la 11*).',
+    en: 'Your message could not be understood. Please select a menu option or rephrase your request (e.g. *Friday at 11*).',
+  },
+  offTopicBody: {
+    ro: 'Vă putem asista cu programări, program de lucru și date de contact. Selectați din meniu sau reformulați solicitarea (ex.: *mâine la 10*).',
+    en: 'We can assist you with bookings, business hours, and contact details. Please select from the menu or rephrase your request (e.g. *tomorrow at 10*).',
+  },
+  specialistNotFoundIntro: {
+    ro: 'Specialistul solicitat nu a fost găsit. Vă rugăm alegeți din echipă:',
+    en: 'The requested specialist was not found. Please choose from the team:',
+  },
+  slotUnavailableBody: {
+    ro: 'Vă rugăm alegeți o altă oră din listă (sau o altă zi, dacă preferați).',
+    en: 'Please choose another time from the list (or another day, if you prefer).',
+  },
+  smsStoppedTitle: { ro: 'Notificările SMS au fost oprite', en: 'SMS notifications stopped' },
+  smsStoppedBody: {
+    ro: 'Cu ce vă putem ajuta în continuare?',
+    en: 'How may we assist you further?',
   },
 };
 

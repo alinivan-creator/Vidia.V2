@@ -179,24 +179,24 @@ export function renderHandlerResult(business, result) {
       return lang === 'en'
         ? waJoin(
           waTitle('Cancelled'),
-          'For a new booking, type *booking*.',
+          t('cancelledHint', 'en'),
         )
         : waJoin(
-          waTitle('Anulat'),
-          'Pentru o programare nouă, scrie *programare*.',
+          waTitle('Programare anulată'),
+          t('cancelledHint', 'ro'),
         );
     case 'FLOW_ABORTED':
       return en
-        ? waJoin(waTitle('Ok, stopped'), 'How else can I help?')
-        : waJoin(waTitle('Ok, m-am oprit'), 'Cu ce te mai pot ajuta?');
+        ? waJoin(waTitle('Request cancelled'), 'How may we assist you?')
+        : waJoin(waTitle('Solicitare anulată'), 'Cu ce vă putem ajuta?');
     case 'THANKS':
       return (typeof d.client_message === 'string' && d.client_message.trim())
         || (en
-          ? "You're welcome! If you need anything else — a booking, hours, or contact — just write here."
-          : 'Cu plăcere! Dacă mai ai nevoie — o programare, orarul sau contact — scrie-mi oricând.');
+          ? 'Thank you. For bookings, business hours, or contact details, you may message us at any time.'
+          : 'Vă mulțumim. Pentru programări, informații despre program sau contact, ne puteți scrie oricând.');
     case 'MISSING_EMPLOYEE': {
       const names = (d.services || []).map((e) => e.name).filter(Boolean);
-      const intro = d.client_message || 'Nu am găsit specialistul. Alege din echipă:';
+      const intro = d.client_message || t('specialistNotFoundIntro', lang);
       return names.length
         ? waJoin(waTitle('Specialist'), `${intro} ${names.join(', ')}.`)
         : intro;
@@ -216,8 +216,8 @@ export function renderHandlerResult(business, result) {
       return (
         (typeof d.client_message === 'string' && d.client_message)
         || waJoin(
-          waTitle(d.service_name ? `Alege ziua — ${d.service_name}` : 'Alege ziua'),
-          'Apasă *Zile disponibile* și selectează data.',
+          waTitle(d.service_name ? `${t('askDayTitle', 'ro')} — ${d.service_name}` : t('askDayTitle', 'ro')),
+          t('askDayHint', 'ro'),
         )
       );
     case 'ASK_TIME': {
@@ -235,17 +235,19 @@ export function renderHandlerResult(business, result) {
       }
       const windowHint = bounds ? ` (${bounds.labelRo})` : '';
       return waJoin(
-        waTitle(d.service_name ? `Alege ora — ${d.service_name}${windowHint}` : `Alege ora${windowHint}`),
-        d.date_label ? `*Data*\n${d.date_label}` : null,
-        'Atinge ora dorită mai jos.',
+        waTitle(d.service_name ? `${t('askTimeTitle', 'ro')} — ${d.service_name}${windowHint}` : `${t('askTimeTitle', 'ro')}${windowHint}`),
+        d.date_label ? `*${t('labelDate', 'ro')}*\n${d.date_label}` : null,
+        t('askTimeHint', 'ro'),
       );
     }
     case 'ASK_CLARIFY_DATE_OR_TIME':
       return (
         (typeof d.client_message === 'string' && d.client_message)
         || waJoin(
-          waTitle('Lămurire'),
-          `*${d.date_label || d.value}* e data sau ora *${d.time_label || d.value}*?`,
+          waTitle(en ? 'Clarification' : 'Clarificare'),
+          en
+            ? `Please confirm: is *${d.date_label || d.value}* the date, or the time *${d.time_label || d.value}*?`
+            : `Vă rugăm confirmați: *${d.date_label || d.value}* reprezintă data sau ora *${d.time_label || d.value}*?`,
         )
       );
     case 'MISSING_SLOT': {
@@ -255,9 +257,9 @@ export function renderHandlerResult(business, result) {
       const bounds = timeWindowBounds(d.time_window);
       const windowHint = bounds ? ` (${bounds.labelRo})` : '';
       return waJoin(
-        waTitle(d.service_name ? `Alege ora — ${d.service_name}${windowHint}` : `Alege ora${windowHint}`),
-        d.date_label ? `*Data*\n${d.date_label}` : null,
-        'Atinge ora dorită mai jos.',
+        waTitle(d.service_name ? `${t('askTimeTitle', 'ro')} — ${d.service_name}${windowHint}` : `${t('askTimeTitle', 'ro')}${windowHint}`),
+        d.date_label ? `*${t('labelDate', 'ro')}*\n${d.date_label}` : null,
+        t('askTimeHint', 'ro'),
       );
     }
     case 'SLOT_UNAVAILABLE': {
@@ -265,13 +267,17 @@ export function renderHandlerResult(business, result) {
         return d.client_message.trim();
       }
       const occupied = d.occupied_label
-        ? `Înțeleg — *${d.occupied_label}* nu mai e liber.`
-        : 'Înțeleg, intervalul ăsta nu mai e liber.';
+        ? (en
+          ? `The time slot *${d.occupied_label}* is no longer available.`
+          : `Intervalul *${d.occupied_label}* nu mai este disponibil.`)
+        : (en
+          ? 'The selected time slot is no longer available.'
+          : 'Intervalul selectat nu mai este disponibil.');
       return waJoin(
-        waTitle('Hai să alegem altceva'),
+        waTitle(en ? 'Please choose another time' : 'Vă rugăm alegeți alt interval'),
         occupied,
         '',
-        'Te rog alege altă oră din listă (sau altă zi, dacă preferi).',
+        t('slotUnavailableBody', lang),
       );
     }
     case 'MISSING_APPOINTMENT': {
@@ -391,13 +397,13 @@ export function renderHandlerResult(business, result) {
         || (lang === 'en'
           ? waJoin(
             waTitle(`Booking assistant — ${d.business_name || business.name}`),
-            "I didn't catch that. Please pick an option from the menu or rephrase (e.g. *Friday at 11*).",
+            t('chatFallbackBody', 'en'),
             '',
             waFooter(['booking', 'hours', 'contact']),
           )
           : waJoin(
             waTitle(`Asistent programări — ${d.business_name || business.name}`),
-            'Nu am înțeles exact. Te rog alege o opțiune din meniu sau reformulează (ex: *vreau vineri la 11*).',
+            t('chatFallbackBody', 'ro'),
             '',
             waFooter(['programare', 'orar', 'contact']),
           ));
@@ -405,13 +411,13 @@ export function renderHandlerResult(business, result) {
       return lang === 'en'
         ? waJoin(
           waTitle(`Booking assistant — ${d.business_name || business.name}`),
-          "I can help with bookings, hours, and contact. Please pick a menu option or rephrase (e.g. *book tomorrow at 10*).",
+          t('offTopicBody', 'en'),
           '',
           waFooter(['booking', 'hours', 'contact']),
         )
         : waJoin(
           waTitle(`Asistent programări — ${d.business_name || business.name}`),
-          'Te pot ajuta cu programări, orar și contact. Alege din meniu sau reformulează (ex: *vreau mâine la 10*).',
+          t('offTopicBody', 'ro'),
           '',
           waFooter(['programare', 'orar', 'contact']),
         );

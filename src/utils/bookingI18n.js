@@ -1,6 +1,7 @@
 /**
  * Booking-flow client messages (errors, recovery, modify).
  * Used by turnExecute and related handlers — always pass session lang.
+ * Tone: professional, polite, no colloquialisms.
  */
 
 /** @typedef {'ro' | 'en'} UiLang */
@@ -8,104 +9,104 @@
 /** @type {Record<string, { ro: string, en: string }>} */
 export const BOOKING_MSG = {
   errHoldLockFailed: {
-    ro: 'Nu am putut bloca intervalul în sistem. Te rog alege din nou ora.',
-    en: 'I could not lock that time in the system. Please pick a time again.',
+    ro: 'Intervalul selectat nu a putut fi rezervat în sistem. Vă rugăm să alegeți o altă oră.',
+    en: 'The selected time slot could not be reserved. Please choose another time.',
   },
   errSlotRetainFailed: {
-    ro: 'Nu am putut reține intervalul. Încearcă din nou.',
-    en: 'I could not hold that slot. Please try again.',
+    ro: 'Intervalul selectat nu a putut fi păstrat. Vă rugăm să încercați din nou.',
+    en: 'The selected time slot could not be held. Please try again.',
   },
   errSlotLockFailed: {
-    ro: 'Nu am putut bloca intervalul. Te rog alege din nou ora.',
-    en: 'I could not lock the slot. Please pick a time again.',
+    ro: 'Intervalul selectat nu a putut fi blocat. Vă rugăm să alegeți o altă oră.',
+    en: 'The selected time slot could not be locked. Please choose another time.',
   },
   errBookingStartFailed: {
-    ro: 'Nu am putut porni programarea. Încearcă din nou.',
-    en: 'I could not start the booking. Please try again.',
+    ro: 'Procesul de programare nu a putut fi inițiat. Vă rugăm să încercați din nou.',
+    en: 'The booking process could not be started. Please try again.',
   },
   errEmployeeNotFound: {
-    ro: 'Nu am găsit *{name}* în echipă. Poți scrie un nume din echipă: {staff}.',
-    en: 'I could not find *{name}* on the team. You can type a name from the team: {staff}.',
+    ro: 'Specialistul *{name}* nu a fost găsit în echipă. Puteți indica un nume din lista disponibilă: {staff}.',
+    en: 'Specialist *{name}* was not found on the team. You may specify a name from the available list: {staff}.',
   },
   errHoldExpired: {
-    ro: 'Timpul de rezervare a expirat și slotul a fost eliberat.',
-    en: 'The hold expired and the slot was released.',
+    ro: 'Perioada de rezervare a expirat, iar intervalul a fost eliberat.',
+    en: 'The reservation period has expired and the time slot has been released.',
   },
   errNoPendingConfirm: {
     ro: 'Nu există o programare în așteptarea confirmării.',
-    en: 'There is no booking waiting for confirmation.',
+    en: 'There is no booking awaiting confirmation.',
   },
   errIncompleteBooking: {
-    ro: 'Datele programării sunt incomplete.',
+    ro: 'Informațiile programării sunt incomplete.',
     en: 'The booking details are incomplete.',
   },
   errConfirmCalendar: {
-    ro: 'Din păcate nu am putut confirma programarea. Te rog încearcă din nou.',
-    en: 'Unfortunately I could not confirm the booking. Please try again.',
+    ro: 'Programarea nu a putut fi confirmată. Vă rugăm să încercați din nou.',
+    en: 'The booking could not be confirmed. Please try again.',
   },
   errSaveBooking: {
-    ro: 'Din păcate nu am putut salva programarea în sistem. Te rog încearcă din nou.',
-    en: 'Unfortunately I could not save the booking. Please try again.',
+    ro: 'Programarea nu a putut fi salvată în sistem. Vă rugăm să încercați din nou.',
+    en: 'The booking could not be saved. Please try again.',
   },
   errReopenDraft: {
-    ro: 'Nu am putut redeschide programarea în curs. Scrie din nou serviciul dorit ca să o luăm de la capăt.',
-    en: 'I could not reopen your booking in progress. Type the service again and we will start over.',
+    ro: 'Programarea în curs nu a putut fi reluată. Vă rugăm să indicați din nou serviciul dorit.',
+    en: 'The booking in progress could not be resumed. Please specify the desired service again.',
   },
   errCancelOne: {
-    ro: 'Din păcate nu am putut anula programarea în sistem. Te rog încearcă din nou.',
-    en: 'Unfortunately I could not cancel the appointment. Please try again.',
+    ro: 'Programarea nu a putut fi anulată în sistem. Vă rugăm să încercați din nou.',
+    en: 'The appointment could not be cancelled. Please try again.',
   },
   errCancelAll: {
-    ro: 'Din păcate nu am putut anula programările. Te rog încearcă din nou.',
-    en: 'Unfortunately I could not cancel the appointments. Please try again.',
+    ro: 'Programările nu au putut fi anulate. Vă rugăm să încercați din nou.',
+    en: 'The appointments could not be cancelled. Please try again.',
   },
   cancelAllPartial: {
-    ro: 'Am anulat {cancelled} programări. {failed} nu au putut fi anulate.',
-    en: 'I cancelled {cancelled} appointments. {failed} could not be cancelled.',
+    ro: 'Au fost anulate {cancelled} programări. {failed} nu au putut fi anulate.',
+    en: '{cancelled} appointments were cancelled. {failed} could not be cancelled.',
   },
   cancelAllSuccess: {
-    ro: 'Am anulat toate cele {count} programări.',
-    en: 'I cancelled all {count} appointments.',
+    ro: 'Toate cele {count} programări au fost anulate.',
+    en: 'All {count} appointments have been cancelled.',
   },
   confirmCancelAll: {
-    ro: 'Anulezi toate cele {count} programări?',
-    en: 'Cancel all {count} appointments?',
+    ro: 'Confirmați anularea tuturor celor {count} programări?',
+    en: 'Do you confirm cancelling all {count} appointments?',
   },
   slotTakenReschedule: {
-    ro: 'Înțeleg, *{slot}* nu mai e liber. Te rog alege altă oră din listă — păstrăm același serviciu.',
-    en: 'Got it — *{slot}* is no longer free. Please pick another time from the list — we keep the same service.',
+    ro: 'Intervalul *{slot}* nu mai este disponibil. Vă rugăm alegeți o altă oră din listă; serviciul selectat rămâne neschimbat.',
+    en: 'The time slot *{slot}* is no longer available. Please choose another time from the list; your selected service will remain unchanged.',
   },
   pickAnotherTime: {
-    ro: 'Te rog alege altă oră din listă — păstrăm același serviciu.',
-    en: 'Please pick another time from the list — we keep the same service.',
+    ro: 'Vă rugăm alegeți o altă oră din listă; serviciul selectat rămâne neschimbat.',
+    en: 'Please choose another time from the list; your selected service will remain unchanged.',
   },
   errRescheduleSave: {
-    ro: 'Îmi pare rău, nu am putut salva reprogramarea acum. Te rog încearcă din nou peste un moment.',
-    en: 'Sorry, I could not save the reschedule right now. Please try again in a moment.',
+    ro: 'Reprogramarea nu a putut fi salvată momentan. Vă rugăm să încercați din nou.',
+    en: 'The reschedule could not be saved at this time. Please try again shortly.',
   },
   rescheduleDone: {
-    ro: 'Gata — am mutat programarea ta la *{service}* pe *{when}*. Te așteptăm cu drag! Dacă mai schimbi ceva, scrie *reprogramare*.',
-    en: 'Done — I moved your appointment for *{service}* to *{when}*. See you soon! To change again, type *reschedule*.',
+    ro: 'Programarea pentru *{service}* a fost reprogramată pentru *{when}*. Vă așteptăm. Pentru modificări ulterioare, scrieți *reprogramare*.',
+    en: 'Your appointment for *{service}* has been rescheduled to *{when}*. We look forward to seeing you. To make further changes, type *reschedule*.',
   },
   noApptAtHint: {
-    ro: 'Nu am găsit o programare la *{hint}*. Care vrei să anulezi?',
-    en: 'I could not find an appointment at *{hint}*. Which one do you want to cancel?',
+    ro: 'Nu a fost găsită o programare la *{hint}*. Vă rugăm indicați programarea pe care doriți să o anulați.',
+    en: 'No appointment was found at *{hint}*. Please indicate which appointment you would like to cancel.',
   },
   pickApptOrCancelAll: {
-    ro: 'Ai {count} programări. Alege una sau anulează-le pe toate.',
-    en: 'You have {count} appointments. Pick one or cancel all.',
+    ro: 'Aveți {count} programări active. Selectați una sau anulați-le pe toate.',
+    en: 'You have {count} active appointments. Select one or cancel all.',
   },
   askFullName: {
-    ro: 'Te rog scrie prenumele și numele, ex: *Ana Popescu*.',
-    en: 'Please type your first and last name, e.g. *Ana Popescu*.',
+    ro: 'Vă rugăm introduceți prenumele și numele, de exemplu: *Ana Popescu*.',
+    en: 'Please enter your first and last name, for example: *Ana Popescu*.',
   },
   nameSavedRestart: {
-    ro: 'Am salvat numele. Scrie *programare* ca să alegi din nou serviciul și ora.',
-    en: 'Name saved. Type *booking* to choose the service and time again.',
+    ro: 'Numele a fost salvat. Scrieți *programare* pentru a selecta serviciul și intervalul dorit.',
+    en: 'Your name has been saved. Type *booking* to select the desired service and time.',
   },
   clarifyNotUnderstood: {
-    ro: 'Nu am înțeles exact. Te rog alege o opțiune din meniu sau reformulează (ex: *vreau vineri la 11*).',
-    en: "I didn't catch that. Please pick a menu option or rephrase (e.g. *Friday at 11*).",
+    ro: 'Mesajul nu a putut fi interpretat. Vă rugăm selectați o opțiune din meniu sau reformulați solicitarea (ex.: *vineri la 11*).',
+    en: 'Your message could not be understood. Please select a menu option or rephrase your request (e.g. *Friday at 11*).',
   },
   errApptsNotFound: {
     ro: 'Programările nu au fost găsite.',
@@ -116,44 +117,44 @@ export const BOOKING_MSG = {
     en: 'The appointment could not be found.',
   },
   reviseKeepService: {
-    ro: 'Ok, modificăm. Păstrăm *{service}* — alege din nou *ziua* (apoi ora).',
-    en: "Ok, let's revise. We keep *{service}* — pick the *day* again (then the time).",
+    ro: 'Vă rugăm selectați din nou *ziua* (apoi ora), păstrând serviciul *{service}*.',
+    en: 'Please select the *day* again (then the time), keeping *{service}* as your service.',
   },
   noOpenDays14: {
-    ro: 'Nu am zile cu ore libere în următoarele 14 zile. Contactează {business} sau încearcă mai târziu.',
-    en: 'No open days with free times in the next 14 days. Contact {business} or try again later.',
+    ro: 'Nu există zile cu intervale disponibile în următoarele 14 zile. Contactați {business} sau încercați mai târziu.',
+    en: 'There are no days with available time slots in the next 14 days. Please contact {business} or try again later.',
   },
   errDurationMissing: {
-    ro: 'Din păcate nu pot confirma această programare momentan.',
-    en: 'Unfortunately I cannot confirm this booking right now.',
+    ro: 'Această programare nu poate fi confirmată momentan.',
+    en: 'This booking cannot be confirmed at this time.',
   },
   thanksReply: {
-    ro: 'Cu plăcere! Dacă mai ai nevoie — o programare, orarul sau contact — scrie-mi oricând.',
-    en: "You're welcome! If you need anything else — a booking, hours, or contact — just write here.",
+    ro: 'Vă mulțumim. Pentru programări, informații despre program sau contact, ne puteți scrie oricând.',
+    en: 'Thank you. For bookings, business hours, or contact details, you may message us at any time.',
   },
   businessSuspended: {
-    ro: 'Serviciul de programări este temporar inactiv. Te rugăm să revii mai târziu sau să contactezi direct afacerea.',
-    en: 'The booking service is temporarily inactive. Please try again later or contact the business directly.',
+    ro: 'Serviciul de programări este temporar indisponibil. Vă rugăm reveniți mai târziu sau contactați direct locația.',
+    en: 'The booking service is temporarily unavailable. Please try again later or contact the business directly.',
   },
-  serviceFallback: { ro: 'serviciul', en: 'service' },
+  serviceFallback: { ro: 'serviciul selectat', en: 'the selected service' },
   appointmentFallback: { ro: 'Programare', en: 'Appointment' },
-  cancelAllSlotLabel: { ro: 'toate intervalele', en: 'all slots' },
+  cancelAllSlotLabel: { ro: 'toate intervalele', en: 'all time slots' },
   cancelAllServiceLabel: { ro: '{count} programări', en: '{count} appointments' },
   noSlotsGeneric: {
-    ro: 'Nu am găsit ore libere pentru *{service}*{date}.',
-    en: 'No free times for *{service}*{date}.',
+    ro: 'Nu există intervale disponibile pentru *{service}*{date}.',
+    en: 'There are no available time slots for *{service}*{date}.',
   },
   closedDayNotice: {
-    ro: '*{date}* suntem *ÎNCHIS*. Alege o zi deschisă din listă:',
-    en: '*{date}* we are *CLOSED*. Pick an open day from the list:',
+    ro: 'În data de *{date}* locația este *ÎNCHISĂ*. Vă rugăm alegeți o zi deschisă din listă:',
+    en: 'On *{date}* we are *CLOSED*. Please choose an open day from the list:',
   },
   reviseTimeNotice: {
-    ro: 'Ok, schimbăm ora pentru *{service}*. Alege un alt interval:',
-    en: 'Ok, changing the time for *{service}*. Pick another slot:',
+    ro: 'Vă rugăm selectați un alt interval pentru *{service}*:',
+    en: 'Please select another time slot for *{service}*:',
   },
   reschedulePickDay: {
-    ro: 'Reprogramăm *{service}*{from}. Alege mai întâi *ziua nouă* — orele apar după ce ai ales data.',
-    en: "Let's reschedule *{service}*{from}. First pick the *new day* — times appear after you choose the date.",
+    ro: 'Reprogramarea pentru *{service}*{from}. Vă rugăm selectați mai întâi *noua zi* — intervalele orare apar după selectarea datei.',
+    en: 'Rescheduling *{service}*{from}. Please select the *new day* first — time slots appear after you choose the date.',
   },
 };
 

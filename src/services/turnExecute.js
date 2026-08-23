@@ -84,6 +84,12 @@ import { resolveClientLanguage } from '../utils/clientLanguage.js';
 import { t, tf } from '../utils/uiI18n.js';
 import { bm, businessLabel } from '../utils/bookingI18n.js';
 import {
+  runWithServiceDisplay,
+  svcDisplay,
+  localizeServicesList,
+  translateClientRequestLabel,
+} from './serviceDisplayI18n.js';
+import {
   detectModificationIntent,
   refersToSavedAppointments,
   looksLikeCancelAll,
@@ -142,6 +148,14 @@ import {
 /** @typedef {import('./handlerResult.js').HandlerResult} HandlerResult */
 
 const PREFIX = BOOKING_PREFIXES;
+
+/** Client-facing service label (catalog id unchanged). */
+function displaySvc(serviceOrName, serviceId = null, lang = null) {
+  if (serviceOrName && typeof serviceOrName === 'object') {
+    return svcDisplay(serviceOrName.name, serviceOrName.id, lang);
+  }
+  return svcDisplay(serviceOrName, serviceId, lang);
+}
 
 function draftEmployeeId(draft) {
   if (!draft) return null;
@@ -414,7 +428,7 @@ function serviceMenu(business, lang = 'ro') {
       const meta = waServiceMeta(s);
       return {
         id: `${PREFIX.SERVICE}${s.id}`,
-        title: String(s.name || t('labelService', uiLang)).slice(0, 24),
+        title: String(displaySvc(s, null, uiLang) || t('labelService', uiLang)).slice(0, 24),
         description: (meta || t('available', uiLang)).slice(0, 72),
       };
     }),
@@ -930,12 +944,12 @@ async function missingService(business, recipientPhone, draft, requestId, lang =
     next_required_step: 'CHOOSE_SERVICE',
     user_message_template_key: 'MISSING_SERVICE',
     data: {
-      services: services.slice(0, 10).map((s) => ({
+      services: localizeServicesList(services.slice(0, 10).map((s) => ({
         id: s.id,
         name: s.name,
         duration_minutes: s.duration_minutes,
         price_ron: s.price_ron ?? null,
-      })),
+      })), lang),
       list_button: t('listServices', uiLang),
       ui: 'list_picker',
       ui_language: uiLang,
@@ -965,7 +979,7 @@ async function askDateGridResult({
   if (flowsEnabled(business) && page === 0 && !clientMessage && !notice && intent !== 'reschedule') {
     const flowId = getConfiguredFlowId(business);
     const body = service?.name
-      ? tf('flowCalendarPromptService', uiLang, { service: service.name })
+      ? tf('flowCalendarPromptService', uiLang, { service: displaySvc(service, null, uiLang) })
       : t('flowCalendarPrompt', uiLang);
     await setConversationStep({
       businessId: business.id,
@@ -986,7 +1000,7 @@ async function askDateGridResult({
       next_required_step: 'CHOOSE_DATE',
       user_message_template_key: 'ASK_DATE',
       data: {
-        service_name: service?.name,
+        service_name: displaySvc(service),
         client_message: body,
         ui: 'whatsapp_flow',
         flow_id: flowId,
@@ -1012,7 +1026,7 @@ async function askDateGridResult({
       next_required_step: 'CHOOSE_DATE',
       user_message_template_key: 'ASK_DATE',
       data: {
-        service_name: service?.name,
+        service_name: displaySvc(service),
         client_message: withNotice(
           notice,
           uiLang === 'en'
@@ -1026,7 +1040,7 @@ async function askDateGridResult({
   const listPage = buildListPickerPage(days, page, 10, { lang: uiLang });
   const body = withNotice(
     notice,
-    clientMessage || formatDayGridMessage(days, business.timezone, service?.name, uiLang),
+    clientMessage || formatDayGridMessage(days, business.timezone, service ? displaySvc(service, null, uiLang) : null, uiLang),
   );
   const pageOptions = listPage.items.map((i) => ({
     id: i.id,
@@ -1059,7 +1073,7 @@ async function askDateGridResult({
     next_required_step: 'CHOOSE_DATE',
     user_message_template_key: 'ASK_DATE',
     data: {
-      service_name: service?.name,
+      service_name: displaySvc(service),
       client_message: body,
       grid_page: listPage.page,
       ui: 'list_picker',
@@ -1143,7 +1157,7 @@ async function missingSlotsResult({
   const datePretty = dateKey ? formatLocalizedDate(dateKey, business.timezone, uiLang) : null;
   const body = withNotice(
     bodyNotice,
-    formatTimeGridMessage(times, dateKey, business.timezone, service?.name, uiLang),
+    formatTimeGridMessage(times, dateKey, business.timezone, service ? displaySvc(service, null, uiLang) : null, uiLang),
   );
   const useQuickReply = times.length > 0 && times.length <= QUICK_REPLY_MAX && listPage.pageCount <= 1;
   const pageOptions = useQuickReply
@@ -1190,13 +1204,13 @@ async function missingSlotsResult({
       notice: bodyNotice,
       clientMessage:
         tf('noFreeTimesForService', uiLang, {
-          service: service?.name || (uiLang === 'en' ? 'service' : 'serviciu'),
+          service: displaySvc(service, null, uiLang) || (uiLang === 'en' ? 'service' : 'serviciu'),
           date: dateSuffix,
         })
         + formatDayGridMessage(
           listOpenDayWindows(business, { lang: uiLang }),
           business.timezone,
-          service?.name,
+          displaySvc(service, null, uiLang),
           uiLang,
         ),
     });
@@ -1206,7 +1220,7 @@ async function missingSlotsResult({
     next_required_step: 'CHOOSE_SLOT',
     user_message_template_key: reasonKey,
     data: {
-      service_name: service?.name,
+      service_name: displaySvc(service),
       occupied_label: occupiedLabel,
       date_label: datePretty,
       time_window: windowFilter,
@@ -1281,7 +1295,7 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
         booking_wait: BOOKING_WAIT.CONFIRMATION,
         draft_booking: {
           service_id: service.id || null,
-          service_name: service.name,
+          service_name: displaySvc(service),
           date: formatDateKey(slotStart, business.timezone),
           time: formatTime(slotStart, business.timezone),
           duration: catalogDuration(business, service),
@@ -1297,7 +1311,7 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
       next_required_step: 'ASK_NAME',
       user_message_template_key: 'ASK_NAME',
       data: {
-        service_name: service.name,
+        service_name: displaySvc(service),
         slot_label: slotLabel,
         employee_name: employee?.name ?? null,
       },
@@ -1318,7 +1332,7 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
         last_menu: confirmMenu(uiLang),
         draft_booking: {
           service_id: service.id || service.service_id || null,
-          service_name: service.name,
+          service_name: displaySvc(service),
           date: formatDateKey(slotStart, business.timezone),
           time: formatTime(slotStart, business.timezone),
           duration: catalogDuration(business, service),
@@ -1334,7 +1348,7 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
     next_required_step: 'CONFIRM',
     user_message_template_key: 'ASK_CONFIRM',
     data: {
-      service_name: service.name,
+      service_name: displaySvc(service),
       slot_label: slotLabel,
       employee_name: employee?.name ?? null,
       client_name: client.display_name,
@@ -1968,14 +1982,14 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
     next_required_step: null,
     user_message_template_key: 'CONFIRMATION_BOOKED',
     data: {
-      service_name: service.name,
+      service_name: displaySvc(service),
       slot_label: slotLabel,
       client_name: clientName,
       employee_name: employee?.name ?? null,
       date_key: formatDateKey(startDate, business.timezone),
       time_hhmm: formatTime(startDate, business.timezone),
     },
-    calendar_cta: calendarCta(business, service.name, startDate, endDate),
+    calendar_cta: calendarCta(business, displaySvc(service), startDate, endDate),
   });
 }
 
@@ -2103,7 +2117,7 @@ async function executeReviseDraft({
           draft_id: working.id,
         },
         notice: bm('reviseTimeNotice', lang, {
-          service: service.name || bm('serviceFallback', lang),
+          service: displaySvc(service) || bm('serviceFallback', lang),
         }),
       });
     }
@@ -2122,7 +2136,7 @@ async function executeReviseDraft({
       },
       clientMessage:
         bm('reviseKeepService', lang, {
-          service: service.name || bm('serviceFallback', lang),
+          service: displaySvc(service) || bm('serviceFallback', lang),
         }),
     });
   }
@@ -2263,7 +2277,7 @@ async function executeCancelAppointment({
     next_required_step: null,
     user_message_template_key: 'CONFIRMATION_CANCELLED',
     data: {
-      service_name: appointment.selected_service?.name || bm('appointmentFallback', uiLang),
+      service_name: displaySvc(appointment.selected_service) || bm('appointmentFallback', uiLang),
       ui_language: uiLang,
     },
   });
@@ -2675,15 +2689,15 @@ async function applyReschedule({
     next_required_step: null,
     user_message_template_key: 'CONFIRMATION_RESCHEDULE',
     data: {
-      service_name: service.name || bm('appointmentFallback', uiLang),
+      service_name: displaySvc(service) || bm('appointmentFallback', uiLang),
       slot_label: whenLabel,
       client_message: bm('rescheduleDone', uiLang, {
-        service: service.name || bm('serviceFallback', uiLang),
+        service: displaySvc(service) || bm('serviceFallback', uiLang),
         when: whenLabel,
       }),
       ui_language: uiLang,
     },
-    calendar_cta: calendarCta(business, service.name, slotStart, slotEnd),
+    calendar_cta: calendarCta(business, displaySvc(service), slotStart, slotEnd),
   });
 }
 
@@ -2954,7 +2968,7 @@ async function executeCancel({
     next_required_step: 'CONFIRM_CANCEL',
     user_message_template_key: 'CONFIRM_CANCEL',
     data: {
-      service_name: appointment.selected_service?.name || (lang === 'en' ? 'Appointment' : 'Programare'),
+      service_name: displaySvc(appointment.selected_service) || (lang === 'en' ? 'Appointment' : 'Programare'),
       slot_label: when,
     },
     menu: {
@@ -2987,13 +3001,14 @@ async function executeServices(business, lang = 'ro') {
     next_required_step: null,
     user_message_template_key: 'SERVICES_LIST',
     data: {
-      services: services.map((s) => ({
+      services: localizeServicesList(services.map((s) => ({
         id: s.id,
         name: s.name,
         duration_minutes: s.duration_minutes,
         price_ron: s.price_ron ?? null,
-      })),
+      })), lang),
       client_language: lang,
+      ui_language: lang === 'en' ? 'en' : 'ro',
     },
   });
 }
@@ -3135,18 +3150,19 @@ async function executeListAppointments({ business, recipientPhone, activeDraft, 
   const upcoming = await listUpcomingConfirmedBookings(business.id, recipientPhone);
   const pending = activeDraft?.state === 'pending_confirmation' ? activeDraft : null;
   const rows = upcoming.map((a) => {
-    const service = /** @type {{ name?: string }} */ (a.selected_service ?? {});
+    const service = /** @type {{ id?: string, name?: string }} */ (a.selected_service ?? {});
     const when = a.selected_slot_start
       ? formatSlotLabel(new Date(a.selected_slot_start), business.timezone, uiLang)
       : '—';
-    return { service_name: service.name || (uiLang === 'en' ? 'Appointment' : 'Programare'), slot_label: when };
+    return { service_name: displaySvc(service) || (uiLang === 'en' ? 'Appointment' : 'Programare'), slot_label: when };
   });
   if (pending?.selected_slot_start) {
-    const service = /** @type {{ name?: string }} */ (pending.selected_service ?? {});
+    const service = /** @type {{ id?: string, name?: string }} */ (pending.selected_service ?? {});
+    const label = displaySvc(service) || (uiLang === 'en' ? 'Appointment' : 'Programare');
     rows.unshift({
       service_name: uiLang === 'en'
-        ? `${service.name || 'Appointment'} (awaiting confirmation)`
-        : `${service.name || 'Programare'} (în așteptarea confirmării)`,
+        ? `${label} (awaiting confirmation)`
+        : `${label} (în așteptarea confirmării)`,
       slot_label: formatSlotLabel(new Date(pending.selected_slot_start), business.timezone, uiLang),
     });
   }
@@ -3678,8 +3694,8 @@ async function dispatchExecute({
         : {},
       clientMessage: action === 'reprompt_grid'
         ? (lang === 'en'
-          ? `${formatDayGridMessage(listOpenDayWindows(business, { limit: 14 }), business.timezone, service.name, 'en')}\n\n_Pick from the list or type, e.g. *tomorrow at 10*._`
-          : `${formatDayGridMessage(listOpenDayWindows(business, { limit: 14 }), business.timezone, service.name)}\n\n_Poți alege din listă sau scrie, ex: *mâine la 10*._`)
+          ? `${formatDayGridMessage(listOpenDayWindows(business, { limit: 14 }), business.timezone, displaySvc(service, null, 'en'), 'en')}\n\n_Please select from the list or type your request, e.g. *tomorrow at 10*._`
+          : `${formatDayGridMessage(listOpenDayWindows(business, { limit: 14 }), business.timezone, displaySvc(service, null, 'ro'))}\n\n_Vă rugăm alegeți din listă sau scrieți solicitarea, ex.: *mâine la 10*._`)
         : null,
     });
   }
@@ -3873,7 +3889,11 @@ async function dispatchExecute({
   }
   if (action === 'unknown_service') {
     const asked = String(extract.unknown_service_name || extract.client_service_label || '').trim();
-    const label = asked || (lang === 'en' ? 'that service' : 'acest serviciu');
+    const uiLang = lang === 'en' ? 'en' : 'ro';
+    const displayLabel = asked && uiLang === 'en'
+      ? await translateClientRequestLabel({ business, text: asked, requestId })
+      : asked;
+    const label = displayLabel || (uiLang === 'en' ? 'that service' : 'acest serviciu');
     const menu = unknownServiceOfferMenu(business, lang);
     await setConversationStep({
       businessId: business.id,
@@ -3894,15 +3914,15 @@ async function dispatchExecute({
       user_message_template_key: 'UNKNOWN_SERVICE',
       data: {
         business_name: business.name,
-        service_name: asked || null,
-        unknown_service_name: asked || null,
-        ui_language: lang,
-        services: getBookingConfig(business).services.slice(0, 10).map((s) => ({
+        service_name: label,
+        unknown_service_name: label,
+        ui_language: uiLang,
+        services: localizeServicesList(getBookingConfig(business).services.slice(0, 10).map((s) => ({
           id: s.id,
           name: s.name,
           duration_minutes: s.duration_minutes,
           price_ron: s.price_ron ?? null,
-        })),
+        })), lang),
       },
       menu,
     });
@@ -4086,12 +4106,12 @@ async function runBookingMachine(params) {
       next_required_step: 'CHOOSE_SERVICE',
       user_message_template_key: 'MISSING_SERVICE',
       data: {
-        services: services.slice(0, 10).map((s) => ({
+        services: localizeServicesList(services.slice(0, 10).map((s) => ({
           id: s.id,
           name: s.name,
           duration_minutes: s.duration_minutes,
           price_ron: s.price_ron ?? null,
-        })),
+        })), lang),
         service_name: reduced.draft.service_name,
         list_button: t('listServices', lang),
         ui: 'list_picker',
@@ -4151,6 +4171,20 @@ export async function executeTurn(params) {
   if (params.extract?.action === 'resolve_clarification') {
     return executeResolveClarification(params);
   }
+  const lang = resolveClientLanguage(
+    params.textBody ?? '',
+    null,
+    params.convState?.context_data,
+  );
+  return runWithServiceDisplay({
+    business: params.business,
+    lang,
+    requestId: params.requestId ?? null,
+    run: () => executeTurnBody(params),
+  });
+}
+
+async function executeTurnBody(params) {
   const extract = hydrateExtract(params.extract, params.convState, params.business?.timezone);
 
   // Never run the new-booking state machine during modify/reschedule — it maps

@@ -325,10 +325,10 @@ export function clarificationPrompt(value, lang = 'ro') {
   const en = lang === 'en';
   if (!Number.isInteger(n) || n < 1) {
     return en
-      ? "I didn't catch that. Please pick from the menu or rephrase (e.g. *Friday at 11*)."
-      : 'Nu am înțeles exact. Te rog alege din meniu sau reformulează (ex: *vreau vineri la 11*).';
+      ? 'Your message could not be understood. Please select from the menu or rephrase your request (e.g. *Friday at 11*).'
+      : 'Mesajul nu a putut fi interpretat. Vă rugăm selectați o opțiune din meniu sau reformulați solicitarea (ex.: *vineri la 11*).';
   }
   return en
-    ? `❓ Is *${n}* the date or the time *${n}:00*?`
-    : `❓ *${n}* e data sau ora *${n}:00*?`;
+    ? `Please confirm: is *${n}* the date, or the time *${n}:00*?`
+    : `Vă rugăm confirmați: *${n}* reprezintă data sau ora *${n}:00*?`;
 }

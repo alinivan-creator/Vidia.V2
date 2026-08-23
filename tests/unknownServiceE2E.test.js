@@ -68,9 +68,9 @@ describe('unknown_service end-to-end (semantic null → catalog offer)', () => {
         services: CATALOG,
       },
     });
-    assert.match(text, /Unfortunately/i);
+    assert.match(text, /not available in our catalog/i);
     assert.match(text, /quantum flux haircut/i);
-    assert.match(text, /catalog/i);
+    assert.match(text, /service list/i);
     assert.doesNotMatch(text, /Din păcate/);
     assert.doesNotMatch(text, /Poți alege/);
   });
@@ -96,9 +96,18 @@ describe('unknown_service end-to-end (semantic null → catalog offer)', () => {
     assert.equal(result.user_message_template_key, 'UNKNOWN_SERVICE');
     assert.equal(result.data?.ui_language, 'en');
     const rendered = renderHandlerResult(business, result);
-    assert.match(rendered, /Unfortunately/i);
+    assert.match(rendered, /not available in our catalog/i);
     assert.match(rendered, /quantum flux/i);
     assert.doesNotMatch(rendered, /Din păcate/);
     assert.ok(result.menu?.options?.length >= 2, 'should offer catalog + callback buttons');
+    const catalogTitles = (result.menu?.catalog || result.menu?.options || [])
+      .filter((o) => String(o.id || '').startsWith('svc_') || String(o.id || '').includes('SERVICE'))
+      .map((o) => o.title);
+    if (catalogTitles.length) {
+      assert.ok(
+        catalogTitles.some((t) => /Classic|Haircut|Beard/i.test(t)),
+        `EN session should show translated service titles, got: ${catalogTitles.join(', ')}`,
+      );
+    }
   });
 });

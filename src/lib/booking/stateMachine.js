@@ -527,13 +527,11 @@ export function hydrateCatalogService(draft, business) {
   }
   if (next.service_name) {
     const n = String(next.service_name).toLowerCase();
-    const hit = services.find((s) => String(s.name).toLowerCase() === n)
-      || services.find((s) => n.includes(String(s.name).toLowerCase()));
+    const hit = services.find((s) => String(s.name).toLowerCase() === n);
     if (hit) {
       next.service_id = hit.id;
       next.service_name = hit.name;
       next.duration = resolveServiceDurationMinutes(business, hit);
-      return next;
     }
   }
   return next;

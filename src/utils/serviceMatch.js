@@ -7,6 +7,9 @@
  * already contains that root — so a dental clinic does not inherit barber stems.
  */
 
+import { waJoin, waTitle } from './waCopy.js';
+import { svcDisplay } from '../services/serviceDisplayI18n.js';
+
 /** Morphological variants; only used when a group root appears in the tenant catalog. */
 const MORPHOLOGY_GROUPS = [
   ['tuns', 'tunde', 'tundeti', 'tunsoare', 'tunsu', 'haircut'],
@@ -136,15 +139,16 @@ export function matchServiceMention(text, services) {
   return null;
 }
 
-import { waJoin, waTitle } from './waCopy.js';
-
 /**
- * @param {{ name?: string, duration_minutes?: number }[]} services
+ * @param {{ name?: string, id?: string, duration_minutes?: number }[]} services
  * @param {'ro' | 'en'} [lang]
  */
 export function formatServiceAskMessage(services, lang = 'ro') {
   const list = (Array.isArray(services) ? services : []).filter((s) => s?.name);
-  const example = list[0]?.name || (lang === 'en' ? 'service' : 'programare');
+  const first = list[0];
+  const example = lang === 'en' && first
+    ? svcDisplay(first.name, first.id, 'en')
+    : (first?.name || (lang === 'en' ? 'service' : 'programare'));
   if (lang === 'en') {
     return waJoin(
       waTitle('Which service would you like?'),
@@ -164,7 +168,8 @@ export function formatServiceAskMessage(services, lang = 'ro') {
 export function bookingExamplePhrase(services, lang = 'ro') {
   const first = (Array.isArray(services) ? services : []).find((s) => s?.name);
   if (lang === 'en') {
-    return first?.name ? `${first.name} Monday at 10` : 'Monday at 10';
+    const label = first ? svcDisplay(first.name, first.id, 'en') : null;
+    return label ? `${label} Monday at 10` : 'Monday at 10';
   }
   return first?.name ? `${first.name} luni la 10` : 'luni la 10';
 }

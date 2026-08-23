@@ -7,6 +7,7 @@
  * the WhatsApp list picker is the only way to lock a booking_id.
  */
 
+import { svcDisplay } from '../services/serviceDisplayI18n.js';
 import { formatDateKey, formatTime } from './datetime.js';
 
 const MONTHS_SHORT_RO = ['Ian', 'Feb', 'Mar', 'Apr', 'Mai', 'Iun', 'Iul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -209,7 +210,8 @@ export function buildAppointmentChoiceMenu(appointments, timezone, opts = {}) {
   const locale = lang === 'en' ? 'en-GB' : 'ro-RO';
 
   const items = list.slice(0, APPOINTMENT_LIST_SOFT_CAP).map((a) => {
-    const service = String(/** @type {{ name?: string }} */ (a.selected_service ?? {}).name || defaultService);
+    const svcRow = /** @type {{ id?: string, name?: string }} */ (a.selected_service ?? {});
+    const service = String(svcDisplay(svcRow.name, svcRow.id, lang) || defaultService);
     const start = a.selected_slot_start ? new Date(a.selected_slot_start) : null;
     let title = defaultService;
     let description = service.slice(0, 72);
