@@ -11,11 +11,9 @@ import {
   setDraftEmployee,
   claimSlotForDraft,
   confirmDraftBooking,
-  cancelActiveDraftsForPhone,
   startBrowsingFlow,
   listUpcomingConfirmedBookings,
   getDraftBookingById,
-  cancelOrResetDraft,
   rescheduleConfirmedBookingAtomic,
   cancelConfirmedBookingAtomic,
   setDraftGoogleEvent,
@@ -107,7 +105,13 @@ import { waServiceMeta } from '../utils/waCopy.js';
 import { getBusinessContactInfo } from './contactService.js';
 import { createCallbackRequest } from '../db/callbackRequestService.js';
 import { optInClientAfterBooking } from './smsMarketingService.js';
-import { expirePendingIfNeeded } from './pendingExpiryService.js';
+import {
+  expirePendingIfNeeded,
+  releaseGoogleHoldForDraft,
+  cancelActiveDraftsForPhoneWithCalendar,
+  cancelOrResetDraftWithCalendar,
+  purgeDuplicatePendingHoldsForPhone,
+} from './pendingExpiryService.js';
 import { clearPendingOffer } from './pendingOfferService.js';
 import { BOOKING_PREFIXES, MOD_PREFIX } from './flowIds.js';
 import {
@@ -626,9 +630,9 @@ async function listActionableAppointments(business, recipientPhone, requestId) {
       actionable.push(appointment);
       continue;
     }
-    await cancelOrResetDraft({
+    await cancelOrResetDraftWithCalendar({
+      business,
       draftId: appointment.id,
-      businessId: business.id,
       state: 'cancelled',
       context: {
         ...appointment.conversation_context,
@@ -1352,6 +1356,12 @@ async function holdRequestedSlot({
   lang = 'ro',
 }) {
   const uiLang = lang === 'en' ? 'en' : 'ro';
+  await purgeDuplicatePendingHoldsForPhone({
+    business,
+    rawPhone: recipientPhone,
+    keepDraftId: draft?.id ?? null,
+    requestId,
+  });
   const duration = catalogDuration(business, service);
   if (!duration) {
     return handlerResult({
@@ -1810,9 +1820,9 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
     requestId,
   });
   if (!stillAvailable || googleConflict) {
-    await cancelOrResetDraft({
+    await cancelOrResetDraftWithCalendar({
+      business,
       draftId: draft.id,
-      businessId: business.id,
       state: 'browsing',
       context: { ...draft.conversation_context, step: 'slot_lost_on_confirm' },
       requestId,
@@ -1975,27 +1985,12 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
 }
 
 async function releaseDraftGoogleHold(business, draft, requestId = null) {
-  if (!draft?.google_event_id || isMockEventId(draft.google_event_id)) return;
-  try {
-    const { calendarId } = await resolveStaff(business, draft);
-    await deleteCalendarEvent({
-      business,
-      eventId: draft.google_event_id,
-      calendarId,
-      requestId,
-    });
-  } catch (error) {
-    console.warn('[booking] failed to delete Google HOLD on cancel/revise', error);
-  }
+  return releaseGoogleHoldForDraft({ business, draft, requestId });
 }
 
 async function executeCancelPending({ business, recipientPhone, requestId }) {
-  const live = await getActiveDraftBooking(business.id, recipientPhone);
-  if (live?.state === 'pending_confirmation') {
-    await releaseDraftGoogleHold(business, live, requestId);
-  }
-  await cancelActiveDraftsForPhone({
-    businessId: business.id,
+  await cancelActiveDraftsForPhoneWithCalendar({
+    business,
     rawPhone: recipientPhone,
     context: { step: 'cancelled_by_user' },
     requestId,
@@ -2061,9 +2056,9 @@ async function executeReviseDraft({
       ? formatDateKey(priorStart, business.timezone)
       : null;
 
-    const reset = await cancelOrResetDraft({
+    const reset = await cancelOrResetDraftWithCalendar({
+      business,
       draftId: draft.id,
-      businessId: business.id,
       state: 'browsing',
       context: {
         ...draft.conversation_context,
@@ -2073,8 +2068,7 @@ async function executeReviseDraft({
       },
       requestId,
     });
-    // Cancel/revise must delete the visible Google HOLD immediately (TTL only if idle).
-    await releaseDraftGoogleHold(business, draft, requestId);
+    // Hold already released by cancelOrResetDraftWithCalendar.
     const working = reset || draft;
 
     if (!service?.id && !service?.name) {
@@ -2646,8 +2640,8 @@ async function applyReschedule({
   }
 
   try {
-    await cancelActiveDraftsForPhone({
-      businessId: business.id,
+    await cancelActiveDraftsForPhoneWithCalendar({
+      business,
       rawPhone: recipientPhone,
       context: { step: 'cancelled_after_reschedule', kept_appointment_id: appointment.id },
       requestId,
@@ -2693,9 +2687,9 @@ async function executeReschedule({
 }) {
   const lang = resolveClientLanguage(textBody, null, convState?.context_data);
   if (activeDraft && ['browsing', 'pending_confirmation'].includes(activeDraft.state)) {
-    await cancelOrResetDraft({
+    await cancelOrResetDraftWithCalendar({
+      business,
       draftId: activeDraft.id,
-      businessId: business.id,
       state: 'cancelled',
       context: { ...activeDraft.conversation_context, step: 'cancelled_for_modification_intent' },
       requestId,
@@ -2856,9 +2850,9 @@ async function executeCancel({
   }
 
   if (activeDraft && ['browsing', 'pending_confirmation'].includes(activeDraft.state)) {
-    await cancelOrResetDraft({
+    await cancelOrResetDraftWithCalendar({
+      business,
       draftId: activeDraft.id,
-      businessId: business.id,
       state: 'cancelled',
       context: { ...activeDraft.conversation_context, step: 'cancelled_for_modification_intent' },
       requestId,
@@ -3029,8 +3023,8 @@ async function executeContact(business, lang = 'ro') {
 
 async function executeMenu(business, recipientPhone, requestId) {
   if (business?.id && recipientPhone) {
-    await cancelActiveDraftsForPhone({
-      businessId: business.id,
+    await cancelActiveDraftsForPhoneWithCalendar({
+      business,
       rawPhone: recipientPhone,
       context: { step: 'cancelled_by_menu' },
       requestId,

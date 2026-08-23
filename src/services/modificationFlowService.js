@@ -1,10 +1,10 @@
 import {
   listUpcomingConfirmedBookings,
   getDraftBookingById,
-  cancelOrResetDraft,
   cancelConfirmedBookingAtomic,
   rescheduleConfirmedBookingAtomic,
 } from '../db/draftBookingService.js';
+import { cancelOrResetDraftWithCalendar } from './pendingExpiryService.js';
 import {
   getEmployeeById,
   resolveEmployeeCalendarId,
@@ -28,6 +28,7 @@ import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
 import { WA_DIVIDER, waField, waJoin, waTitle } from '../utils/waCopy.js';
 import {
   lazySyncCalendar,
+  createCalendarEvent,
   updateCalendarEvent,
   deleteCalendarEvent,
   resolveCalendarEventId,
@@ -83,9 +84,9 @@ export async function handleGlobalModificationIntent({
 }) {
   let clearedDraft = false;
   if (activeDraft && ['browsing', 'pending_confirmation'].includes(activeDraft.state)) {
-    await cancelOrResetDraft({
+    await cancelOrResetDraftWithCalendar({
+      business,
       draftId: activeDraft.id,
-      businessId: business.id,
       state: 'cancelled',
       context: {
         ...activeDraft.conversation_context,
@@ -206,9 +207,9 @@ async function listActionableConfirmedBookings(business, recipientPhone, request
     }
 
     // Orphan mock confirmation on a live calendar — close locally.
-    await cancelOrResetDraft({
+    await cancelOrResetDraftWithCalendar({
+      business,
       draftId: appointment.id,
-      businessId: business.id,
       state: 'cancelled',
       context: {
         ...appointment.conversation_context,
@@ -878,8 +879,41 @@ export async function applyRescheduleSlot({
         requestId,
       });
       if (!calResult?.ok) {
-        console.error('Eroare detalii:', calResult);
-        // Booking already saved — still confirm to the client.
+        const created = await createCalendarEvent({
+          business,
+          calendarId,
+          employeeId,
+          event: {
+            summary,
+            startIso: slotStart.toISOString(),
+            endIso: slotEnd.toISOString(),
+          },
+          requestId,
+        });
+        const newId = created?.ok ? (created.eventId || null) : null;
+        if (newId) {
+          if (activeEventId && activeEventId !== newId) {
+            await deleteCalendarEvent({
+              business,
+              eventId: activeEventId,
+              calendarId,
+              requestId,
+            });
+          }
+          activeEventId = newId;
+          await rescheduleConfirmedBookingAtomic({
+            draftId: appointmentId,
+            businessId: business.id,
+            slotStart,
+            slotEnd,
+            employeeId,
+            googleEventId: activeEventId,
+            context: mutated.draft.conversation_context,
+            requestId,
+          });
+        } else {
+          console.error('[reschedule] calendar update failed and create fallback failed', calResult);
+        }
       }
     }
   } else if (activeEventId) {

@@ -5,9 +5,7 @@ import {
   setSelectedSlot,
   setDraftEmployee,
   confirmDraftBooking,
-  cancelActiveDraftsForPhone,
   startBrowsingFlow,
-  cancelOrResetDraft,
 } from '../db/draftBookingService.js';
 import {
   CONVERSATION_STEPS,
@@ -39,7 +37,7 @@ import {
   unknownInfoClientMessage,
 } from '../utils/workingHours.js';
 import { persistPendingOffer } from './pendingOfferService.js';
-import { expirePendingIfNeeded, resolveLastBookingIntent } from './pendingExpiryService.js';
+import { expirePendingIfNeeded, resolveLastBookingIntent, cancelActiveDraftsForPhoneWithCalendar, cancelOrResetDraftWithCalendar } from './pendingExpiryService.js';
 import { getPendingTtlMinutes } from '../config/conversationConfig.js';
 import { triageUserIntent, looksLikeDatetimeOrSlot, isAffirmativeReply } from './intentTriageService.js';
 import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
@@ -1209,9 +1207,9 @@ async function handleConfirmBooking({ business, recipientPhone, draft, requestId
     excludeGoogleEventIds: [pendingHoldCacheEventId(draft.id)],
   });
   if (!stillAvailable) {
-    await cancelOrResetDraft({
+    await cancelOrResetDraftWithCalendar({
+      business,
       draftId: draft.id,
-      businessId: business.id,
       state: 'browsing',
       context: { ...draft.conversation_context, step: 'slot_lost_on_confirm' },
       requestId,
@@ -1365,30 +1363,8 @@ export async function clearPendingBookingSession({
 }) {
   const active = await getActiveDraftBooking(business.id, recipientPhone);
 
-  if (active && ['browsing', 'pending_confirmation'].includes(active.state)) {
-    try {
-      const empId = draftEmployeeId(active);
-      const employee = empId ? await getEmployeeById(empId, business.id) : null;
-      const calendarId = resolveEmployeeCalendarId(business, employee);
-      const eventId = await resolveCalendarEventId({
-        business,
-        eventId: active.google_event_id,
-        phoneNumber: active.phone_number || recipientPhone,
-        startIso: active.selected_slot_start,
-        endIso: active.selected_slot_end,
-        calendarId,
-        requestId,
-      });
-      if (eventId) {
-        await deleteCalendarEvent({ business, eventId, calendarId, requestId });
-      }
-    } catch (error) {
-      console.warn('[booking] clearPendingBookingSession calendar cleanup', error);
-    }
-  }
-
-  await cancelActiveDraftsForPhone({
-    businessId: business.id,
+  await cancelActiveDraftsForPhoneWithCalendar({
+    business,
     rawPhone: recipientPhone,
     context: {
       ...(active?.conversation_context ?? {}),

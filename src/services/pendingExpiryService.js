@@ -1,10 +1,14 @@
 import {
   isPendingConfirmationExpired,
   listPendingConfirmationDrafts,
+  listPendingConfirmationDraftsForPhone,
+  listActiveDraftsForPhone,
   markDraftExpired,
   getLatestExpiredDraft,
   getActiveDraftBooking,
+  getDraftBookingById,
   cancelActiveDraftsForPhone,
+  cancelOrResetDraft,
 } from '../db/draftBookingService.js';
 import { getPendingTtlMinutes } from '../config/conversationConfig.js';
 import {
@@ -15,7 +19,7 @@ import {
   isModificationFlowStep,
 } from '../db/conversationStateService.js';
 import { getEmployeeById, resolveEmployeeCalendarId } from '../db/employeeService.js';
-import { deleteCalendarEvent, resolveCalendarEventId } from './googleCalendarService.js';
+import { deleteCalendarEvent, resolveCalendarEventId, isMockEventId } from './googleCalendarService.js';
 import { formatSlotLabel } from '../utils/datetime.js';
 import { getSessionTtlMinutes, readSessionTimestamp } from './sessionValidator.js';
 
@@ -39,21 +43,15 @@ export function buildLastBookingIntent(draft, business) {
 }
 
 /**
- * Releases an expired pending_confirmation: calendar event + soft lock.
- * Keeps last slot/day in conversation memory (does not block the calendar).
- *
+ * Delete the visible Google Calendar ⏳ HOLD for a draft (best-effort).
  * @param {Object} params
  * @param {Business} params.business
  * @param {DraftBooking} params.draft
  * @param {string | null} [params.requestId]
+ * @returns {Promise<boolean>}
  */
-export async function expirePendingDraft({ business, draft, requestId = null }) {
-  if (!draft || draft.state !== 'pending_confirmation') {
-    return { expired: false, lastIntent: null };
-  }
-
-  const lastIntent = buildLastBookingIntent(draft, business);
-
+export async function releaseGoogleHoldForDraft({ business, draft, requestId = null }) {
+  if (!draft?.google_event_id || isMockEventId(draft.google_event_id)) return false;
   try {
     const empId =
       typeof draft.employee_id === 'string'
@@ -74,10 +72,138 @@ export async function expirePendingDraft({ business, draft, requestId = null }) 
     });
     if (eventId) {
       await deleteCalendarEvent({ business, eventId, calendarId, requestId });
+      return true;
     }
   } catch (error) {
-    console.warn('[pending-ttl] calendar release failed', error);
+    console.warn('[hold-release] calendar delete failed', {
+      draftId: draft?.id ?? null,
+      eventId: draft?.google_event_id ?? null,
+      error,
+    });
   }
+  return false;
+}
+
+/**
+ * Cancel every active draft for this phone AND delete Google HOLD events first.
+ * @param {Object} params
+ * @param {Business} params.business
+ * @param {string} params.rawPhone
+ * @param {Record<string, unknown>} [params.context]
+ * @param {string | null} [params.requestId]
+ */
+export async function cancelActiveDraftsForPhoneWithCalendar({
+  business,
+  rawPhone,
+  context = { step: 'cancelled_by_user' },
+  requestId = null,
+}) {
+  const drafts = await listActiveDraftsForPhone(business.id, rawPhone);
+  for (const draft of drafts) {
+    await releaseGoogleHoldForDraft({ business, draft, requestId });
+  }
+  return cancelActiveDraftsForPhone({
+    businessId: business.id,
+    rawPhone,
+    context,
+    requestId,
+  });
+}
+
+/**
+ * Reset/cancel one draft after deleting its Google HOLD (if any).
+ * @param {Object} params
+ * @param {Business} params.business
+ * @param {string} params.draftId
+ * @param {'cancelled' | 'browsing'} params.state
+ * @param {Record<string, unknown>} params.context
+ * @param {string | null} [params.requestId]
+ */
+export async function cancelOrResetDraftWithCalendar({
+  business,
+  draftId,
+  state,
+  context,
+  requestId = null,
+}) {
+  const existing = await getDraftBookingById(draftId, business.id);
+  if (existing) {
+    await releaseGoogleHoldForDraft({ business, draft: existing, requestId });
+  }
+  return cancelOrResetDraft({
+    draftId,
+    businessId: business.id,
+    state,
+    context,
+    requestId,
+  });
+}
+
+/**
+ * Drop duplicate pending holds for the same phone before claiming a new slot.
+ * @param {Object} params
+ * @param {Business} params.business
+ * @param {string} params.rawPhone
+ * @param {string | null} [params.keepDraftId]
+ * @param {string | null} [params.requestId]
+ */
+export async function purgeDuplicatePendingHoldsForPhone({
+  business,
+  rawPhone,
+  keepDraftId = null,
+  requestId = null,
+}) {
+  const ttlMinutes = getPendingTtlMinutes(business);
+  const pending = await listPendingConfirmationDraftsForPhone(business.id, rawPhone);
+  let purged = 0;
+  for (const draft of pending) {
+    if (keepDraftId && draft.id === keepDraftId) continue;
+    await releaseGoogleHoldForDraft({ business, draft, requestId });
+    if (isPendingConfirmationExpired(draft, ttlMinutes)) {
+      await expirePendingDraft({ business, draft, requestId });
+    } else {
+      await markDraftExpired({
+        draftId: draft.id,
+        businessId: business.id,
+        context: {
+          ...draft.conversation_context,
+          step: 'superseded_by_new_hold',
+          superseded_at: new Date().toISOString(),
+        },
+        requestId,
+      });
+    }
+    purged += 1;
+  }
+  if (purged > 0) {
+    console.log('[hold-release] Purged duplicate pending holds', {
+      businessId: business.id,
+      rawPhone,
+      purged,
+      keepDraftId,
+      requestId,
+    });
+  }
+  return purged;
+}
+
+/**
+ * Releases an expired pending_confirmation: calendar event + soft lock.
+ * Keeps last slot/day in conversation memory (does not block the calendar).
+ *
+ * @param {Object} params
+ * @param {Business} params.business
+ * @param {DraftBooking} params.draft
+ * @param {string | null} [params.requestId]
+ */
+export async function expirePendingDraft({ business, draft, requestId = null }) {
+  if (!draft || draft.state !== 'pending_confirmation') {
+    return { expired: false, lastIntent: null };
+  }
+
+  const lastIntent = buildLastBookingIntent(draft, business);
+
+  await releaseGoogleHoldForDraft({ business, draft, requestId });
 
   await markDraftExpired({
     draftId: draft.id,
@@ -189,12 +315,16 @@ export async function sweepStalePendingForPhone({
   /** @type {object | null} */
   let lastIntent = null;
 
-  if (draft?.state === 'pending_confirmation' && isPendingConfirmationExpired(draft, ttlMinutes)) {
-    const result = await expirePendingDraft({ business, draft, requestId });
-    expired = Boolean(result.expired);
-    lastIntent = result.lastIntent;
-    draft = null;
+  const pendingForPhone = await listPendingConfirmationDraftsForPhone(business.id, rawPhone);
+  for (const row of pendingForPhone) {
+    if (!isPendingConfirmationExpired(row, ttlMinutes)) continue;
+    const result = await expirePendingDraft({ business, draft: row, requestId });
+    if (result.expired) {
+      expired = true;
+      lastIntent = result.lastIntent ?? lastIntent;
+    }
   }
+  draft = await getActiveDraftBooking(business.id, rawPhone);
 
   let conv = await getOrCreateConversationState(business.id, rawPhone);
   const pendingStep =
@@ -289,8 +419,8 @@ async function unstickStaleBookingPicker({
   });
 
   if (draft && ['browsing', 'pending_confirmation'].includes(draft.state)) {
-    await cancelActiveDraftsForPhone({
-      businessId: business.id,
+    await cancelActiveDraftsForPhoneWithCalendar({
+      business,
       rawPhone,
       context: { step: 'cancelled_idle_ttl', idle_ms: Math.max(convAge, draftAge) },
       requestId,

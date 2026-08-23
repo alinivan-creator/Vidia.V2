@@ -5,14 +5,13 @@
 
 import { getActiveBusinesses } from '../db/businessService.js';
 import { logError } from '../db/loggerService.js';
-import { expireStalePendingForBusiness } from './pendingExpiryService.js';
+import { expireStalePendingForBusiness, cancelActiveDraftsForPhoneWithCalendar } from './pendingExpiryService.js';
 import { getPendingTtlMinutes } from '../config/conversationConfig.js';
 import {
   CONVERSATION_STEPS,
   resetConversationState,
   getOrCreateConversationState,
 } from '../db/conversationStateService.js';
-import { cancelActiveDraftsForPhone } from '../db/draftBookingService.js';
 import { buildFreshSessionGreeting } from './sessionValidator.js';
 
 /**
@@ -41,8 +40,8 @@ export async function resetExpiredSessionForRestart({
 }) {
   void clientId;
   try {
-    await cancelActiveDraftsForPhone({
-      businessId: business.id,
+    await cancelActiveDraftsForPhoneWithCalendar({
+      business,
       rawPhone,
       context: { step: 'cancelled_session_ttl' },
       requestId,

@@ -1297,6 +1297,70 @@ export async function listPendingConfirmationDrafts(businessId) {
 }
 
 /**
+ * All pending_confirmation rows for one phone (there must never be more than one live hold).
+ * @param {string} businessId
+ * @param {string} rawPhone
+ * @returns {Promise<DraftBooking[]>}
+ */
+export async function listPendingConfirmationDraftsForPhone(businessId, rawPhone) {
+  const phoneNumber = toE164(rawPhone);
+  if (!businessId || !phoneNumber) return [];
+  const columns = await draftSelectColumns();
+  const { data, error } = await supabase
+    .from('draft_bookings')
+    .select(columns)
+    .eq('business_id', businessId)
+    .eq('phone_number', phoneNumber)
+    .eq('state', 'pending_confirmation');
+
+  if (error) {
+    if (/pending_expires_at/i.test(error.message ?? '')) {
+      pendingExpiresColumnAvailable = false;
+      return listPendingConfirmationDraftsForPhone(businessId, rawPhone);
+    }
+    return [];
+  }
+  return /** @type {DraftBooking[]} */ (data ?? []);
+}
+
+/**
+ * Every in-flight draft (browsing + pending_confirmation) for one phone.
+ * @param {string} businessId
+ * @param {string} rawPhone
+ * @returns {Promise<DraftBooking[]>}
+ */
+export async function listActiveDraftsForPhone(businessId, rawPhone) {
+  const phoneNumber = toE164(rawPhone);
+  if (!businessId || !phoneNumber) return [];
+  const columns = await draftSelectColumns();
+  const { data, error } = await supabase
+    .from('draft_bookings')
+    .select(columns)
+    .eq('business_id', businessId)
+    .eq('phone_number', phoneNumber)
+    .in('state', ACTIVE_STATES);
+
+  if (error) {
+    if (/pending_expires_at/i.test(error.message ?? '')) {
+      pendingExpiresColumnAvailable = false;
+      return listActiveDraftsForPhone(businessId, rawPhone);
+    }
+    if (/employee_id|PGRST204/i.test(error.message ?? '')) {
+      employeeColumnAvailable = false;
+      const retry = await supabase
+        .from('draft_bookings')
+        .select(DRAFT_COLUMNS_LEGACY)
+        .eq('business_id', businessId)
+        .eq('phone_number', phoneNumber)
+        .in('state', ACTIVE_STATES);
+      return /** @type {DraftBooking[]} */ (retry.data ?? []);
+    }
+    return [];
+  }
+  return /** @type {DraftBooking[]} */ (data ?? []);
+}
+
+/**
  * Marks a pending draft expired and releases the soft lock. Slot times stay for history.
  * @param {Object} params
  * @param {string} params.draftId
@@ -1314,6 +1378,8 @@ export async function markDraftExpired({
   const updates = {
     state: 'expired',
     locked_until: null,
+    google_event_id: null,
+    google_event_link: null,
     conversation_context: context,
   };
   if (pendingExpiresColumnAvailable !== false) {

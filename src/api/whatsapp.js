@@ -24,6 +24,7 @@ import { continueAfterResponse } from '../utils/afterResponse.js';
 import {
   sweepStalePendingForPhone,
   resolveLastBookingIntent,
+  expireStalePendingForBusiness,
 } from '../services/pendingExpiryService.js';
 import { resetExpiredSessionForRestart } from '../services/pendingExpiryCron.js';
 import {
@@ -291,6 +292,12 @@ async function processTwilioWebhook(body, requestId) {
       rawPhone: recipientPhone,
       requestId,
     });
+    // Safety net when Vercel cron is misconfigured — expire ALL overdue holds for this tenant.
+    try {
+      await expireStalePendingForBusiness(business, requestId);
+    } catch (expiryError) {
+      console.warn('[webhook] business-wide pending expiry sweep failed', expiryError);
+    }
     let convState = swept.conv;
     let activeDraft = swept.draft;
     const expiry = { expired: swept.expired, lastIntent: swept.lastIntent };
