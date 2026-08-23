@@ -6,14 +6,14 @@
 import { logError } from '../db/loggerService.js';
 import { isCircuitOpen, recordFailure, recordSuccess } from './circuitBreaker.js';
 
-/** Default after Google retired gemini-2.0-flash (Jun 2026). */
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+/** Default Gemini model (GA Jul 2026). */
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
 
 /** Tried in order when the configured model returns 404 (retired / unavailable). */
 export const GEMINI_MODEL_FALLBACKS = [
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
-  'gemini-1.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.5-flash',
+  'gemini-3.6-flash',
 ];
 
 /**
@@ -215,7 +215,7 @@ export async function completeGeminiChat({
         alertKind: 'gemini',
         attempts,
         hint: retired
-          ? 'Setează GEMINI_MODEL=gemini-2.5-flash în Vercel sau elimină variabila veche gemini-2.0-flash.'
+          ? 'Setează GEMINI_MODEL=gemini-3.5-flash-lite în Vercel (eliminați gemini-2.0-flash / gemini-2.5-flash vechi).'
           : null,
       },
     });

@@ -8,10 +8,11 @@ import {
 } from '../src/services/llmProvider.js';
 
 describe('Gemini provider', () => {
-  it('defaults to gemini-2.5-flash after 2.0 retirement', () => {
-    assert.equal(DEFAULT_GEMINI_MODEL, 'gemini-2.5-flash');
-    assert.ok(GEMINI_MODEL_FALLBACKS.includes('gemini-2.5-flash'));
+  it('defaults to gemini-3.5-flash-lite', () => {
+    assert.equal(DEFAULT_GEMINI_MODEL, 'gemini-3.5-flash-lite');
+    assert.ok(GEMINI_MODEL_FALLBACKS.includes('gemini-3.5-flash-lite'));
     assert.ok(!GEMINI_MODEL_FALLBACKS.includes('gemini-2.0-flash'));
+    assert.ok(!GEMINI_MODEL_FALLBACKS.includes('gemini-2.5-flash'));
   });
 
   it('resolveGeminiModelCandidates dedupes configured model with fallbacks', () => {
@@ -20,7 +21,7 @@ describe('Gemini provider', () => {
     try {
       const list = resolveGeminiModelCandidates();
       assert.equal(list[0], 'gemini-2.0-flash');
-      assert.ok(list.includes('gemini-2.5-flash'));
+      assert.ok(list.includes('gemini-3.5-flash-lite'));
       assert.equal(new Set(list).size, list.length);
     } finally {
       if (prev === undefined) delete process.env.GEMINI_MODEL;
