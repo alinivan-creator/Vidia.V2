@@ -60,6 +60,51 @@ function stemToken(token, groups) {
   return t;
 }
 
+/** @type {Set<string>} */
+const SERVICE_STOP_TOKENS = new Set([
+  'si', 'sau', 'cu', 'la', 'de', 'pentru', 'un', 'o', 'the', 'and', 'for', 'or', 'with',
+]);
+
+/**
+ * True when free text looks like a typed service name (not date/time/menu).
+ * @param {string | null | undefined} text
+ */
+export function isTypedServiceAttempt(text) {
+  const n = normalize(text);
+  if (!n || n.length < 3) return false;
+  if (/^\d{1,2}$/.test(n)) return false;
+  if (n === 'meniu' || n === 'menu' || n === 'servicii' || n === 'services') return false;
+  const tokens = n.split(/[^a-z0-9]+/).filter((t) => t.length >= 3 && !SERVICE_STOP_TOKENS.has(t));
+  return tokens.length >= 1;
+}
+
+/**
+ * Every meaningful token in the user phrase must appear in the catalog service name.
+ * Prevents „tuns si vopsit” from matching „Tuns Clasic” on „tuns” alone.
+ * @param {string} userText
+ * @param {string} serviceName
+ * @param {string[][]} [groups]
+ */
+export function serviceCoversUserRequest(userText, serviceName, groups = []) {
+  const n = normalize(userText);
+  const name = normalize(serviceName);
+  if (!n || !name) return false;
+  if (name.length >= 3 && n.includes(name)) return true;
+
+  const userTokens = n.split(/[^a-z0-9]+/).filter((t) => t.length >= 3 && !SERVICE_STOP_TOKENS.has(t));
+  if (!userTokens.length) return false;
+
+  const nameParts = nameTokens(serviceName);
+  const nameStems = new Set(nameParts.map((part) => stemToken(part, groups)));
+
+  return userTokens.every((tok) => {
+    const stem = stemToken(tok, groups);
+    if (name.includes(tok)) return true;
+    if (nameParts.some((part) => part === tok || part.startsWith(tok) || tok.startsWith(part))) return true;
+    return nameStems.has(stem);
+  });
+}
+
 function scoreService(userStems, service, groups) {
   const name = normalize(service.name);
   const parts = nameTokens(service.name).map((tok) => stemToken(tok, groups));
@@ -110,27 +155,28 @@ export function matchServiceMention(text, services) {
   const n = normalize(text);
   if (!n || n.length < 3 || !list.length) return null;
 
+  const groups = activeMorphologyGroups(list);
+
   /** @type {{ id: string, name: string } | null} */
   let best = null;
   let bestLen = 0;
   for (const s of list) {
     const name = normalize(s.name);
-    if (name.length >= 3 && n.includes(name) && name.length > bestLen) {
+    if (name.length >= 3 && n.includes(name) && name.length > bestLen && serviceCoversUserRequest(text, s.name, groups)) {
       best = s;
       bestLen = name.length;
     }
   }
   if (best) return best;
 
-  const groups = activeMorphologyGroups(list);
-  const tokens = n.split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
+  const tokens = n.split(/[^a-z0-9]+/).filter((t) => t.length >= 3 && !SERVICE_STOP_TOKENS.has(t));
   if (!tokens.length) return null;
   const userStems = [...new Set(tokens.map((tok) => stemToken(tok, groups)))];
 
   /** @type {{ service: { id: string, name: string }, score: number }[]} */
   const ranked = list
     .map((service) => ({ service, score: scoreService(userStems, service, groups) }))
-    .filter((row) => row.score > 0)
+    .filter((row) => row.score > 0 && serviceCoversUserRequest(text, row.service.name, groups))
     .sort((a, b) => b.score - a.score);
 
   if (!ranked.length) return null;

@@ -7,8 +7,8 @@ import { formatContactMessage } from '../src/services/contactService.js';
 
 describe('hybrid NLP guards', () => {
   it('clarificationPrompt never renders Data de 0', () => {
-    assert.match(clarificationPrompt(null), /Nu am înțeles|reformulează/i);
-    assert.match(clarificationPrompt(0), /Nu am înțeles|reformulează/i);
+    assert.match(clarificationPrompt(null), /Mesajul nu a putut fi interpretat|reformul/i);
+    assert.match(clarificationPrompt(0), /Mesajul nu a putut fi interpretat|reformul/i);
     assert.match(clarificationPrompt(17), /17/);
   });
 

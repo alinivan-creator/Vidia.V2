@@ -21,7 +21,7 @@ import {
   interpretNumericFreeText,
 } from './bookingWaitState.js';
 import { extractBookingEntities } from '../lib/ai/extractor.js';
-import { matchServiceMention } from '../utils/serviceMatch.js';
+import { isTypedServiceAttempt, matchServiceMention } from '../utils/serviceMatch.js';
 import { matchServiceSemantically } from './serviceSemanticMatch.js';
 import {
   detectTimeWindowFromText,
@@ -813,6 +813,12 @@ async function applyCatalogMatchesWithSemantic(extract, textBody, services, empl
       if (leftover) {
         next.unknown_service_name = leftover;
         next.service_name = null;
+      } else if (
+        (next.action === 'book' || next.action === 'select_service')
+        && isTypedServiceAttempt(textBody)
+        && !matchServiceMention(textBody, services)
+      ) {
+        next.unknown_service_name = String(textBody || '').trim();
       }
     }
   }
@@ -996,13 +1002,33 @@ async function extractTurnIntentImpl({
     // carries a slot so parsers below can fill date_text / time_text.
     if (!looksLikeDatetimeOrSlot(textBody) && !detectTimeWindowFromText(textBody)) {
       const named = matchServiceMention(textBody, services);
-      return emptyExtract({
-        action: 'book',
-        service_id: named?.id ?? null,
-        service_name: named?.name ?? null,
-        confidence: 'high',
-        source: 'keyword',
-      });
+      if (wait === BOOKING_WAIT.SERVICE) {
+        if (named) {
+          return emptyExtract({
+            action: 'select_service',
+            service_id: named.id,
+            service_name: named.name,
+            confidence: 'high',
+            source: 'parser',
+          });
+        }
+        if (isTypedServiceAttempt(textBody)) {
+          return finalizeGroundedExtract(emptyExtract({
+            action: 'unknown_service',
+            unknown_service_name: String(textBody || '').trim(),
+            confidence: 'high',
+            source: 'parser',
+          }));
+        }
+      } else {
+        return emptyExtract({
+          action: 'book',
+          service_id: named?.id ?? null,
+          service_name: named?.name ?? null,
+          confidence: 'high',
+          source: 'keyword',
+        });
+      }
     }
   }
 
@@ -1305,6 +1331,25 @@ async function extractTurnIntentImpl({
         source: 'parser',
       });
     }
+  }
+  if (
+    wait === BOOKING_WAIT.SERVICE
+    && isTypedServiceAttempt(textBody)
+    && !matchServiceMention(textBody, services)
+    && !looksLikeDatetimeOrSlot(textBody)
+    && !isExplicitCancelReply(textBody)
+    && triage.intent !== 'menu'
+    && triage.intent !== 'services'
+    && triage.intent !== 'contact'
+    && triage.intent !== 'faq'
+    && triage.intent !== 'cancel'
+  ) {
+    return finalizeGroundedExtract(emptyExtract({
+      action: 'unknown_service',
+      unknown_service_name: String(textBody || '').trim(),
+      confidence: 'high',
+      source: 'parser',
+    }));
   }
   const nlu = await extractBookingEntities({
     business,

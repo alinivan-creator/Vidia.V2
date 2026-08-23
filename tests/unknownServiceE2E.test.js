@@ -1,9 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { finalizeGroundedExtract } from '../src/services/turnExtract.js';
-import { matchServiceMention } from '../src/utils/serviceMatch.js';
+import { finalizeGroundedExtract, extractTurnIntent } from '../src/services/turnExtract.js';
+import { isTypedServiceAttempt, matchServiceMention } from '../src/utils/serviceMatch.js';
 import { renderHandlerResult } from '../src/services/turnPresent.js';
 import { executeTurn } from '../src/services/turnExecute.js';
+import { CONVERSATION_STEPS } from '../src/db/conversationStateService.js';
+import { BOOKING_WAIT } from '../src/services/bookingWaitState.js';
 
 const CATALOG = [
   { id: 'svc-tuns', name: 'Tuns Clasic', duration_minutes: 30, price_ron: 50 },
@@ -19,6 +21,35 @@ const business = {
 };
 
 describe('unknown_service end-to-end (semantic null → catalog offer)', () => {
+  it('rejects partial combo „tuns si vopsit” when catalog only has Tuns Clasic', () => {
+    const solo = [{ id: 'svc-tuns', name: 'Tuns Clasic', duration_minutes: 30 }];
+    assert.equal(isTypedServiceAttempt('Tuns si vopsit'), true);
+    assert.equal(matchServiceMention('Tuns si vopsit', solo), null);
+    assert.equal(matchServiceMention('tuns clasic', solo)?.id, 'svc-tuns');
+  });
+
+  it('SERVICE wait + typed combo not in catalog → unknown_service (not MISSING_SERVICE loop)', async () => {
+    const soloCatalog = [{ id: 'svc-tuns', name: 'Tuns Clasic', duration_minutes: 30, price_ron: 50 }];
+    const soloBusiness = {
+      ...business,
+      booking_settings: { services: soloCatalog },
+    };
+    const extract = await extractTurnIntent({
+      business: soloBusiness,
+      textBody: 'Tuns si vopsit',
+      convState: {
+        current_step: CONVERSATION_STEPS.WAITING_FOR_SERVICE,
+        context_data: {
+          booking_wait: BOOKING_WAIT.SERVICE,
+          session_language: 'ro',
+        },
+      },
+      requestId: 'test-tuns-vopsit-unknown',
+    });
+    assert.equal(extract.action, 'unknown_service');
+    assert.equal(extract.service_id, null);
+  });
+
   it('deterministic catalog rejects invented service before semantic layer', () => {
     assert.equal(matchServiceMention('quantum flux haircut', CATALOG), null);
     assert.equal(matchServiceMention('teeth whitening', CATALOG), null);
