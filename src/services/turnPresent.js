@@ -591,6 +591,12 @@ export async function presentTurn({
     return;
   }
 
+  // CONTACT must never use Twilio Content CTA — text delivery only (maps/website in body).
+  if (result.user_message_template_key === 'CONTACT') {
+    await sendTextMessage({ business, recipientPhone, requestId, text });
+    return;
+  }
+
   if (d.link_ctas?.length || d.maps_cta?.url || d.website_cta?.url) {
     const buttons = Array.isArray(d.link_ctas) && d.link_ctas.length
       ? d.link_ctas

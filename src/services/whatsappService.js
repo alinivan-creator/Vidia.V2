@@ -619,22 +619,38 @@ export async function sendMessageWithUrlButton({
   const client = createTwilioClient(business);
 
   try {
-    const content = await client.content.v1.contents.create({
-      friendlyName: `vidia_cal_${Date.now().toString(36)}`,
-      language: twilioContentLocale(contentLanguage),
-      types: {
-        'twilio/call-to-action': {
-          body: bodyText,
-          actions,
+    const content = await Promise.race([
+      client.content.v1.contents.create({
+        friendlyName: `vidia_cal_${Date.now().toString(36)}`,
+        language: twilioContentLocale(contentLanguage),
+        types: {
+          'twilio/call-to-action': {
+            body: bodyText,
+            actions,
+          },
         },
-      },
-    });
+      }),
+      new Promise((_, reject) => {
+        setTimeout(
+          () => reject(Object.assign(new Error('Twilio Content CTA create timeout'), { name: 'TimeoutError' })),
+          8000,
+        );
+      }),
+    ]);
 
-    const message = await client.messages.create({
-      from,
-      to,
-      contentSid: content.sid,
-    });
+    const message = await Promise.race([
+      client.messages.create({
+        from,
+        to,
+        contentSid: content.sid,
+      }),
+      new Promise((_, reject) => {
+        setTimeout(
+          () => reject(Object.assign(new Error('Twilio Content CTA send timeout'), { name: 'TimeoutError' })),
+          8000,
+        );
+      }),
+    ]);
 
     console.log('[twilio] CTA message sent:', {
       sid: message.sid,

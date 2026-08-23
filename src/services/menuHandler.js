@@ -6,7 +6,7 @@ import { getActiveDraftBooking } from '../db/draftBookingService.js';
 import { generateAiReply, buildInfoButtonPrompt } from './aiService.js';
 import { rememberOfferFromAssistant } from './pendingOfferService.js';
 import { formatContactMessage } from './contactService.js';
-import { buildContactLinkButtons, buildMandatoryAiDisclosure, resolvePrivacyPolicyUrl, privacyPolicyButtonTitle } from '../utils/businessMessages.js';
+import { buildMandatoryAiDisclosure, resolvePrivacyPolicyUrl, privacyPolicyButtonTitle } from '../utils/businessMessages.js';
 import {
   entryMenuBodyText,
   withEnglishSwitchOption,
@@ -257,27 +257,12 @@ export async function handleInfoAction({
 export async function handleContactAction({ business, recipientPhone, requestId = null }) {
   await simulateHumanDelay({ business, recipientPhone, requestId });
 
-  const body = formatContactMessage(business);
-  const buttons = buildContactLinkButtons(business);
-  const [first, ...rest] = buttons;
-  if (first?.url) {
-    await sendMessageWithUrlButton({
-      business,
-      recipientPhone,
-      requestId,
-      text: body,
-      buttonTitle: first.title,
-      buttonUrl: first.url,
-      extraButtons: rest,
-    });
-    return;
-  }
-
+  // Plain text only — same reliability path as hours/services (no Content CTA hang).
   await sendTextMessage({
     business,
     recipientPhone,
     requestId,
-    text: body,
+    text: formatContactMessage(business),
   });
 }
 

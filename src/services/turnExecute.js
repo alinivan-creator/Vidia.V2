@@ -102,7 +102,6 @@ import {
 } from './inFlightBookingSession.js';
 import { getPendingTtlMinutes } from '../config/conversationConfig.js';
 import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
-import { buildContactLinkButtons } from '../utils/businessMessages.js';
 import { isEntryMenuChoiceId } from '../utils/entryMenu.js';
 import { waServiceMeta } from '../utils/waCopy.js';
 import { getBusinessContactInfo } from './contactService.js';
@@ -3012,7 +3011,9 @@ async function executeHoursAndServices(business, lang = 'ro') {
 }
 
 async function executeContact(business, lang = 'ro') {
-  const linkButtons = buildContactLinkButtons(business, lang);
+  // Deliver Contact as plain text only. Maps/website live in the body (markdown).
+  // Twilio Content CTA (contents.create) has blocked Contact silently in production
+  // while booking/hours (interactive list / text) kept working.
   return handlerResult({
     status: 'SUCCESS',
     action_performed: 'CONTACT_LOOKUP',
@@ -3021,7 +3022,6 @@ async function executeContact(business, lang = 'ro') {
     data: {
       contact: getBusinessContactInfo(business),
       business_name: business.name,
-      link_ctas: linkButtons,
       ui_language: lang,
     },
   });

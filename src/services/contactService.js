@@ -6,6 +6,25 @@ import { t } from '../utils/uiI18n.js';
 /** @typedef {import('../db/businessService.js').Business} Business */
 
 /**
+ * @param {string | null | undefined} raw
+ * @returns {string | null}
+ */
+function normalizeHttpUrl(raw) {
+  const trimmed = String(raw || '').trim().replace(/\s+/g, '');
+  if (!trimmed) return null;
+  const withProto = /^[a-z][a-z0-9+.-]*:/i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed.replace(/^\/\//, '')}`;
+  try {
+    const u = new URL(withProto);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
  * @typedef {Object} BusinessContactInfo
  * @property {string | null} phone
  * @property {string | null} email
@@ -100,6 +119,23 @@ export function formatContactMessage(business, lang = 'ro') {
     );
   } else if (info.hours) {
     parts.push('', waField(t('contactHours', uiLang), info.hours));
+  }
+
+  // Maps / website as markdown in the body — never depend on Twilio Content CTA
+  // (Content API create has hung in production and left Contact silent).
+  const mapsUrl = normalizeHttpUrl(info.mapsUrl)
+    || (info.address
+      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(info.address)}`
+      : null);
+  const website = normalizeHttpUrl(info.website);
+  if (mapsUrl || website) {
+    parts.push('', WA_DIVIDER, '');
+    if (mapsUrl) {
+      parts.push(`${t('seeLocation', uiLang)}: [${t('mapsAnchor', uiLang)}](${mapsUrl})`);
+    }
+    if (website && website !== mapsUrl) {
+      parts.push(`Website: [link](${website})`);
+    }
   }
 
   parts.push('', t('contactFooter', uiLang));
