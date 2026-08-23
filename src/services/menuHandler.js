@@ -6,7 +6,7 @@ import { getActiveDraftBooking } from '../db/draftBookingService.js';
 import { generateAiReply, buildInfoButtonPrompt } from './aiService.js';
 import { rememberOfferFromAssistant } from './pendingOfferService.js';
 import { formatContactMessage } from './contactService.js';
-import { buildAiTransparencyWelcome, buildContactLinkButtons } from '../utils/businessMessages.js';
+import { buildContactLinkButtons, buildMandatoryAiDisclosure, resolvePrivacyPolicyUrl, privacyPolicyButtonTitle } from '../utils/businessMessages.js';
 import {
   entryMenuBodyText,
   withEnglishSwitchOption,
@@ -69,11 +69,13 @@ export async function sendAiTransparencyWelcome({
   withMenu = true,
 }) {
   await simulateHumanDelay({ business, recipientPhone, requestId });
-  await sendTextMessage({
+  await sendMessageWithUrlButton({
     business,
     recipientPhone,
     requestId,
-    text: buildAiTransparencyWelcome(business),
+    text: buildMandatoryAiDisclosure(business, 'ro'),
+    buttonTitle: privacyPolicyButtonTitle('ro'),
+    buttonUrl: resolvePrivacyPolicyUrl(business),
   });
 
   if (!withMenu) return;

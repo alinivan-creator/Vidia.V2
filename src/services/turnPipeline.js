@@ -10,7 +10,7 @@ import { extractTurnIntent } from './turnExtract.js';
 import { runExecutionAgent } from './executionAgent.js';
 import { presentTurn } from './turnPresent.js';
 import { readInboundStamp } from './sessionValidator.js';
-import { readSessionLanguage, hasExplicitSessionLanguage, detectSessionLanguageFromText } from '../utils/uiI18n.js';
+import { sessionLanguagePatchFromText, resolveTurnLanguage } from '../utils/uiI18n.js';
 import { needsAiDisclosure } from '../utils/businessMessages.js';
 import { setConversationStep } from '../db/conversationStateService.js';
 
@@ -63,21 +63,19 @@ export async function processTurnPipeline({
   });
 
   let workingConv = convState;
-  let uiLang = readSessionLanguage(workingConv?.context_data);
-  if (!hasExplicitSessionLanguage(workingConv?.context_data)) {
-    const guessed = detectSessionLanguageFromText(textBody || typedText);
-    if (guessed) {
-      uiLang = guessed;
-      workingConv = await setConversationStep({
-        businessId: business.id,
-        rawPhone: recipientPhone,
-        step: workingConv?.current_step || 'IDLE',
-        context: { session_language: guessed },
-        mergeContext: true,
-        requestId,
-      }) || workingConv;
-    }
+  const inboundText = String(textBody || typedText || '').trim();
+  const langPatch = sessionLanguagePatchFromText(inboundText);
+  if (langPatch.session_language) {
+    workingConv = await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: workingConv?.current_step || 'IDLE',
+      context: langPatch,
+      mergeContext: true,
+      requestId,
+    }) || workingConv;
   }
+  const uiLang = resolveTurnLanguage(inboundText, workingConv?.context_data);
 
   const { handler: result, envelope } = await runExecutionAgent({
     business,

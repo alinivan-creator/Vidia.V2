@@ -9,9 +9,7 @@
 
 import {
   normalizeUiLang,
-  readSessionLanguage,
-  hasExplicitSessionLanguage,
-  detectSessionLanguageFromText,
+  resolveTurnLanguage,
 } from './uiI18n.js';
 
 /**
@@ -23,19 +21,14 @@ export function normalizeClientLanguage(value) {
 }
 
 /**
- * Resolve UI language for this turn (session sticky → detect from text → ro).
+ * Resolve UI language for this turn — inbound message language wins over session default.
  * @param {string} [text]
  * @param {unknown} [_previous]
  * @param {Record<string, unknown> | null | undefined} [context]
  * @returns {'ro' | 'en'}
  */
 export function resolveClientLanguage(text = '', _previous = null, context = null) {
-  if (hasExplicitSessionLanguage(context)) {
-    return readSessionLanguage(context);
-  }
-  const guessed = detectSessionLanguageFromText(text);
-  if (guessed) return guessed;
-  return 'ro';
+  return resolveTurnLanguage(text, context);
 }
 
 /**

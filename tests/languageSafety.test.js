@@ -16,6 +16,7 @@ import {
   hasExplicitSessionLanguage,
   entryMenuBodyText,
   withEnglishSwitchOption,
+  resolveTurnLanguage,
 } from '../src/utils/uiI18n.js';
 import { renderHandlerResult } from '../src/services/turnPresent.js';
 import { isConversationSessionExpired } from '../src/services/sessionValidator.js';
@@ -51,6 +52,49 @@ describe('minimal bilingual UI layer', () => {
   it('detects English FAQ questions like I can come with my pet', () => {
     assert.equal(detectSessionLanguageFromText('I can come with my pet?'), 'en');
     assert.equal(detectSessionLanguageFromText('I can pay with card?'), 'en');
+    assert.equal(detectSessionLanguageFromText('you have eat for free?'), 'en');
+  });
+
+  it('detects Romanian free text', () => {
+    assert.equal(detectSessionLanguageFromText('Salut, vreau o programare'), 'ro');
+    assert.equal(detectSessionLanguageFromText('Bună ziua'), 'ro');
+    assert.equal(detectSessionLanguageFromText('Salut'), 'ro');
+  });
+
+  it('ignores courtesy greetings and reads the request half (mixed RO opener + EN body)', () => {
+    assert.equal(
+      detectSessionLanguageFromText('Salut, i want to make an appointment'),
+      'en',
+    );
+    assert.equal(
+      detectSessionLanguageFromText('Buna, can I book for tomorrow?'),
+      'en',
+    );
+    assert.equal(
+      detectSessionLanguageFromText('Hello, vreau o programare maine'),
+      'ro',
+    );
+    assert.equal(detectSessionLanguageFromText('Hi'), 'en');
+  });
+
+  it('resolveTurnLanguage mirrors inbound text before session default', () => {
+    assert.equal(
+      resolveTurnLanguage('you have eat for free?', { session_language: 'ro' }),
+      'en',
+    );
+    assert.equal(
+      resolveTurnLanguage('Salut', { session_language: 'en' }),
+      'ro',
+    );
+    assert.equal(resolveTurnLanguage('ok', { session_language: 'en' }), 'en');
+    assert.equal(resolveTurnLanguage('ok', {}), 'ro');
+  });
+
+  it('resolveClientLanguage prefers message language over locked session', () => {
+    assert.equal(
+      resolveClientLanguage('you have eat for free?', null, { session_language: 'ro' }),
+      'en',
+    );
   });
 
   it('recognizes restart session and English switch helpers', () => {
@@ -155,6 +199,18 @@ describe('minimal bilingual UI layer', () => {
     assert.match(text, /See you soon/);
     assert.match(text, /Monday/i);
     assert.doesNotMatch(text, /Programare confirmată/);
+  });
+
+  it('CHAT_FALLBACK renders English when ui_language is en', () => {
+    const text = renderHandlerResult(
+      { id: 'b1', name: 'VIDIA', timezone: 'Europe/Bucharest' },
+      {
+        user_message_template_key: 'CHAT_FALLBACK',
+        data: { ui_language: 'en', business_name: 'VIDIA' },
+      },
+    );
+    assert.match(text, /didn't catch that/i);
+    assert.doesNotMatch(text, /Nu am înțeles/);
   });
 
   it('scrubs legacy gate fields without requiring session_language clear', () => {

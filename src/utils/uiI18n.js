@@ -214,9 +214,62 @@ export function hasExplicitSessionLanguage(ctx) {
 }
 
 /**
- * Infer English from free text on a fresh session (no explicit language yet).
- * Returns 'en' only when English markers are clear and Romanian is absent.
- * Otherwise null → keep Romanian default without locking the session.
+ * Normalize free text for language heuristics (lowercase, no diacritics, clean punctuation).
+ * @param {string} raw
+ */
+function normalizeForLanguageDetect(raw) {
+  return String(raw ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\p{L}\p{N}\s']/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Courtesy openers — excluded from the language signal (analyzed on the remainder). */
+const COURTESY_GREETING_RO = /\b(?:salut(?:ari)?|buna(?:\s+(?:ziua|seara|dimineata))?|ceau|ciao|servus|noroc)\b/gi;
+const COURTESY_GREETING_EN = /\b(?:hello|hi|hey|good\s+(?:morning|afternoon|evening))\b/gi;
+
+/**
+ * Drop leading/trailing courtesy greetings so mixed messages like
+ * "Salut, i want an appointment" resolve from the request half.
+ * @param {string} normalized — output of normalizeForLanguageDetect
+ * @returns {string}
+ */
+export function stripCourtesyGreetingsForLanguageDetect(normalized) {
+  let text = String(normalized ?? '').trim();
+  if (!text) return '';
+
+  // Peel greeting chains from both ends ("Hello, salut, I want…" → "I want…").
+  for (let i = 0; i < 4; i += 1) {
+    const next = text
+      .replace(/^(?:salut(?:ari)?|buna(?:\s+(?:ziua|seara|dimineata))?|ceau|ciao|servus|noroc|hello|hi|hey|good\s+(?:morning|afternoon|evening))(?:[,.!?]\s*|\s+)*/i, '')
+      .replace(/(?:\s*[,.!?]\s*|\s+)(?:salut(?:ari)?|buna(?:\s+(?:ziua|seara|dimineata))?|ceau|ciao|servus|noroc|hello|hi|hey|good\s+(?:morning|afternoon|evening))$/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (next === text) break;
+    text = next;
+  }
+
+  return text
+    .replace(COURTESY_GREETING_RO, ' ')
+    .replace(COURTESY_GREETING_EN, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Romanian content markers (never courtesy greetings — those are stripped first). */
+const RO_CONTENT_MARKERS = /\b(vraiu|vreau|programare|multumesc|te rog|maine|azi|serviciu|orar|cand|poftim|mersi|reprogramare|anuleaza|anulare|sunt|sunteti|aveti|avem|pot|este|fac|face|cat|cat costa|unde|ce|cum)\b/;
+
+/** English content + booking markers (never courtesy greetings — stripped first). */
+const EN_CONTENT_MARKERS = /\b(i want|i would like|i'd like|id like|i can|can i|do you|does it|did you|with my|pay with|my (dog|pet|cat)|appoint?ment|anpointment|booking|book a|make an|make a|please|thanks|thank you|how much|available|schedule|reschedule|cancel my|credit card|debit card|move (a |an |my )?|you|your|yours|the|is|are|was|were|have|has|had|will|would|what|when|where|why|how|who|which|this|that|for|free|with|about|any|some|get|got|eat|food|menu|price|cost|offer|included|to make)\b/;
+
+/**
+ * Infer conversation language from free text.
+ * Returns 'en' or 'ro' when markers are clear; null when ambiguous (use session default).
+ *
+ * Mixed openers ("Salut, i want…") ignore courtesy greetings and read the request half.
  *
  * @param {string | null | undefined} textBody
  * @returns {UiLang | null}
@@ -228,21 +281,49 @@ export function detectSessionLanguageFromText(textBody) {
   // Explicit language words are handled by parseLanguageChoice — skip here.
   if (parseLanguageChoice({ textBody: raw })) return null;
 
-  const n = raw
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\p{L}\p{N}\s']/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const n = normalizeForLanguageDetect(raw);
+  const stripped = stripCourtesyGreetingsForLanguageDetect(n);
+  const analyze = stripped.length >= 2 ? stripped : n;
 
   const hasRoDiacritics = /[ăâîșț]/i.test(raw);
-  const hasRo = hasRoDiacritics || /\b(salut|buna|buna ziua|buna seara|vraiu|vreau|programare|multumesc|te rog|maine|azi|serviciu|orar|cand|poftim|mersi|reprogramare|anuleaza|anulare)\b/.test(n);
-  // "move a anpointment" / similar typos: treat as English booking language markers.
-  const hasEn = /\b(hello|hi|hey|good morning|good afternoon|good evening|i want|i would like|i'd like|id like|i can|can i|do you|with my|pay with|my (dog|pet|cat)|appoint?ment|anpointment|booking|book a|please|thanks|thank you|how much|available|schedule|reschedule|cancel my|credit card|debit card|move (a |an |my )?)\b/.test(n);
+  const hasRo = hasRoDiacritics || RO_CONTENT_MARKERS.test(analyze);
+  const hasEn = EN_CONTENT_MARKERS.test(analyze);
 
   if (hasEn && !hasRo) return 'en';
+  if (hasRo && !hasEn) return 'ro';
+
+  // Greeting-only message — infer from which courtesy opener was used.
+  if (stripped.length < 2) {
+    const hadEnGreeting = COURTESY_GREETING_EN.test(n);
+    const hadRoGreeting = COURTESY_GREETING_RO.test(n);
+    if (hadEnGreeting && !hadRoGreeting) return 'en';
+    if (hadRoGreeting && !hadEnGreeting) return 'ro';
+  }
+
   return null;
+}
+
+/**
+ * Language for the current inbound turn: message text wins, then explicit session pick, then ro.
+ * @param {string | null | undefined} textBody
+ * @param {Record<string, unknown> | null | undefined} [ctx]
+ * @returns {UiLang}
+ */
+export function resolveTurnLanguage(textBody, ctx = null) {
+  const detected = detectSessionLanguageFromText(textBody);
+  if (detected) return detected;
+  if (hasExplicitSessionLanguage(ctx)) return readSessionLanguage(ctx);
+  return 'ro';
+}
+
+/**
+ * Persist session_language only when text clearly signals a language (never default-lock ro).
+ * @param {string | null | undefined} textBody
+ * @returns {{ session_language?: UiLang }}
+ */
+export function sessionLanguagePatchFromText(textBody) {
+  const detected = detectSessionLanguageFromText(textBody);
+  return detected ? { session_language: detected } : {};
 }
 
 /**

@@ -542,7 +542,10 @@ export async function presentTurn({
     || result.user_message_template_key === 'CONTACT'
     || result.user_message_template_key === 'ASK_CONFIRM'
     || result.user_message_template_key === 'CONFIRM_CANCEL'
-    || result.user_message_template_key === 'CONFIRMATION_BOOKED';
+    || result.user_message_template_key === 'CONFIRMATION_BOOKED'
+    || result.user_message_template_key === 'CHAT_FALLBACK'
+    || result.user_message_template_key === 'OFF_TOPIC'
+    || result.user_message_template_key === 'MENU';
   const polished = skipPolish ? null : await polishWithAi(business, result, rendered);
   let text = polished || rendered;
   if (
@@ -658,16 +661,21 @@ export async function presentTurn({
 
   if (result.menu?.options?.length && interactiveKeys.has(String(result.user_message_template_key || ''))) {
     if (result.user_message_template_key === 'MENU') {
-      // Privacy URL as CTA button — keeps OG site preview off the welcome bubble.
-      await sendMessageWithUrlButton({
-        business,
-        recipientPhone,
-        requestId,
-        text,
-        buttonTitle: privacyPolicyButtonTitle(lang),
-        buttonUrl: resolvePrivacyPolicyUrl(business),
-      });
-      await simulateHumanDelay({ business, recipientPhone, requestId, delayMs: 800 });
+      // inboundTurnService sends disclosure + button before the pipeline on first contact;
+      // keep this path as fallback when the pipeline runs without that pre-step.
+      if (d.attach_ai_disclosure === true) {
+        await sendMessageWithUrlButton({
+          business,
+          recipientPhone,
+          requestId,
+          text,
+          buttonTitle: privacyPolicyButtonTitle(lang),
+          buttonUrl: resolvePrivacyPolicyUrl(business),
+        });
+        await simulateHumanDelay({ business, recipientPhone, requestId, delayMs: 800 });
+      } else {
+        await simulateHumanDelay({ business, recipientPhone, requestId, delayMs: 500 });
+      }
       const menuButtons = localizeMenuOptions(
         withEnglishSwitchOption(result.menu.options, lang),
         lang,

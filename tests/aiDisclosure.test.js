@@ -31,7 +31,9 @@ describe('mandatory AI disclosure (first contact)', () => {
     assert.match(ro, /politica de confidențialitate|privacy/i);
     assert.match(en, /virtual AI assistant/i);
     assert.match(en, /privacy policy/i);
-    assert.match(en, /example\.com\/privacy/);
+    // URL lives on the WhatsApp CTA button — not in the body (avoids OG preview).
+    assert.doesNotMatch(ro, /https?:\/\//);
+    assert.doesNotMatch(en, /https?:\/\//);
   });
 
   it('prepends disclosure to a direct booking reply once', () => {

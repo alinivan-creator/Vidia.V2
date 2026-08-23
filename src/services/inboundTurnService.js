@@ -21,16 +21,19 @@ import {
   parseLanguageChoice,
   isRestartSessionCommand,
   hasExplicitSessionLanguage,
-  detectSessionLanguageFromText,
   entryMenuBodyText,
   withEnglishSwitchOption,
   localizeMenuOptions,
+  readSessionLanguage,
+  sessionLanguagePatchFromText,
+  resolveTurnLanguage,
 } from '../utils/uiI18n.js';
 import {
   buildMandatoryAiDisclosure,
   buildAiTransparencyWelcome,
   resolvePrivacyPolicyUrl,
   privacyPolicyButtonTitle,
+  needsAiDisclosure,
 } from '../utils/businessMessages.js';
 import { resetExpiredSessionForRestart } from './pendingExpiryCron.js';
 
@@ -236,24 +239,52 @@ export async function routeInboundTurn({
     return;
   }
 
-  // First free-text on a fresh session: auto-detect English and continue the same turn.
-  if (!hasExplicitSessionLanguage(nextConv?.context_data)) {
-    const guessed = detectSessionLanguageFromText(textBody || typedText);
-    if (guessed === 'en') {
-      nextConv = await setConversationStep({
-        businessId: business.id,
-        rawPhone: recipientPhone,
-        step: nextConv?.current_step || 'IDLE',
-        context: { session_language: 'en' },
-        mergeContext: true,
-        requestId,
-      }) || nextConv;
-      console.log('[session] Smart language detection → en', { requestId });
-    }
+  // Mirror inbound language each turn; persist only when text clearly signals en/ro.
+  const inboundText = String(textBody || typedText || '').trim();
+  const langPatch = sessionLanguagePatchFromText(inboundText);
+  if (langPatch.session_language) {
+    nextConv = await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: nextConv?.current_step || 'IDLE',
+      context: langPatch,
+      mergeContext: true,
+      requestId,
+    }) || nextConv;
+    console.log('[session] Language detected from text →', langPatch.session_language, { requestId });
   }
 
-  // Direct request (booking etc.) continues through the pipeline — disclosure is
-  // attached on the first presentTurn when ai_disclosed is not set yet.
+  // First contact: legal disclosure (separate bubble) then the same turn continues in the
+  // pipeline — booking / FAQ / menu resolves immediately; the client never restarts from zero.
+  if (needsAiDisclosure(nextConv?.context_data)) {
+    const lang = resolveTurnLanguage(inboundText, nextConv?.context_data);
+    const disclosureContext = { ai_disclosed: true };
+    // Never default-lock session_language to ro — only persist when detected or explicitly chosen.
+    if (langPatch.session_language) {
+      disclosureContext.session_language = langPatch.session_language;
+    } else if (hasExplicitSessionLanguage(nextConv?.context_data)) {
+      disclosureContext.session_language = readSessionLanguage(nextConv?.context_data);
+    }
+
+    nextConv = await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: nextConv?.current_step || 'IDLE',
+      context: disclosureContext,
+      mergeContext: true,
+      requestId,
+    }) || nextConv;
+
+    await sendMessageWithUrlButton({
+      business,
+      recipientPhone,
+      requestId,
+      text: buildMandatoryAiDisclosure(business, lang),
+      buttonTitle: privacyPolicyButtonTitle(lang),
+      buttonUrl: resolvePrivacyPolicyUrl(business),
+    });
+  }
+
   await processTurnPipeline({
     business,
     recipientPhone,
