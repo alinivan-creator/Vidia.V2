@@ -20,6 +20,8 @@ import {
   tf,
   isLanguageCapabilityQuestion,
   twilioContentLocale,
+  isLanguageNeutralUiText,
+  sessionLanguagePatchFromText,
 } from '../src/utils/uiI18n.js';
 import { formatBusinessHoursText, DEFAULT_BUSINESS_HOURS } from '../src/utils/datetime.js';
 import { renderHandlerResult } from '../src/services/turnPresent.js';
@@ -126,6 +128,23 @@ describe('minimal bilingual UI layer', () => {
       { id: 'c', title: 'C' },
     ], 'ro');
     assert.equal(full.length, 3);
+  });
+
+  it('menu taps and pivot words do not flip session language', () => {
+    assert.equal(isLanguageNeutralUiText('Booking'), true);
+    assert.equal(isLanguageNeutralUiText('Contact'), true);
+    assert.equal(isLanguageNeutralUiText('Contact & location'), true);
+    assert.equal(isLanguageNeutralUiText('book', 'book'), true);
+    assert.equal(sessionLanguagePatchFromText('Booking', 'book').session_language, undefined);
+    assert.equal(detectSessionLanguageFromText('Booking'), null);
+    assert.equal(
+      resolveTurnLanguage('Booking', { session_language: 'ro' }),
+      'ro',
+    );
+    assert.equal(
+      detectSessionLanguageFromText('Salut, vreau o programare pentru consultatie'),
+      'ro',
+    );
   });
 
   it('MISSING_SERVICE renders English when ui_language is en (machine action path)', () => {

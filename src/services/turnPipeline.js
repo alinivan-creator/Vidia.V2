@@ -64,7 +64,7 @@ export async function processTurnPipeline({
 
   let workingConv = convState;
   const inboundText = String(textBody || typedText || '').trim();
-  const langPatch = sessionLanguagePatchFromText(inboundText);
+  const langPatch = sessionLanguagePatchFromText(inboundText, buttonPayload);
   if (langPatch.session_language) {
     workingConv = await setConversationStep({
       businessId: business.id,
@@ -86,6 +86,7 @@ export async function processTurnPipeline({
     convState: workingConv,
     activeDraft,
     textBody,
+    uiLang,
   });
 
   const attachDisclosure = needsAiDisclosure(workingConv?.context_data);

@@ -1068,7 +1068,18 @@ async function extractTurnIntentImpl({
 
   if (
     !tappedId
-    && (wait === BOOKING_WAIT.SERVICE || step === CONVERSATION_STEPS.WAITING_FOR_SERVICE)
+    && (
+      gridWait
+      || wait === BOOKING_WAIT.SERVICE
+      || wait === BOOKING_WAIT.DATE
+      || wait === BOOKING_WAIT.TIME
+      || wait === BOOKING_WAIT.DATE_TIME
+      || step === CONVERSATION_STEPS.WAITING_FOR_SERVICE
+      || step === CONVERSATION_STEPS.WAITING_FOR_DATE
+      || step === CONVERSATION_STEPS.WAITING_FOR_TIME
+      || step === CONVERSATION_STEPS.WAITING_FOR_DATE_TIME
+      || step === CONVERSATION_STEPS.SELECTING_SLOT
+    )
   ) {
     const pivot = triageUserIntent(textBody, { businessType: business.business_type, services });
     if (pivot.intent === 'contact') {

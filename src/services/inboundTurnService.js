@@ -161,6 +161,9 @@ export async function routeInboundTurn({
 
   // Universal hard reset — clears stuck mid-flow state during tests or for clients.
   if (isRestartSessionCommand(textBody) || isRestartSessionCommand(typedText)) {
+    const priorLang = hasExplicitSessionLanguage(convState?.context_data)
+      ? readSessionLanguage(convState?.context_data)
+      : 'ro';
     clearRememberedMenuOptions(business.id, recipientPhone);
     const restarted = await resetExpiredSessionForRestart({
       business,
@@ -168,31 +171,36 @@ export async function routeInboundTurn({
       clientId,
       requestId,
     });
-    // New thread → mandatory AI + GDPR disclosure on the first reply (URL as button = no OG card).
+    await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: 'IDLE',
+      context: {
+        session_language: priorLang,
+        ai_disclosed: true,
+      },
+      mergeContext: true,
+      requestId,
+    });
     await sendMessageWithUrlButton({
       business,
       recipientPhone,
       requestId,
-      text: buildAiTransparencyWelcome(business, 'en'),
-      buttonTitle: privacyPolicyButtonTitle('en'),
+      text: buildAiTransparencyWelcome(business, priorLang),
+      buttonTitle: privacyPolicyButtonTitle(priorLang),
       buttonUrl: resolvePrivacyPolicyUrl(business),
     });
     await sendFreshEntryMenu({
       business,
       recipientPhone,
       requestId,
-      lang: 'en',
-      bodyText: entryMenuBodyText('en'),
-    });
-    await markAiDisclosed({
-      businessId: business.id,
-      rawPhone: recipientPhone,
-      step: 'IDLE',
-      requestId,
+      lang: priorLang,
+      bodyText: entryMenuBodyText(priorLang),
     });
     console.log('[session] restart session — hard reset to entry menu', {
       businessId: business.id,
       requestId,
+      sessionLanguage: priorLang,
       message: restarted.message,
     });
     return;
@@ -241,7 +249,7 @@ export async function routeInboundTurn({
 
   // Mirror inbound language each turn; persist only when text clearly signals en/ro.
   const inboundText = String(textBody || typedText || '').trim();
-  const langPatch = sessionLanguagePatchFromText(inboundText);
+  const langPatch = sessionLanguagePatchFromText(inboundText, buttonPayload);
   if (langPatch.session_language) {
     nextConv = await setConversationStep({
       businessId: business.id,

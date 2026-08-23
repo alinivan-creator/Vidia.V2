@@ -313,6 +313,48 @@ export function isRestartSessionCommand(textBody) {
   return n === 'restart session' || n === 'reset session' || n === 'reporneste sesiunea';
 }
 
+/** Menu taps / pivot words must never flip session language or turn copy. */
+const LANGUAGE_NEUTRAL_UI = new Set([
+  'book', 'info', 'contact', 'booking', 'programare', 'servicii', 'services',
+  'orar', 'hours', 'meniu', 'menu', 'english', 'romana', 'en', 'ro',
+  'restart session', 'reset session', 'reporneste sesiunea',
+  'details & prices', 'detalii & preturi', 'contact & location', 'contact & locatie',
+  'privacy policy', 'zile disponibile', 'available days', 'ore libere', 'free times',
+  'programari', 'appointments', 'servicii', 'consultatie', 'consultation',
+]);
+
+/**
+ * True for quick-reply ids, entry-menu labels, and pivot commands that must not
+ * infer or persist RO/EN from a single English/RO menu title.
+ *
+ * @param {string | null | undefined} textBody
+ * @param {string | null | undefined} [buttonPayload]
+ */
+export function isLanguageNeutralUiText(textBody, buttonPayload = null) {
+  const tap = String(buttonPayload ?? '').trim().toLowerCase();
+  if (['book', 'info', 'contact', 'lang_en', 'lang_ro', 'session_lang_en', 'session_lang_ro'].includes(tap)) {
+    return true;
+  }
+  if (isRestartSessionCommand(textBody)) return true;
+
+  const n = normalizeForLanguageDetect(textBody)
+    .replace(/^[\p{Extended_Pictographic}\uFE0F\u200D\s]+/u, '')
+    .trim();
+  if (!n) return false;
+  if (LANGUAGE_NEUTRAL_UI.has(n)) return true;
+
+  const bare = n.replace(/[&]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (LANGUAGE_NEUTRAL_UI.has(bare)) return true;
+
+  // WhatsApp echoes truncated button titles (≤20 chars).
+  for (const phrase of LANGUAGE_NEUTRAL_UI) {
+    if (phrase.length >= 4 && (n === phrase || n.startsWith(`${phrase} `) || phrase.startsWith(n))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Whether the conversation already has an explicit RO/EN choice.
  * @param {Record<string, unknown> | null | undefined} ctx
@@ -385,6 +427,7 @@ const EN_CONTENT_MARKERS = /\b(i want|i would like|i'd like|id like|i can|can i|
 export function detectSessionLanguageFromText(textBody) {
   const raw = String(textBody ?? '').trim();
   if (!raw || raw.length < 2) return null;
+  if (isLanguageNeutralUiText(raw)) return null;
 
   // Explicit language words are handled by parseLanguageChoice — skip here.
   if (parseLanguageChoice({ textBody: raw })) return null;
@@ -440,9 +483,11 @@ export function resolveTurnLanguage(textBody, ctx = null) {
 /**
  * Persist session_language only when text clearly signals a language (never default-lock ro).
  * @param {string | null | undefined} textBody
+ * @param {string | null | undefined} [buttonPayload]
  * @returns {{ session_language?: UiLang }}
  */
-export function sessionLanguagePatchFromText(textBody) {
+export function sessionLanguagePatchFromText(textBody, buttonPayload = null) {
+  if (isLanguageNeutralUiText(textBody, buttonPayload)) return {};
   const detected = detectSessionLanguageFromText(textBody);
   return detected ? { session_language: detected } : {};
 }

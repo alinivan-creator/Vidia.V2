@@ -3430,10 +3430,11 @@ async function dispatchExecute({
   convState,
   activeDraft,
   textBody = '',
+  uiLang = null,
 }) {
   const action = extract.action;
   const intent = convState.context_data?.intent;
-  const lang = resolveClientLanguage(textBody, null, convState?.context_data);
+  const lang = uiLang ?? resolveClientLanguage(textBody, null, convState?.context_data);
 
   // Courtesy must never confirm a hold (stray confirm_booking payload + "Mulțumesc").
   if (action === 'thanks') {
@@ -4167,16 +4168,17 @@ export async function executeTurn(params) {
   if (params.extract?.action === 'resolve_clarification') {
     return executeResolveClarification(params);
   }
-  const lang = resolveClientLanguage(
-    params.textBody ?? '',
-    null,
-    params.convState?.context_data,
-  );
+  const lang = params.uiLang
+    ?? resolveClientLanguage(
+      params.textBody ?? '',
+      null,
+      params.convState?.context_data,
+    );
   return runWithServiceDisplay({
     business: params.business,
     lang,
     requestId: params.requestId ?? null,
-    run: () => executeTurnBody(params),
+    run: () => executeTurnBody({ ...params, uiLang: lang }),
   });
 }
 
