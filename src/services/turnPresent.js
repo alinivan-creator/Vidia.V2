@@ -776,7 +776,30 @@ export async function presentTurn({
   }
 
   // First-contact disclosure: privacy URL as button so WhatsApp does not unfurl the site card.
-  if (d.attach_ai_disclosure === true && result.user_message_template_key !== 'MENU') {
+  // Informational replies (contact, hours, services) must always deliver their body — never
+  // replace them with a disclosure-only bubble when ai_disclosed was not yet persisted.
+  const skipDisclosureOnlyReply = new Set([
+    'CONTACT',
+    'HOURS_LIST',
+    'HOURS_AND_SERVICES',
+    'SERVICES_LIST',
+    'MY_APPOINTMENTS',
+    'CALLBACK_SENT',
+    'LANGUAGE_INFO',
+    'ADMIN_FACT',
+    'CONFIRMATION_BOOKED',
+    'CONFIRMATION_RESCHEDULE',
+    'CONFIRMATION_CANCELLED',
+    'THANKS',
+    'CHAT_FALLBACK',
+    'OFF_TOPIC',
+    'MISSING_INFO',
+  ]);
+  if (
+    d.attach_ai_disclosure === true
+    && result.user_message_template_key !== 'MENU'
+    && !skipDisclosureOnlyReply.has(String(result.user_message_template_key || ''))
+  ) {
     await sendMessageWithUrlButton({
       business,
       recipientPhone,

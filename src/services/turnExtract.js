@@ -10,6 +10,7 @@ import { CONVERSATION_STEPS, readLastMenu } from '../db/conversationStateService
 import { looksLikeBusinessFactQuestion } from '../utils/businessInfoLookup.js';
 import { resolveAcceptedOffer } from './pendingOfferService.js';
 import { resolveNumberedChoice, resolveInteractiveChoice } from './whatsappService.js';
+import { isEntryMenuChoiceId, resolveEntryMenuChoiceId } from '../utils/entryMenu.js';
 import { GRID_PREFIX, isGridNavChoiceId } from '../utils/bookingGrid.js';
 import { looksLikeInteractiveChoiceId, shouldPreferTypedTextOverTap } from '../utils/inboundPayload.js';
 import { parseRomanianDateTimeParts } from '../utils/roDateTime.js';
@@ -1057,6 +1058,21 @@ async function extractTurnIntentImpl({
       if (fromGrid.action !== 'unknown') return fromGrid;
     }
 
+    // Entry-menu quick replies (Programare / Detalii / Contact) stay live after booking,
+    // TTL reset, or when the client taps an older welcome card — never stale_choice.
+    if (isEntryMenuChoiceId(business, tappedId)) {
+      const fromEntry = extractFromChoiceId(tappedId, {}, business);
+      if (fromEntry.action !== 'unknown') return fromEntry;
+    }
+    const entryFromLabel = resolveEntryMenuChoiceId(business, {
+      choiceId: tappedId,
+      textBody: rawTyped || buttonTitle,
+    });
+    if (entryFromLabel) {
+      const fromEntry = extractFromChoiceId(entryFromLabel, {}, business);
+      if (fromEntry.action !== 'unknown') return fromEntry;
+    }
+
     const staleTap = !lastMenu?.options?.some((o) => o.id === tappedId);
     if (staleTap) {
       return emptyExtract({
@@ -1098,6 +1114,14 @@ async function extractTurnIntentImpl({
 
   // Interactive list/button taps always win (handled above).
   // Free-text NLP still runs during date/time wait (e.g. "mâine la 10").
+
+  if (!tappedId) {
+    const entryFromText = resolveEntryMenuChoiceId(business, { textBody: rawTyped });
+    if (entryFromText) {
+      const fromEntry = extractFromChoiceId(entryFromText, {}, business);
+      if (fromEntry.action !== 'unknown') return fromEntry;
+    }
+  }
 
   if (looksLikeExistingAppointmentQuery(textBody)) {
     return emptyExtract({ action: 'list_appointments', confidence: 'high', source: 'keyword' });

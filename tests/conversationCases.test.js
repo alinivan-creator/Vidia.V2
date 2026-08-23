@@ -215,8 +215,8 @@ describe('inbound cases: greeting, menu, booking, off-topic', () => {
       assert.equal(/admin|invent|setat|configur/i.test(text), false);
     }
     assert.match(missing, /Nu dețin această informație/);
-    assert.match(off, /Nu pot discuta asta/);
-    assert.match(chat, /Cu ce te pot ajuta/);
+    assert.match(off, /Vă putem asista cu programări/);
+    assert.match(chat, /selectați o opțiune din meniu|reformulați solicitarea/i);
     assert.doesNotMatch(reply('ASK_DATE'), /în afara programului/);
   });
 

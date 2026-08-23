@@ -126,7 +126,10 @@ function isStructuralBookingTapId(tap) {
     || id.startsWith('clarify_')
     || id.startsWith('resume_')
     || id === 'lang_ro'
-    || id === 'lang_en';
+    || id === 'lang_en'
+    || id === 'book'
+    || id === 'info'
+    || id === 'contact';
 }
 
 /**

@@ -103,6 +103,7 @@ import {
 import { getPendingTtlMinutes } from '../config/conversationConfig.js';
 import { buildBookingCalendarInvite } from '../utils/calendarLink.js';
 import { buildContactLinkButtons } from '../utils/businessMessages.js';
+import { isEntryMenuChoiceId } from '../utils/entryMenu.js';
 import { waServiceMeta } from '../utils/waCopy.js';
 import { getBusinessContactInfo } from './contactService.js';
 import { createCallbackRequest } from '../db/callbackRequestService.js';
@@ -3179,7 +3180,17 @@ async function executeChat(business, textBody = '', lang = 'ro') {
   });
 }
 
-function executeStaleChoice({ business, convState }) {
+function executeStaleChoice({ business, recipientPhone, convState, extract = null }) {
+  const choiceId = typeof extract?.choice_id === 'string' ? extract.choice_id : null;
+  if (choiceId && isEntryMenuChoiceId(business, choiceId)) {
+    const lang = resolveClientLanguage('', null, convState?.context_data);
+    const btn = (business.menu_buttons || []).find((b) => b.id === choiceId);
+    if (btn?.action === 'show_contact') return executeContact(business, lang);
+    if (btn?.action === 'show_info') return executeHoursAndServices(business, lang);
+    if (btn?.action === 'start_booking') {
+      return missingService(business, recipientPhone, null, null, lang);
+    }
+  }
   const lang = resolveClientLanguage('', null, convState?.context_data);
   const uiLang = lang === 'en' ? 'en' : 'ro';
   const last = readLastMenu(convState);
@@ -3489,7 +3500,7 @@ async function dispatchExecute({
   }
 
   if (action === 'stale_choice') {
-    return executeStaleChoice({ business, convState });
+    return executeStaleChoice({ business, recipientPhone, convState, extract });
   }
 
   if (action === 'clarify_needed') {
@@ -3866,7 +3877,7 @@ async function dispatchExecute({
   if (action === 'off_topic') return executeOffTopic(business, lang);
   if (action === 'missing_info') return executeMissingInfo(business, textBody, lang);
   if (action === 'show_services') {
-    return missingService(business, recipientPhone, draft, requestId, lang);
+    return executeServices(business, lang);
   }
   if (action === 'unknown_service') {
     const uiLang = lang === 'en' ? 'en' : 'ro';
