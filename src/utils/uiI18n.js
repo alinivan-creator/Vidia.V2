@@ -481,12 +481,15 @@ export function resolveTurnLanguage(textBody, ctx = null) {
 }
 
 /**
- * Persist session_language only when text clearly signals a language (never default-lock ro).
+ * Persist session_language only when text clearly signals a language.
+ * Once locked, only explicit English/Română (parseLanguageChoice) may change it.
  * @param {string | null | undefined} textBody
  * @param {string | null | undefined} [buttonPayload]
+ * @param {Record<string, unknown> | null | undefined} [ctx]
  * @returns {{ session_language?: UiLang }}
  */
-export function sessionLanguagePatchFromText(textBody, buttonPayload = null) {
+export function sessionLanguagePatchFromText(textBody, buttonPayload = null, ctx = null) {
+  if (hasExplicitSessionLanguage(ctx)) return {};
   if (isLanguageNeutralUiText(textBody, buttonPayload)) return {};
   const detected = detectSessionLanguageFromText(textBody);
   return detected ? { session_language: detected } : {};

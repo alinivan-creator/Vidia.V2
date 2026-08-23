@@ -64,7 +64,11 @@ export async function processTurnPipeline({
 
   let workingConv = convState;
   const inboundText = String(textBody || typedText || '').trim();
-  const langPatch = sessionLanguagePatchFromText(inboundText, buttonPayload);
+  const langPatch = sessionLanguagePatchFromText(
+    inboundText,
+    buttonPayload,
+    workingConv?.context_data,
+  );
   if (langPatch.session_language) {
     workingConv = await setConversationStep({
       businessId: business.id,

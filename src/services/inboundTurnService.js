@@ -160,10 +160,9 @@ export async function routeInboundTurn({
   void pendingExpired;
 
   // Universal hard reset — clears stuck mid-flow state during tests or for clients.
+  // Always reopen in Romanian (product default). English only via *English* / lang_en.
   if (isRestartSessionCommand(textBody) || isRestartSessionCommand(typedText)) {
-    const priorLang = hasExplicitSessionLanguage(convState?.context_data)
-      ? readSessionLanguage(convState?.context_data)
-      : 'ro';
+    const priorLang = 'ro';
     clearRememberedMenuOptions(business.id, recipientPhone);
     const restarted = await resetExpiredSessionForRestart({
       business,
@@ -249,7 +248,11 @@ export async function routeInboundTurn({
 
   // Mirror inbound language each turn; persist only when text clearly signals en/ro.
   const inboundText = String(textBody || typedText || '').trim();
-  const langPatch = sessionLanguagePatchFromText(inboundText, buttonPayload);
+  const langPatch = sessionLanguagePatchFromText(
+    inboundText,
+    buttonPayload,
+    nextConv?.context_data,
+  );
   if (langPatch.session_language) {
     nextConv = await setConversationStep({
       businessId: business.id,

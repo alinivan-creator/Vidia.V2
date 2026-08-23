@@ -144,6 +144,7 @@ export function looksLikeFreeTextBody(body) {
   if (!typed) return false;
   if (bodyLooksLikeListRowEcho(typed, null)) return false;
   if (looksLikeGratitude(typed) || looksLikeInFlightRevision(typed)) return true;
+  if (looksLikeMenuPivotIntent(typed)) return true;
   if (typed.length > MAX_TITLE_LENGTH) return true;
   if (/[?]/.test(typed)) return true;
   const n = normalize(typed);
@@ -154,6 +155,17 @@ export function looksLikeFreeTextBody(body) {
   // Four+ tokens is a sentence, not a 24-char list row.
   if (typed.split(/\s+/).filter(Boolean).length >= 4) return true;
   return false;
+}
+
+/**
+ * Short FAQ / menu pivots typed over a stale day_/slot_ payload must win.
+ * @param {string | null | undefined} text
+ */
+export function looksLikeMenuPivotIntent(text) {
+  const n = normalize(text).replace(/^[\p{Extended_Pictographic}\uFE0F\u200D\s]+/u, '').trim();
+  if (!n) return false;
+  return /^(contact|locatie|adresa|telefon|email|orar|program|meniu|menu|servicii|services|detalii|info|hours|help|ajutor|pret|preturi)$/i.test(n)
+    || /^(contact\s*&\s*locatie|contact\s*&\s*location|detalii\s*&\s*preturi|details\s*&\s*prices)$/i.test(n);
 }
 
 /**
@@ -172,6 +184,7 @@ function looksLikeTypedText(typed, title, payload) {
   if (bodyLooksLikeListRowEcho(typed, title)) return false;
   if (isStructuralBookingTapId(payload)) {
     if (looksLikeGratitude(typed) || looksLikeInFlightRevision(typed)) return true;
+    if (looksLikeMenuPivotIntent(typed)) return true;
     if (bodyLooksLikeListRowEcho(typed, title)) return false;
     // Clear typed sentence over a stray day_/slot_/menu_ payload.
     if (looksLikeFreeTextBody(typed)) return true;
@@ -212,8 +225,10 @@ export function shouldPreferTypedTextOverTap({ typed, tappedId, buttonTitle = nu
   // Provider echoed the id itself.
   if (nBody === nTap) return false;
 
-  // Courtesy / mid-flow revise typed over a stray confirm-button payload.
-  if (looksLikeGratitude(body) || looksLikeInFlightRevision(body)) return true;
+  // Courtesy / mid-flow revise / FAQ pivot typed over a stray confirm/day payload.
+  if (looksLikeGratitude(body) || looksLikeInFlightRevision(body) || looksLikeMenuPivotIntent(body)) {
+    return true;
+  }
 
   // Normal Twilio tap: Body matches the visible button/list title.
   if (nTitle && nBody === nTitle) return false;

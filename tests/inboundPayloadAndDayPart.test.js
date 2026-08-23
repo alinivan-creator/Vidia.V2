@@ -85,6 +85,25 @@ describe('inbound payload classification', () => {
     assert.equal(inbound.buttonPayload, null);
   });
 
+  it('keeps typed Contact / orar over a stale day_ payload (mid day-grid)', () => {
+    const contact = classifyInboundMessage({
+      body: 'Contact',
+      buttonPayload: 'day_2026-08-24',
+      buttonText: 'Luni, 24 Aug',
+    });
+    assert.equal(contact.kind, 'text');
+    assert.equal(contact.buttonPayload, null);
+    assert.equal(contact.textBody, 'Contact');
+
+    const hours = classifyInboundMessage({
+      body: 'orar',
+      buttonPayload: 'slot_2026-08-24_10:00',
+      buttonText: '10:00',
+    });
+    assert.equal(hours.kind, 'text');
+    assert.equal(hours.buttonPayload, null);
+  });
+
   it('keeps a typed sentence as text when the payload echoes another button', () => {
     const inbound = classifyInboundMessage({
       body: 'as vrea o programare pentru tuns',

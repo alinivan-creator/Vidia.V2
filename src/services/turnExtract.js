@@ -12,7 +12,7 @@ import { resolveAcceptedOffer } from './pendingOfferService.js';
 import { resolveNumberedChoice, resolveInteractiveChoice } from './whatsappService.js';
 import { isEntryMenuChoiceId, resolveEntryMenuChoiceId } from '../utils/entryMenu.js';
 import { GRID_PREFIX, isGridNavChoiceId } from '../utils/bookingGrid.js';
-import { looksLikeInteractiveChoiceId, shouldPreferTypedTextOverTap } from '../utils/inboundPayload.js';
+import { looksLikeInteractiveChoiceId, shouldPreferTypedTextOverTap, looksLikeMenuPivotIntent } from '../utils/inboundPayload.js';
 import { parseRomanianDateTimeParts } from '../utils/roDateTime.js';
 import { BOOKING_PREFIXES, MOD_PREFIX } from './flowIds.js';
 import {
@@ -1130,6 +1130,17 @@ async function extractTurnIntentImpl({
   }
 
   // Genuine interactive taps only — free text never enters stale_choice.
+  if (tappedId) {
+    // Typed FAQ pivots (Contact / orar) over a stale day_/slot_ payload must win.
+    const pivotOverStaleGrid = looksLikeMenuPivotIntent(rawTyped)
+      && (tappedId.startsWith('slot_')
+        || tappedId.startsWith(GRID_PREFIX.DAY)
+        || isGridNavChoiceId(tappedId));
+    if (pivotOverStaleGrid) {
+      tappedId = null;
+      textBody = rawTyped;
+    }
+  }
   if (tappedId) {
     // Pager controls are always live during a grid flow — never "stale history".
     if (isGridNavChoiceId(tappedId)) {

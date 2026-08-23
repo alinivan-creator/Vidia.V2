@@ -145,6 +145,11 @@ describe('minimal bilingual UI layer', () => {
       detectSessionLanguageFromText('Salut, vreau o programare pentru consultatie'),
       'ro',
     );
+    assert.equal(
+      sessionLanguagePatchFromText('I want a booking tomorrow', null, { session_language: 'ro' })
+        .session_language,
+      undefined,
+    );
   });
 
   it('MISSING_SERVICE renders English when ui_language is en (machine action path)', () => {
