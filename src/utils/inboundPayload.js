@@ -165,7 +165,7 @@ export function looksLikeMenuPivotIntent(text) {
   const n = normalize(text).replace(/^[\p{Extended_Pictographic}\uFE0F\u200D\s]+/u, '').trim();
   if (!n) return false;
   return /^(contact|locatie|adresa|telefon|email|orar|program|meniu|menu|servicii|services|detalii|info|hours|help|ajutor|pret|preturi)$/i.test(n)
-    || /^(contact\s*&\s*locatie|contact\s*&\s*location|detalii\s*&\s*preturi|details\s*&\s*prices)$/i.test(n);
+    || /^(contact\s*&\s*loca(tie)?|contact\s*&\s*location|detalii\s*&\s*preturi|details\s*&\s*prices)$/i.test(n);
 }
 
 /**

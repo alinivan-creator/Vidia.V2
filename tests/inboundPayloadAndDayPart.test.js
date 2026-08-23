@@ -95,6 +95,15 @@ describe('inbound payload classification', () => {
     assert.equal(contact.buttonPayload, null);
     assert.equal(contact.textBody, 'Contact');
 
+    const truncated = classifyInboundMessage({
+      body: '📞 Contact & Loca',
+      buttonPayload: 'day_2026-08-24',
+      buttonText: 'Luni, 24 Aug',
+    });
+    assert.equal(truncated.kind, 'text');
+    assert.equal(truncated.buttonPayload, null);
+    assert.equal(truncated.textBody, '📞 Contact & Loca');
+
     const hours = classifyInboundMessage({
       body: 'orar',
       buttonPayload: 'slot_2026-08-24_10:00',

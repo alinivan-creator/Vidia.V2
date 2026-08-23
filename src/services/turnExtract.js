@@ -1015,6 +1015,22 @@ async function extractTurnIntentImpl({
     textBody = rawTyped;
   }
 
+  // Entry-menu label/id (Contact / Detalii / Programare) — resolve before grid stale walls or NLU.
+  if (
+    looksLikeMenuPivotIntent(rawTyped)
+    || looksLikeMenuPivotIntent(textBody)
+    || (tappedId && isEntryMenuChoiceId(business, tappedId))
+  ) {
+    const entryResolved = resolveEntryMenuChoiceId(business, {
+      choiceId: tappedId,
+      textBody: rawTyped || buttonTitle,
+    });
+    if (entryResolved) {
+      const fromEntry = extractFromChoiceId(entryResolved, {}, business);
+      if (fromEntry.action !== 'unknown') return fromEntry;
+    }
+  }
+
   // Empty inbound (image-only, sticker, accidental send) — menu, not a crash loop.
   if (!String(textBody ?? '').trim() && !tappedId) {
     return emptyExtract({ action: 'menu', confidence: 'low', source: 'keyword' });
@@ -1424,6 +1440,21 @@ async function extractTurnIntentImpl({
   const triage = triageUserIntent(textBody, { businessType: business.business_type, services });
   if (triage.intent === 'sms_opt_in' || triage.intent === 'sms_opt_out') {
     return emptyExtract({ action: triage.intent, confidence: 'high', source: 'keyword' });
+  }
+
+  // Contact / FAQ / menu never wait on NLU — keyword triage is authoritative here.
+  if (triage.intent === 'contact') {
+    return emptyExtract({ action: 'contact', confidence: 'high', source: 'keyword' });
+  }
+  if (triage.intent === 'menu') {
+    return emptyExtract({ action: 'menu', confidence: 'high', source: 'keyword' });
+  }
+  if (triage.intent === 'faq') {
+    return emptyExtract({
+      action: faqActionFromText(textBody),
+      confidence: 'high',
+      source: 'keyword',
+    });
   }
 
   const inModify = step === CONVERSATION_STEPS.RESCHEDULING

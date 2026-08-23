@@ -600,7 +600,7 @@ export async function presentTurn({
       ].filter(Boolean);
     const [first, ...rest] = buttons;
     if (first?.url) {
-      await sendMessageWithUrlButton({
+      const sent = await sendMessageWithUrlButton({
         business,
         recipientPhone,
         requestId,
@@ -610,7 +610,12 @@ export async function presentTurn({
         extraButtons: rest,
         contentLanguage: lang,
       });
-      return;
+      if (sent?.ok) return;
+      console.warn('[turn-present] CTA send failed — falling back to plain text', {
+        businessId: business?.id ?? null,
+        requestId,
+        template: result?.user_message_template_key ?? null,
+      });
     }
   }
 

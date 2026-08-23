@@ -68,4 +68,28 @@ describe('entry menu resolution', () => {
     assert.equal(extract.action, 'contact');
     assert.notEqual(extract.action, 'stale_choice');
   });
+
+  it('typed contact at IDLE bypasses NLU and never becomes chat', async () => {
+    const convState = {
+      current_step: 'IDLE',
+      context_data: {
+        ai_disclosed: true,
+        session_language: 'ro',
+      },
+    };
+
+    const extract = await extractTurnIntent({
+      business: BUSINESS,
+      textBody: 'contact',
+      buttonPayload: null,
+      buttonTitle: null,
+      typedText: 'contact',
+      convState,
+      activeDraft: null,
+      requestId: 'req-idle-contact',
+    });
+
+    assert.equal(extract.action, 'contact');
+    assert.notEqual(extract.action, 'chat');
+  });
 });
