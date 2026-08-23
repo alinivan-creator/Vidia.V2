@@ -10,6 +10,7 @@ import { setClientSmsOptIn } from './smsMarketingService.js';
 import {
   sendTextMessage,
   sendInteractiveButtons,
+  sendMessageWithUrlButton,
   clearRememberedMenuOptions,
   simulateHumanDelay,
 } from './whatsappService.js';
@@ -28,6 +29,8 @@ import {
 import {
   buildMandatoryAiDisclosure,
   buildAiTransparencyWelcome,
+  resolvePrivacyPolicyUrl,
+  privacyPolicyButtonTitle,
 } from '../utils/businessMessages.js';
 import { resetExpiredSessionForRestart } from './pendingExpiryCron.js';
 
@@ -162,12 +165,14 @@ export async function routeInboundTurn({
       clientId,
       requestId,
     });
-    // New thread → mandatory AI + GDPR disclosure on the first reply.
-    await sendTextMessage({
+    // New thread → mandatory AI + GDPR disclosure on the first reply (URL as button = no OG card).
+    await sendMessageWithUrlButton({
       business,
       recipientPhone,
       requestId,
       text: buildAiTransparencyWelcome(business, 'en'),
+      buttonTitle: privacyPolicyButtonTitle('en'),
+      buttonUrl: resolvePrivacyPolicyUrl(business),
     });
     await sendFreshEntryMenu({
       business,
@@ -210,11 +215,13 @@ export async function routeInboundTurn({
       requestId,
     }) || nextConv;
 
-    await sendTextMessage({
+    await sendMessageWithUrlButton({
       business,
       recipientPhone,
       requestId,
       text: buildMandatoryAiDisclosure(business, langPick),
+      buttonTitle: privacyPolicyButtonTitle(langPick),
+      buttonUrl: resolvePrivacyPolicyUrl(business),
     });
     // Always refresh the entry menu in the chosen language when idle.
     if (step === 'IDLE' || step === 'idle') {

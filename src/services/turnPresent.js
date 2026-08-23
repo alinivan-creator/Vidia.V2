@@ -3,7 +3,7 @@
  * Must not decide availability, confirm bookings, or invent hours.
  */
 
-import { buildAiTransparencyWelcome, buildBookingConfirmationMessage, buildMapsInviteLine, MAPS_ANCHOR_LABEL, mapsAnchorLabel, withMandatoryAiDisclosure } from '../utils/businessMessages.js';
+import { buildAiTransparencyWelcome, buildBookingConfirmationMessage, buildMapsInviteLine, MAPS_ANCHOR_LABEL, mapsAnchorLabel, withMandatoryAiDisclosure, resolvePrivacyPolicyUrl, privacyPolicyButtonTitle } from '../utils/businessMessages.js';
 import { WA_DIVIDER, waField, waFooter, waJoin, waServiceMeta, waTitle } from '../utils/waCopy.js';
 import { timeWindowBounds } from '../utils/timeWindow.js';
 import { formatContactMessage } from './contactService.js';
@@ -658,7 +658,15 @@ export async function presentTurn({
 
   if (result.menu?.options?.length && interactiveKeys.has(String(result.user_message_template_key || ''))) {
     if (result.user_message_template_key === 'MENU') {
-      await sendTextMessage({ business, recipientPhone, requestId, text });
+      // Privacy URL as CTA button — keeps OG site preview off the welcome bubble.
+      await sendMessageWithUrlButton({
+        business,
+        recipientPhone,
+        requestId,
+        text,
+        buttonTitle: privacyPolicyButtonTitle(lang),
+        buttonUrl: resolvePrivacyPolicyUrl(business),
+      });
       await simulateHumanDelay({ business, recipientPhone, requestId, delayMs: 800 });
       const menuButtons = localizeMenuOptions(
         withEnglishSwitchOption(result.menu.options, lang),
@@ -738,6 +746,19 @@ export async function presentTurn({
       footerText: business.name,
       menuKind: kind || 'generic',
       rememberOptions: mergeMenuOptions(btnOptions, localizeMenuOptions(result.menu.catalog || [], lang)),
+    });
+    return;
+  }
+
+  // First-contact disclosure: privacy URL as button so WhatsApp does not unfurl the site card.
+  if (d.attach_ai_disclosure === true && result.user_message_template_key !== 'MENU') {
+    await sendMessageWithUrlButton({
+      business,
+      recipientPhone,
+      requestId,
+      text,
+      buttonTitle: privacyPolicyButtonTitle(lang),
+      buttonUrl: resolvePrivacyPolicyUrl(business),
     });
     return;
   }

@@ -85,7 +85,6 @@ export const DEFAULT_PRIVACY_POLICY_URL = 'https://www.getvidia.ro/confidentiali
 
 /**
  * Resolve privacy / terms URL for outbound legal copy.
- * Always returns an https URL so WhatsApp can render a blue underlined link.
  * @param {Business} business
  * @returns {string}
  */
@@ -96,25 +95,34 @@ export function resolvePrivacyPolicyUrl(business) {
 }
 
 /**
+ * WhatsApp URL-button label for the privacy policy (keeps the URL off the body
+ * so WhatsApp does not unfurl the site OG card / logo preview).
+ * @param {'ro' | 'en'} [lang]
+ */
+export function privacyPolicyButtonTitle(lang = 'ro') {
+  return normalizeUiLang(lang) === 'en' ? 'Privacy policy' : 'Confidențialitate';
+}
+
+/**
  * Compact mandatory AI + short GDPR note for the first bot reply on a new thread.
+ * Intentionally has NO raw URL in the body — callers attach a URL button instead.
  * @param {Business} business
  * @param {'ro' | 'en'} [lang]
  */
 export function buildMandatoryAiDisclosure(business, lang = 'ro') {
   const uiLang = normalizeUiLang(lang);
   const name = business?.name || (uiLang === 'en' ? 'this business' : 'această locație');
-  const legalLink = resolvePrivacyPolicyUrl(business);
 
   if (uiLang === 'en') {
     return waJoin(
       `You are speaking with the *virtual AI assistant* of *${name}*.`,
-      `We process your data in line with our [privacy policy](${legalLink}). By continuing, you agree to this.`,
+      'We process your data in line with our *privacy policy*. By continuing, you agree to this.',
     );
   }
 
   return waJoin(
     `Vorbești cu *asistentul virtual AI* al *${name}*.`,
-    `Prelucrăm datele tale în conformitate cu [politica de confidențialitate](${legalLink}). Prin continuarea conversației, ești de acord cu acest lucru.`,
+    'Prelucrăm datele tale în conformitate cu *politica de confidențialitate*. Prin continuarea conversației, ești de acord cu acest lucru.',
   );
 }
 
@@ -142,11 +150,11 @@ export function withMandatoryAiDisclosure(body, business, lang = 'ro') {
  */
 export function buildAiTransparencyWelcome(business, lang = 'ro') {
   const uiLang = normalizeUiLang(lang);
-  const base =
-    (business.welcome_message && business.welcome_message.trim())
-      || (uiLang === 'en'
-        ? `Welcome to *${business.name}*.`
-        : `Bun venit la *${business.name}*.`);
+  // EN sessions must not reuse a Romanian Admin welcome_message.
+  const base = uiLang === 'en'
+    ? `Welcome to *${business.name}*.`
+    : ((business.welcome_message && business.welcome_message.trim())
+      || `Bun venit la *${business.name}*.`);
 
   const disclosure = buildMandatoryAiDisclosure(business, uiLang);
   const footer = uiLang === 'en'
