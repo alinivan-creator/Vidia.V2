@@ -320,10 +320,15 @@ export function interpretNumericFreeText({
   return { kind: 'none' };
 }
 
-export function clarificationPrompt(value) {
+export function clarificationPrompt(value, lang = 'ro') {
   const n = Number(value);
+  const en = lang === 'en';
   if (!Number.isInteger(n) || n < 1) {
-    return 'Nu am înțeles exact. Te rog alege din meniu sau reformulează (ex: *vreau vineri la 11*).';
+    return en
+      ? "I didn't catch that. Please pick from the menu or rephrase (e.g. *Friday at 11*)."
+      : 'Nu am înțeles exact. Te rog alege din meniu sau reformulează (ex: *vreau vineri la 11*).';
   }
-  return `❓ *${n}* e data sau ora *${n}:00*?`;
+  return en
+    ? `❓ Is *${n}* the date or the time *${n}:00*?`
+    : `❓ *${n}* e data sau ora *${n}:00*?`;
 }

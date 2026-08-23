@@ -64,15 +64,18 @@ export function getConfiguredBusinessHours(business) {
 /**
  * Human-readable schedule for WhatsApp / AI context.
  * @param {Record<string, DayHours | null>} hours
+ * @param {'ro' | 'en'} [lang]
  * @returns {string}
  */
-export function formatBusinessHoursText(hours) {
+export function formatBusinessHoursText(hours, lang = 'ro') {
+  const labels = lang === 'en' ? WEEKDAY_LABELS_EN : WEEKDAY_LABELS_RO;
+  const closed = lang === 'en' ? 'closed' : 'închis';
   const lines = [];
   for (const day of ['1', '2', '3', '4', '5', '6', '0']) {
-    const label = WEEKDAY_LABELS_RO[/** @type {keyof typeof WEEKDAY_LABELS_RO} */ (day)];
+    const label = labels[/** @type {keyof typeof WEEKDAY_LABELS_RO} */ (day)];
     const h = hours[day];
     if (!h || !h.open || !h.close) {
-      lines.push(`- ${label}: închis`);
+      lines.push(`- ${label}: ${closed}`);
     } else {
       lines.push(`- ${label}: ${h.open} – ${h.close}`);
     }

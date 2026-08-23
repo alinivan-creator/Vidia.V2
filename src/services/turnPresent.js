@@ -74,7 +74,7 @@ export function renderHandlerResult(business, result) {
   const d = result.data || {};
   const key = result.user_message_template_key;
   // Optional EN overlay only — default path stays the stable Romanian templates.
-  const lang = normalizeUiLang(d.ui_language);
+  const lang = normalizeUiLang(d.ui_language ?? d.client_language);
   const en = lang === 'en';
 
   // Grid window bodies are authoritative in RO — for EN, prefer bilingual templates /
@@ -350,6 +350,9 @@ export function renderHandlerResult(business, result) {
     }
     case 'CONTACT':
       return formatContactMessage(business, lang);
+    case 'LANGUAGE_INFO':
+      return (typeof d.client_message === 'string' && d.client_message.trim())
+        || t(lang === 'en' ? 'languageInfoEn' : 'languageInfoRo', lang);
     case 'MENU':
       return buildAiTransparencyWelcome(business, lang);
     case 'CALLBACK_SENT':
@@ -419,9 +422,7 @@ export function renderHandlerResult(business, result) {
     }
     case 'STALE_CHOICE':
       return (typeof d.client_message === 'string' && d.client_message.trim())
-        || (en
-          ? 'That option is no longer on the current list. Please choose from the latest message (or type *booking*).'
-          : 'Opțiunea aia nu mai e pe lista curentă. Te rog alege din mesajul cel mai recent (sau scrie *programare*).');
+        || t('staleChoiceBody', lang);
     case 'ADMIN_FACT':
       return String(d.fact || unknownInfoClientMessage(lang));
     case 'MISSING_INFO':
@@ -548,6 +549,7 @@ export async function presentTurn({
     || result.user_message_template_key === 'CONFIRMATION_BOOKED'
     || result.user_message_template_key === 'CHAT_FALLBACK'
     || result.user_message_template_key === 'OFF_TOPIC'
+    || result.user_message_template_key === 'LANGUAGE_INFO'
     || result.user_message_template_key === 'MENU';
   const polished = skipPolish ? null : await polishWithAi(business, result, rendered);
   let text = polished || rendered;
@@ -558,7 +560,7 @@ export async function presentTurn({
     text = ensureMapsInviteOnConfirmation(business, text, normalizeUiLang(result.data?.ui_language));
   }
   const d = result.data || {};
-  const lang = normalizeUiLang(d.ui_language);
+  const lang = normalizeUiLang(d.ui_language ?? d.client_language);
   const en = lang === 'en';
 
   // Legal: first reply on a new conversation thread must disclose AI + short GDPR.
@@ -580,6 +582,7 @@ export async function presentTurn({
       text,
       buttonTitle: en ? t('addCalendar', 'en') : t('addCalendar', 'ro'),
       buttonUrl: result.calendar_cta.url,
+      contentLanguage: lang,
     });
     return;
   }
@@ -588,7 +591,7 @@ export async function presentTurn({
     const buttons = Array.isArray(d.link_ctas) && d.link_ctas.length
       ? d.link_ctas
       : [
-        d.maps_cta?.url ? { title: d.maps_cta.title || (en ? t('seeLocation', 'en') : 'Vezi locația'), url: d.maps_cta.url } : null,
+        d.maps_cta?.url ? { title: d.maps_cta.title || t('seeLocation', lang), url: d.maps_cta.url } : null,
         d.website_cta?.url ? { title: d.website_cta.title || 'Website', url: d.website_cta.url } : null,
       ].filter(Boolean);
     const [first, ...rest] = buttons;
@@ -601,6 +604,7 @@ export async function presentTurn({
         buttonTitle: String(first.title || 'Link').slice(0, 20),
         buttonUrl: first.url,
         extraButtons: rest,
+        contentLanguage: lang,
       });
       return;
     }
@@ -613,32 +617,34 @@ export async function presentTurn({
       recipientPhone,
       flowId: String(d.flow_id),
       bodyText: text,
-      cta: en ? t('openCalendar', 'en') : 'Deschide calendarul',
+      cta: t('openCalendar', lang),
       requestId,
       flowToken: typeof d.flow_token === 'string' ? d.flow_token : null,
+      contentLanguage: lang,
     });
     if (sent.ok) return;
 
     const { listOpenDayWindows, buildListPickerPage, formatDayGridMessage } = await import('../utils/bookingGrid.js');
-    const days = listOpenDayWindows(business);
+    const days = listOpenDayWindows(business, { lang });
     const listPage = buildListPickerPage(days, 0);
     if (listPage.items.length) {
       await sendInteractiveList({
         business,
         recipientPhone,
         requestId,
-        bodyText: formatDayGridMessage(days, business.timezone, d.service_name ? String(d.service_name) : null),
-        buttonText: 'Zile disponibile',
+        bodyText: formatDayGridMessage(days, business.timezone, d.service_name ? String(d.service_name) : null, lang),
+        buttonText: t('listDays', lang),
         sections: [{
-          title: 'Zile',
+          title: t('sectionDays', lang),
           rows: listPage.items.map((i) => ({
             id: i.id,
             title: i.title,
-            description: i.description || 'Disponibil',
+            description: i.description || t('available', lang),
           })),
         }],
         footerText: business.name,
         menuKind: 'day_grid',
+        contentLanguage: lang,
         rememberOptions: mergeMenuOptions(
           listPage.items.map((i) => ({ id: i.id, title: i.title, description: i.description })),
           days.map((day) => ({ id: day.id, title: day.title, description: day.description })),
@@ -674,6 +680,7 @@ export async function presentTurn({
           text,
           buttonTitle: privacyPolicyButtonTitle(lang),
           buttonUrl: resolvePrivacyPolicyUrl(business),
+          contentLanguage: lang,
         });
         await simulateHumanDelay({ business, recipientPhone, requestId, delayMs: 800 });
       } else {
@@ -692,6 +699,7 @@ export async function presentTurn({
         footerText: business.name,
         menuKind: result.menu.kind || 'entry',
         rememberOptions: mergeMenuOptions(menuButtons, localizeMenuOptions(result.menu.catalog || [], lang)),
+        contentLanguage: lang,
       });
       return;
     }
@@ -741,6 +749,7 @@ export async function presentTurn({
         }],
         footerText: business.name,
         menuKind: kind || 'list',
+        contentLanguage: lang,
         // Must include page nav ids (grid_next / grid_prev) + full catalog for this picker.
         rememberOptions: mergeMenuOptions(listOptions, localizeMenuOptions(result.menu.catalog || [], lang)),
       });
@@ -757,6 +766,7 @@ export async function presentTurn({
       footerText: business.name,
       menuKind: kind || 'generic',
       rememberOptions: mergeMenuOptions(btnOptions, localizeMenuOptions(result.menu.catalog || [], lang)),
+      contentLanguage: lang,
     });
     return;
   }
@@ -770,6 +780,7 @@ export async function presentTurn({
       text,
       buttonTitle: privacyPolicyButtonTitle(lang),
       buttonUrl: resolvePrivacyPolicyUrl(business),
+      contentLanguage: lang,
     });
     return;
   }

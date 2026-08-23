@@ -6,6 +6,7 @@ import { recordFailure, recordSuccess, isCircuitOpen, TECHNICAL_FALLBACK_MESSAGE
 import { CALENDAR_ANCHOR_TEXT } from '../utils/calendarLink.js';
 import { createFlowToken } from './whatsappFlowService.js';
 import { isStaleOutboundTurn } from './turnSequencer.js';
+import { twilioContentLocale } from '../utils/uiI18n.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -94,12 +95,15 @@ function createTwilioClient(business) {
  * @param {string | null} [footerText]
  * @returns {string}
  */
-export function formatNumberedMenu(bodyText, options, footerText = null, menuKind = 'generic') {
+export function formatNumberedMenu(bodyText, options, footerText = null, menuKind = 'generic', lang = 'ro') {
   const lines = [bodyText.trim(), ''];
   const kind = String(menuKind || 'generic');
+  const en = lang === 'en';
 
   if (kind === 'day_grid' || kind === 'time_grid') {
-    lines.push('Alege din listă sau butoane — nu scrie text.');
+    lines.push(en
+      ? 'Pick from the list or buttons — do not type free text.'
+      : 'Alege din listă sau butoane — nu scrie text.');
   } else {
     options.forEach((opt, index) => {
       const n = index + 1;
@@ -108,13 +112,13 @@ export function formatNumberedMenu(bodyText, options, footerText = null, menuKin
     });
 
     if (kind === 'confirm') {
-      lines.push('', 'Atinge *Confirmă* sau *Anulează*.');
+      lines.push('', en ? 'Tap *Confirm* or *Cancel*.' : 'Atinge *Confirmă* sau *Anulează*.');
     } else if (kind === 'clarify') {
-      lines.push('', 'Atinge *1* sau *2* (buton).');
+      lines.push('', en ? 'Tap *1* or *2* (button).' : 'Atinge *1* sau *2* (buton).');
     } else if (kind === 'resume') {
-      lines.push('', 'Atinge *Da, reia* sau *Alte ore*.');
+      lines.push('', en ? 'Tap *Yes, resume* or *Other times*.' : 'Atinge *Da, reia* sau *Alte ore*.');
     } else {
-      lines.push('', 'Atinge o opțiune de mai jos.');
+      lines.push('', en ? 'Tap an option below.' : 'Atinge o opțiune de mai jos.');
     }
   }
 
@@ -555,6 +559,7 @@ export async function sendMessageWithUrlButton({
   requestId = null,
   /** Extra URL buttons (Twilio CTA allows max 2 total). */
   extraButtons = [],
+  contentLanguage = 'ro',
 }) {
   if (isStaleOutboundTurn(business?.id, recipientPhone, requestId)) {
     console.log('[turn-order] Drop CTA message from a superseded turn', {
@@ -616,7 +621,7 @@ export async function sendMessageWithUrlButton({
   try {
     const content = await client.content.v1.contents.create({
       friendlyName: `vidia_cal_${Date.now().toString(36)}`,
-      language: 'ro',
+      language: twilioContentLocale(contentLanguage),
       types: {
         'twilio/call-to-action': {
           body: bodyText,
@@ -787,6 +792,7 @@ export async function sendInteractiveButtons({
   menuKind = 'generic',
   /** Full option catalog to remember (may exceed the 3 visible buttons). */
   rememberOptions = null,
+  contentLanguage = 'ro',
 }) {
   // Guard before remembering: a stale menu must never overwrite the fresh one.
   if (isStaleOutboundTurn(business?.id, recipientPhone, requestId)) {
@@ -850,7 +856,7 @@ export async function sendInteractiveButtons({
   try {
     const content = await client.content.v1.contents.create({
       friendlyName: `vidia_qr_${Date.now().toString(36)}`,
-      language: 'ro',
+      language: twilioContentLocale(contentLanguage),
       types: {
         'twilio/quick-reply': {
           body,
@@ -892,7 +898,7 @@ export async function sendInteractiveButtons({
       details: { provider: 'twilio', menuKind },
     });
 
-    const fallback = formatNumberedMenu(body, visible, footerText, menuKind);
+    const fallback = formatNumberedMenu(body, visible, footerText, menuKind, contentLanguage);
     return sendTwilioMessage({ business, recipientPhone, body: fallback, requestId });
   }
 }
@@ -925,6 +931,7 @@ export async function sendInteractiveList({
   requestId = null,
   menuKind = 'list',
   rememberOptions = null,
+  contentLanguage = 'ro',
 }) {
   if (isStaleOutboundTurn(business?.id, recipientPhone, requestId)) {
     console.log('[turn-order] Drop list picker from a superseded turn', {
@@ -995,7 +1002,7 @@ export async function sendInteractiveList({
   try {
     const content = await client.content.v1.contents.create({
       friendlyName: `vidia_list_${Date.now().toString(36)}`,
-      language: 'ro',
+      language: twilioContentLocale(contentLanguage),
       types: {
         'twilio/list-picker': {
           body,
@@ -1050,6 +1057,7 @@ export async function sendInteractiveList({
       requestId,
       menuKind,
       rememberOptions: remembered,
+      contentLanguage,
     });
   }
 }
@@ -1075,6 +1083,7 @@ export async function sendBookingFlow({
   cta = 'Deschide calendarul',
   requestId = null,
   flowToken = null,
+  contentLanguage = 'ro',
 }) {
   if (isStaleOutboundTurn(business?.id, recipientPhone, requestId)) {
     console.log('[turn-order] Drop booking flow from a superseded turn', {
@@ -1104,12 +1113,13 @@ export async function sendBookingFlow({
   const token = flowToken || createFlowToken(business.id);
 
   try {
+    const en = twilioContentLocale(contentLanguage) === 'en';
     const content = await client.content.v1.contents.create({
       friendlyName: `vidia_flow_${Date.now().toString(36)}`,
-      language: 'ro',
+      language: twilioContentLocale(contentLanguage),
       types: {
         'whatsapp/flows': {
-          body: String(bodyText || 'Alege data și ora din calendar.').slice(0, 1024),
+          body: String(bodyText || (en ? 'Pick a date and time from the calendar.' : 'Alege data și ora din calendar.')).slice(0, 1024),
           button_text: String(cta).slice(0, 20),
           flow_id: String(flowId),
           flow_token: token,

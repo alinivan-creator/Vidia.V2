@@ -49,7 +49,7 @@ import {
   looksLikePluralAppointments,
   triageUserIntent,
 } from './intentTriageService.js';
-import { isInFlightBookingContext } from './inFlightBookingSession.js';
+import { isLanguageCapabilityQuestion } from '../utils/uiI18n.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -164,7 +164,7 @@ function annotateModifyExtract(extract, textBody) {
 }
 
 /** Ground catalog + reject invented services as a dedicated action. */
-function finalizeGroundedExtract(extract) {
+export function finalizeGroundedExtract(extract) {
   if (extract?.unknown_service_name && !extract.service_id) {
     return emptyExtract({
       ...extract,
@@ -934,12 +934,20 @@ async function extractTurnIntentImpl({
     textBody = rawTyped;
   }
 
+  // Empty inbound (image-only, sticker, accidental send) — menu, not a crash loop.
+  if (!String(textBody ?? '').trim() && !tappedId) {
+    return emptyExtract({ action: 'menu', confidence: 'low', source: 'keyword' });
+  }
+
   // Modification / booking intents on free text must beat every menu wall.
   // "vreau sa reprogramez o programare" must never become stale_choice or reprompt_grid.
   // Mid-flow "modific" revises the draft being built — not a saved appointment.
   // Gratitude wins even if a stray confirm payload somehow survived — never confirm on "Mulțumesc".
   if (looksLikeGratitude(rawTyped) || (!tappedId && looksLikeGratitude(textBody))) {
     return emptyExtract({ action: 'thanks', confidence: 'high', source: 'keyword' });
+  }
+  if (!tappedId && isLanguageCapabilityQuestion(rawTyped || textBody)) {
+    return emptyExtract({ action: 'language_info', confidence: 'high', source: 'keyword' });
   }
   const earlyModify = !tappedId ? detectModificationIntent(textBody) : null;
   if (earlyModify === 'cancel') {

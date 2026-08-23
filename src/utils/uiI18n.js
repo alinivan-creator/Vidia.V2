@@ -142,6 +142,35 @@ const UI = {
   contactHours: { ro: 'Program', en: 'Hours' },
   contactFooter: { ro: 'Suntem aici pentru tine.', en: 'We are here for you.' },
   firstAvailable: { ro: 'Primul disponibil', en: 'First available' },
+  hoursClosed: { ro: 'închis', en: 'closed' },
+  languageInfoEn: {
+    ro: 'Da — putem continua în engleză. Scrie *English* ca să comutăm.',
+    en: 'Yes — this chat is in English. Type *booking*, *hours*, or *contact* anytime.',
+  },
+  languageInfoRo: {
+    ro: 'Da — conversația este în română. Scrie *programare*, *orar* sau *contact* oricând.',
+    en: 'Yes — this chat is in Romanian. Type *Română* if you prefer Romanian explicitly.',
+  },
+  staleChoiceBody: {
+    ro: 'Opțiunea aia nu mai e pe lista curentă. Te rog alege din mesajul cel mai recent (sau scrie *programare*).',
+    en: 'That option is no longer on the current list. Please choose from the latest message (or type *booking*).',
+  },
+  flowCalendarPrompt: {
+    ro: '🗓️ Deschide calendarul — alege ziua și ora liberă.',
+    en: '🗓️ Open the calendar — pick an open day and time.',
+  },
+  flowCalendarPromptService: {
+    ro: '🗓️ Deschide calendarul pentru *{service}* — alege ziua și ora liberă.',
+    en: '🗓️ Open the calendar for *{service}* — pick an open day and time.',
+  },
+  noFreeTimesForService: {
+    ro: 'Nu am găsit ore libere pentru *{service}*{date}.\n\n',
+    en: 'No free times for *{service}*{date}.\n\n',
+  },
+  emptyInboundHint: {
+    ro: 'Nu am primit un mesaj text. Alege din meniu sau scrie *programare*, *orar* sau *contact*.',
+    en: 'I did not receive any text. Pick from the menu or type *booking*, *hours*, or *contact*.',
+  },
 };
 
 /**
@@ -214,7 +243,34 @@ export function parseLanguageChoice({ textBody, buttonPayload }) {
   if (/^(romana|romana|ro)$/.test(n)) return 'ro';
   if (/^(switch to english|switch english|in english)$/.test(n)) return 'en';
   if (/^(switch to romanian|in romanian|in romana)$/.test(n)) return 'ro';
+  if (/^(speak english|do you speak english|vorbesti engleza|vorbesti engleza)\??$/.test(n)) return 'en';
+  if (/^(speak romanian|do you speak romanian|vorbesti romana|vorbesti romana)\??$/.test(n)) return 'ro';
   return null;
+}
+
+/**
+ * Twilio Content API locale for WhatsApp templates (controls system hints like list-picker footers).
+ * @param {UiLang} lang
+ */
+export function twilioContentLocale(lang = 'ro') {
+  return normalizeUiLang(lang) === 'en' ? 'en' : 'ro';
+}
+
+/**
+ * Client asks whether the bot speaks a language — answer in session lang, do not switch mid-flow alone.
+ * @param {string | null | undefined} textBody
+ */
+export function isLanguageCapabilityQuestion(textBody) {
+  const n = String(textBody ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\p{L}\p{N}\s'?]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!n) return false;
+  return /^(do you speak english|speak english|can you speak english|vorbesti engleza|vorbesti engleza)\??$/.test(n)
+    || /^(do you speak romanian|speak romanian|vorbesti romana|vorbesti romana)\??$/.test(n);
 }
 
 /**
@@ -317,6 +373,14 @@ export function detectSessionLanguageFromText(textBody) {
 
   if (hasEn && !hasRo) return 'en';
   if (hasRo && !hasEn) return 'ro';
+
+  // Mixed RO+EN: score content tokens — avoids blocking on "help me with o programare".
+  if (hasEn && hasRo) {
+    const enHits = (analyze.match(new RegExp(EN_CONTENT_MARKERS.source, 'g')) || []).length;
+    const roHits = (analyze.match(new RegExp(RO_CONTENT_MARKERS.source, 'g')) || []).length;
+    if (enHits > roHits) return 'en';
+    if (roHits > enHits) return 'ro';
+  }
 
   // Greeting-only message — infer from which courtesy opener was used.
   if (stripped.length < 2) {

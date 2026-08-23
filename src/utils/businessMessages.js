@@ -196,9 +196,11 @@ export function normalizeHttpUrl(raw) {
  * URLs stay off the message body so WhatsApp does not unfurl a huge preview.
  *
  * @param {Business} business
+ * @param {'ro' | 'en'} [lang]
  * @returns {{ title: string, url: string }[]}
  */
-export function buildContactLinkButtons(business) {
+export function buildContactLinkButtons(business, lang = 'ro') {
+  const uiLang = normalizeUiLang(lang);
   const info = getBusinessContactInfo(business);
   /** @type {{ title: string, url: string }[]} */
   const buttons = [];
@@ -206,7 +208,7 @@ export function buildContactLinkButtons(business) {
   const maps = buildBusinessMapsLink(business);
   const mapsUrl = normalizeHttpUrl(maps?.url);
   if (mapsUrl) {
-    buttons.push({ title: 'Vezi locația', url: mapsUrl });
+    buttons.push({ title: t('seeLocation', uiLang), url: mapsUrl });
   }
 
   const website = normalizeHttpUrl(info.website);

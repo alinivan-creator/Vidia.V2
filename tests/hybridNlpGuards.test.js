@@ -19,6 +19,8 @@ describe('hybrid NLP guards', () => {
     ];
     assert.equal(matchServiceMention('tuns', services)?.id, 's1');
     assert.equal(matchServiceMention('masaj thai exotic', services), null);
+    assert.equal(matchServiceMention('teeth whitening', services), null);
+    assert.equal(matchServiceMention('invented nonsense service xyz', services), null);
   });
 
   it('service list rows include duration and price', () => {

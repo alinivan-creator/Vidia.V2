@@ -81,7 +81,8 @@ import {
   missingBusinessInfoMessage,
 } from '../utils/businessInfoLookup.js';
 import { resolveClientLanguage } from '../utils/clientLanguage.js';
-import { t } from '../utils/uiI18n.js';
+import { t, tf } from '../utils/uiI18n.js';
+import { bm, businessLabel } from '../utils/bookingI18n.js';
 import {
   detectModificationIntent,
   refersToSavedAppointments,
@@ -405,15 +406,16 @@ async function persistPendingExtract({ business, recipientPhone, extract, reques
   });
 }
 
-function serviceMenu(business) {
+function serviceMenu(business, lang = 'ro') {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   return {
     kind: 'service',
     options: getBookingConfig(business).services.slice(0, 10).map((s) => {
       const meta = waServiceMeta(s);
       return {
         id: `${PREFIX.SERVICE}${s.id}`,
-        title: String(s.name || 'Serviciu').slice(0, 24),
-        description: (meta || 'Disponibil').slice(0, 72),
+        title: String(s.name || t('labelService', uiLang)).slice(0, 24),
+        description: (meta || t('available', uiLang)).slice(0, 72),
       };
     }),
   };
@@ -430,7 +432,7 @@ function unknownServiceOfferMenu(business, lang = 'ro') {
       { id: 'offer_callback', title: callback },
     ],
     catalog: [
-      ...serviceMenu(business).options,
+      ...serviceMenu(business, lang).options,
       { id: 'show_services', title: see },
       { id: 'offer_callback', title: callback },
     ],
@@ -899,16 +901,17 @@ async function listBookableDayWindows({
   return checks.filter(Boolean);
 }
 
-async function missingService(business, recipientPhone, draft, requestId) {
+async function missingService(business, recipientPhone, draft, requestId, lang = 'ro') {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   const services = getBookingConfig(business).services;
   if (!services.length) {
     return handlerResult({
       status: 'ERROR',
       user_message_template_key: 'ERROR_GENERIC',
-      data: { client_message: unknownInfoClientMessage() },
+      data: { client_message: unknownInfoClientMessage(lang) },
     });
   }
-  const menu = serviceMenu(business);
+  const menu = serviceMenu(business, lang);
   await setConversationStep({
     businessId: business.id,
     rawPhone: recipientPhone,
@@ -933,8 +936,9 @@ async function missingService(business, recipientPhone, draft, requestId) {
         duration_minutes: s.duration_minutes,
         price_ron: s.price_ron ?? null,
       })),
-      list_button: 'Servicii',
+      list_button: t('listServices', uiLang),
       ui: 'list_picker',
+      ui_language: uiLang,
     },
     menu,
     machine_action: MACHINE_ACTIONS.ACTION_ASK_SERVICE,
@@ -961,8 +965,8 @@ async function askDateGridResult({
   if (flowsEnabled(business) && page === 0 && !clientMessage && !notice && intent !== 'reschedule') {
     const flowId = getConfiguredFlowId(business);
     const body = service?.name
-      ? `🗓️ Deschide calendarul pentru *${service.name}* — alege ziua și ora liberă.`
-      : '🗓️ Deschide calendarul — alege ziua și ora liberă.';
+      ? tf('flowCalendarPromptService', uiLang, { service: service.name })
+      : t('flowCalendarPrompt', uiLang);
     await setConversationStep({
       businessId: business.id,
       rawPhone: recipientPhone,
@@ -987,6 +991,7 @@ async function askDateGridResult({
         ui: 'whatsapp_flow',
         flow_id: flowId,
         flow_token: createFlowToken(business.id),
+        ui_language: uiLang,
       },
       menu: null,
       machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE,
@@ -1011,8 +1016,8 @@ async function askDateGridResult({
         client_message: withNotice(
           notice,
           uiLang === 'en'
-            ? `No open days with free times in the next 14 days. Contact ${business.name || 'the business'} or try again later.`
-            : `Nu am zile cu ore libere în următoarele 14 zile. Contactează ${business.name || 'locația'} sau încearcă mai târziu.`,
+            ? bm('noOpenDays14', 'en', { business: businessLabel('en', business.name) })
+            : bm('noOpenDays14', 'ro', { business: businessLabel('ro', business.name) }),
         ),
       },
       machine_action: MACHINE_ACTIONS.ACTION_ASK_DATE,
@@ -1058,7 +1063,8 @@ async function askDateGridResult({
       client_message: body,
       grid_page: listPage.page,
       ui: 'list_picker',
-      list_button: uiLang === 'en' ? 'Available days' : 'Zile disponibile',
+      list_button: t('listDays', uiLang),
+      ui_language: uiLang,
     },
     menu: {
       kind: 'day_grid',
@@ -1169,22 +1175,30 @@ async function missingSlotsResult({
     requestId,
   });
   if (!listed.slots.length) {
+    const dateSuffix = datePretty ? (uiLang === 'en' ? ` on *${datePretty}*` : ` pe *${datePretty}*`) : '';
     return askDateGridResult({
       business,
       recipientPhone,
       draft,
       service,
       requestId,
+      lang: uiLang,
       conversationStep: extraContext.intent === 'reschedule'
         ? CONVERSATION_STEPS.RESCHEDULING
         : CONVERSATION_STEPS.WAITING_FOR_DATE,
       extraContext: extraContext.intent === 'reschedule' ? extraContext : {},
       notice: bodyNotice,
       clientMessage:
-        `Nu am găsit ore libere pentru *${service?.name || 'serviciu'}*` +
-        (datePretty ? ` pe *${datePretty}*` : '') +
-        '.\n\n' +
-        formatDayGridMessage(listOpenDayWindows(business), business.timezone, service?.name),
+        tf('noFreeTimesForService', uiLang, {
+          service: service?.name || (uiLang === 'en' ? 'service' : 'serviciu'),
+          date: dateSuffix,
+        })
+        + formatDayGridMessage(
+          listOpenDayWindows(business, { lang: uiLang }),
+          business.timezone,
+          service?.name,
+          uiLang,
+        ),
     });
   }
   return handlerResult({
@@ -1200,12 +1214,13 @@ async function missingSlotsResult({
       client_message: body,
       alternatives: listed.slots.map((s) => ({
         id: s.id,
-        label: formatSlotLabel(s.start, business.timezone),
+        label: formatSlotLabel(s.start, business.timezone, uiLang),
         time: formatTime(s.start, business.timezone),
       })),
       grid_page: listPage.page,
       ui: useQuickReply ? 'quick_reply' : 'list_picker',
-      list_button: uiLang === 'en' ? 'Free times' : 'Ore libere',
+      list_button: t('listTimes', uiLang),
+      ui_language: uiLang,
     },
     menu: {
       kind: 'time_grid',
@@ -1237,9 +1252,7 @@ async function afterHold({ business, recipientPhone, draft, service, slotStart, 
       status: 'ERROR',
       user_message_template_key: 'ERROR_GENERIC',
       data: {
-        client_message: uiLang === 'en'
-          ? 'I could not lock that time. Please pick a time again.'
-          : 'Nu am putut bloca intervalul în sistem. Te rog alege din nou ora.',
+        client_message: bm('errHoldLockFailed', uiLang),
       },
     });
   }
@@ -1341,13 +1354,15 @@ async function holdRequestedSlot({
   slotStart,
   employeeId,
   requestId,
+  lang = 'ro',
 }) {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   const duration = catalogDuration(business, service);
   if (!duration) {
     return handlerResult({
       status: 'ERROR',
       user_message_template_key: 'ERROR_DURATION',
-      data: { client_message: durationMissingClientMessage(service?.name) },
+      data: { client_message: durationMissingClientMessage(service?.name, uiLang) },
     });
   }
   const slotEnd = new Date(slotStart.getTime() + duration * 60_000);
@@ -1422,7 +1437,7 @@ async function holdRequestedSlot({
     return handlerResult({
       status: 'ERROR',
       user_message_template_key: 'ERROR_GENERIC',
-      data: { client_message: 'Nu am putut reține intervalul. Încearcă din nou.' },
+      data: { client_message: bm('errSlotRetainFailed', uiLang) },
     });
   }
 
@@ -1435,7 +1450,7 @@ async function holdRequestedSlot({
     return handlerResult({
       status: 'ERROR',
       user_message_template_key: 'ERROR_GENERIC',
-      data: { client_message: 'Nu am putut bloca intervalul. Te rog alege din nou ora.' },
+      data: { client_message: bm('errSlotLockFailed', uiLang) },
     });
   }
 
@@ -1514,6 +1529,7 @@ async function holdRequestedSlot({
 }
 
 async function executeBook({ business, recipientPhone, extract, clientId, requestId, activeDraft, convState }) {
+  const lang = resolveClientLanguage('', null, convState?.context_data);
   // Never spawn a parallel booking while a reschedule is in flight.
   const modifyInFlight = convState?.context_data?.intent === 'reschedule'
     || convState?.current_step === CONVERSATION_STEPS.RESCHEDULING
@@ -1551,7 +1567,7 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
     return handlerResult({
       status: 'ERROR',
       user_message_template_key: 'ERROR_GENERIC',
-      data: { client_message: 'Nu am putut porni programarea. Încearcă din nou.' },
+      data: { client_message: bm('errBookingStartFailed', lang) },
     });
   }
 
@@ -1565,7 +1581,7 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
   }
 
   if (!service) {
-    return missingService(business, recipientPhone, draft, requestId);
+    return missingService(business, recipientPhone, draft, requestId, lang);
   }
 
   if (extract.employee_name && !extract.employee_id) {
@@ -1582,7 +1598,10 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
       next_required_step: 'CHOOSE_EMPLOYEE',
       user_message_template_key: 'MISSING_EMPLOYEE',
       data: {
-        client_message: `Nu am găsit *${extract.employee_name}* în echipă. Poți scrie un nume din echipă: ${staff.map((e) => e.name).join(', ')}.`,
+        client_message: bm('errEmployeeNotFound', lang, {
+          name: extract.employee_name,
+          staff: staff.map((e) => e.name).join(', '),
+        }),
         services: staff.map((e) => ({ id: e.id, name: e.name })),
       },
     });
@@ -1637,6 +1656,7 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
       slotStart,
       employeeId: extract.employee_id === 'any' ? null : (extract.employee_id || draftEmployeeId(working)),
       requestId,
+      lang,
     });
   }
 
@@ -1669,14 +1689,15 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
     const noon = localToUtc(extract.date_text, '12:00', business.timezone);
     const dayInfo = getHoursForDate(business, noon);
     if (!dayInfo.open) {
-      const pretty = formatRomanianDate(extract.date_text, business.timezone);
+      const pretty = formatLocalizedDate(extract.date_text, business.timezone, lang);
       return askDateGridResult({
         business,
         recipientPhone,
         draft: working,
         service,
         requestId,
-        notice: `*${pretty}* suntem *INCHIS*. Alege o zi deschisă din listă:`,
+        lang,
+        notice: bm('closedDayNotice', lang, { date: pretty }),
       });
     }
   }
@@ -1695,7 +1716,9 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
   });
 }
 
-async function executeConfirm({ business, recipientPhone, activeDraft, requestId }) {
+async function executeConfirm({ business, recipientPhone, activeDraft, requestId, convState }) {
+  const lang = resolveClientLanguage('', null, convState?.context_data);
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   let draft = activeDraft || await getActiveDraftBooking(business.id, recipientPhone);
   const expiry = await expirePendingIfNeeded({ business, draft, recipientPhone, requestId });
   if (expiry.expired) {
@@ -1705,8 +1728,9 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
       next_required_step: 'RESUME_OR_BOOK',
       user_message_template_key: 'HOLD_EXPIRED',
       data: {
-        client_message: 'Timpul de rezervare a expirat și slotul a fost eliberat.',
+        client_message: bm('errHoldExpired', uiLang),
         last_intent: expiry.lastIntent || null,
+        ui_language: uiLang,
       },
     });
   }
@@ -1714,7 +1738,7 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
     return handlerResult({
       status: 'ERROR',
       user_message_template_key: 'ERROR_GENERIC',
-      data: { client_message: 'Nu există o programare în așteptarea confirmării.' },
+      data: { client_message: bm('errNoPendingConfirm', uiLang), ui_language: uiLang },
     });
   }
 
@@ -1724,7 +1748,7 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
     return handlerResult({
       status: 'ERROR',
       user_message_template_key: 'ERROR_GENERIC',
-      data: { client_message: 'Datele programării sunt incomplete.' },
+      data: { client_message: bm('errIncompleteBooking', uiLang), ui_language: uiLang },
     });
   }
 
@@ -1733,7 +1757,7 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
     return handlerResult({
       status: 'ERROR',
       user_message_template_key: 'ERROR_DURATION',
-      data: { client_message: durationMissingClientMessage(service.name) },
+      data: { client_message: durationMissingClientMessage(service.name, uiLang), ui_language: uiLang },
     });
   }
 
@@ -1900,8 +1924,8 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
       status: 'ERROR',
       user_message_template_key: 'ERROR_CALENDAR',
       data: {
-        client_message:
-          'Din păcate nu am putut confirma programarea. Te rog încearcă din nou.',
+        client_message: bm('errConfirmCalendar', uiLang),
+        ui_language: uiLang,
       },
     });
   }
@@ -1919,8 +1943,8 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
       status: 'ERROR',
       user_message_template_key: 'ERROR_GENERIC',
       data: {
-        client_message:
-          'Din păcate nu am putut salva programarea în sistem. Te rog încearcă din nou.',
+        client_message: bm('errSaveBooking', uiLang),
+        ui_language: uiLang,
       },
     });
   }
@@ -2010,6 +2034,7 @@ async function executeReviseDraft({
   textBody = '',
   clientId = null,
 }) {
+  const lang = resolveClientLanguage(textBody, null, convState?.context_data);
   const ctx = convState?.context_data || {};
   let draft = activeDraft && ['browsing', 'pending_confirmation'].includes(activeDraft.state)
     ? activeDraft
@@ -2058,7 +2083,7 @@ async function executeReviseDraft({
     const working = reset || draft;
 
     if (!service?.id && !service?.name) {
-      return missingService(business, recipientPhone, working, requestId);
+      return missingService(business, recipientPhone, working, requestId, lang);
     }
 
     if (dateKey) {
@@ -2077,7 +2102,9 @@ async function executeReviseDraft({
           service,
           draft_id: working.id,
         },
-        notice: `Ok, schimbăm ora pentru *${service.name || 'serviciu'}*. Alege un alt interval:`,
+        notice: bm('reviseTimeNotice', lang, {
+          service: service.name || bm('serviceFallback', lang),
+        }),
       });
     }
 
@@ -2094,7 +2121,9 @@ async function executeReviseDraft({
         draft_id: working.id,
       },
       clientMessage:
-        `Ok, modificăm. Păstrăm *${service.name || 'serviciul'}* — alege din nou *ziua* (apoi ora).`,
+        bm('reviseKeepService', lang, {
+          service: service.name || bm('serviceFallback', lang),
+        }),
     });
   }
 
@@ -2112,14 +2141,14 @@ async function executeReviseDraft({
       status: 'ERROR',
       user_message_template_key: 'ERROR_GENERIC',
       data: {
-        client_message:
-          'Nu am putut redeschide programarea în curs. Scrie din nou serviciul dorit ca să o luăm de la capăt.',
+        client_message: bm('errReopenDraft', lang),
+        ui_language: lang,
       },
     });
   }
 
   if (!service?.id && !service?.name) {
-    return missingService(business, recipientPhone, browsing, requestId);
+    return missingService(business, recipientPhone, browsing, requestId, lang);
   }
 
   const withService = await setSelectedService({
@@ -2147,11 +2176,14 @@ async function executeReviseDraft({
       draft_id: withService.id,
     },
     clientMessage:
-      `Ok, modificăm. Păstrăm *${service.name || 'serviciul'}* — alege din nou *ziua* (apoi ora).`,
+      bm('reviseKeepService', lang, {
+        service: service.name || bm('serviceFallback', lang),
+      }),
   });
 }
 
 function executeThanks(business, lang = 'ro') {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   return handlerResult({
     status: 'SUCCESS',
     action_performed: 'THANKS',
@@ -2159,10 +2191,8 @@ function executeThanks(business, lang = 'ro') {
     user_message_template_key: 'THANKS',
     data: {
       business_name: business.name,
-      client_language: lang,
-      client_message: lang === 'en'
-        ? `You're welcome! If you need anything else — a booking, hours, or contact — just write here.`
-        : `Cu plăcere! Dacă mai ai nevoie — o programare, orarul sau contact — scrie-mi oricând.`,
+      ui_language: uiLang,
+      client_message: bm('thanksReply', uiLang),
     },
   });
 }
@@ -2173,7 +2203,9 @@ async function executeCancelAppointment({
   appointment,
   requestId,
   resetState = true,
+  lang = 'ro',
 }) {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   const { calendarId } = await resolveStaff(business, appointment);
   const eventId = await resolveCalendarEventId({
     business,
@@ -2201,8 +2233,8 @@ async function executeCancelAppointment({
       status: 'ERROR',
       user_message_template_key: 'ERROR_GENERIC',
       data: {
-        client_message:
-          'Din păcate nu am putut anula programarea în sistem. Te rog încearcă din nou.',
+        client_message: bm('errCancelOne', uiLang),
+        ui_language: uiLang,
       },
     });
   }
@@ -2231,12 +2263,14 @@ async function executeCancelAppointment({
     next_required_step: null,
     user_message_template_key: 'CONFIRMATION_CANCELLED',
     data: {
-      service_name: appointment.selected_service?.name || 'Programare',
+      service_name: appointment.selected_service?.name || bm('appointmentFallback', uiLang),
+      ui_language: uiLang,
     },
   });
 }
 
-async function executeCancelAllAppointments({ business, recipientPhone, appointments, requestId }) {
+async function executeCancelAllAppointments({ business, recipientPhone, appointments, requestId, lang = 'ro' }) {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   const list = Array.isArray(appointments) ? appointments : [];
   let cancelled = 0;
   let failed = 0;
@@ -2247,6 +2281,7 @@ async function executeCancelAllAppointments({ business, recipientPhone, appointm
       appointment,
       requestId,
       resetState: false,
+      lang: uiLang,
     });
     if (result.status === 'SUCCESS') cancelled += 1;
     else failed += 1;
@@ -2261,7 +2296,8 @@ async function executeCancelAllAppointments({ business, recipientPhone, appointm
       status: 'ERROR',
       user_message_template_key: 'ERROR_CALENDAR',
       data: {
-        client_message: 'Din păcate nu am putut anula programările. Te rog încearcă din nou.',
+        client_message: bm('errCancelAll', uiLang),
+        ui_language: uiLang,
       },
     });
   }
@@ -2271,15 +2307,17 @@ async function executeCancelAllAppointments({ business, recipientPhone, appointm
     next_required_step: null,
     user_message_template_key: 'CONFIRMATION_CANCELLED',
     data: {
-      service_name: cancelled === 1 ? 'Programare' : `${cancelled} programări`,
+      service_name: cancelled === 1 ? bm('appointmentFallback', uiLang) : bm('cancelAllServiceLabel', uiLang, { count: cancelled }),
       client_message: failed
-        ? `Am anulat ${cancelled} programări. ${failed} nu au putut fi anulate.`
-        : `Am anulat toate cele ${cancelled} programări.`,
+        ? bm('cancelAllPartial', uiLang, { cancelled, failed })
+        : bm('cancelAllSuccess', uiLang, { count: cancelled }),
+      ui_language: uiLang,
     },
   });
 }
 
-async function askConfirmCancelAll({ business, recipientPhone, appointments, requestId }) {
+async function askConfirmCancelAll({ business, recipientPhone, appointments, requestId, lang = 'ro' }) {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   await setConversationStep({
     businessId: business.id,
     rawPhone: recipientPhone,
@@ -2291,8 +2329,8 @@ async function askConfirmCancelAll({ business, recipientPhone, appointments, req
       last_menu: {
         kind: 'confirm',
         options: [
-          { id: MOD_PREFIX.CONFIRM_CANCEL, title: 'Anulează' },
-          { id: MOD_PREFIX.ABORT, title: 'Renunță' },
+          { id: MOD_PREFIX.CONFIRM_CANCEL, title: t('cancelBtn', uiLang) },
+          { id: MOD_PREFIX.ABORT, title: uiLang === 'en' ? 'Never mind' : 'Renunță' },
         ],
       },
     },
@@ -2304,15 +2342,16 @@ async function askConfirmCancelAll({ business, recipientPhone, appointments, req
     next_required_step: 'CONFIRM_CANCEL',
     user_message_template_key: 'CONFIRM_CANCEL',
     data: {
-      client_message: `Anulezi toate cele ${appointments.length} programări?`,
-      service_name: `${appointments.length} programări`,
-      slot_label: 'toate intervalele',
+      client_message: bm('confirmCancelAll', uiLang, { count: appointments.length }),
+      service_name: bm('cancelAllServiceLabel', uiLang, { count: appointments.length }),
+      slot_label: bm('cancelAllSlotLabel', uiLang),
+      ui_language: uiLang,
     },
     menu: {
       kind: 'confirm',
       options: [
-        { id: MOD_PREFIX.CONFIRM_CANCEL, title: 'Anulează' },
-        { id: MOD_PREFIX.ABORT, title: 'Renunță' },
+        { id: MOD_PREFIX.CONFIRM_CANCEL, title: t('cancelBtn', uiLang) },
+        { id: MOD_PREFIX.ABORT, title: uiLang === 'en' ? 'Never mind' : 'Renunță' },
       ],
     },
   });
@@ -2326,13 +2365,15 @@ async function applyReschedule({
   convState,
   requestId,
 }) {
+  const lang = resolveClientLanguage('', null, convState?.context_data);
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   const service = /** @type {{ name?: string }} */ (appointment.selected_service ?? {});
   const duration = catalogDuration(business, service);
   if (!duration) {
     return handlerResult({
       status: 'ERROR',
       user_message_template_key: 'ERROR_DURATION',
-      data: { client_message: durationMissingClientMessage(service.name) },
+      data: { client_message: durationMissingClientMessage(service.name, uiLang), ui_language: uiLang },
     });
   }
   const slotEnd = new Date(slotStart.getTime() + duration * 60_000);
@@ -2416,13 +2457,14 @@ async function applyReschedule({
       next_required_step: 'CHOOSE_SLOT',
       user_message_template_key: 'SLOT_UNAVAILABLE',
       data: {
-        occupied_label: formatSlotLabel(slotStart, business.timezone),
-        client_message:
-          `Înțeleg, *${formatSlotLabel(slotStart, business.timezone)}* nu mai e liber. ` +
-          'Te rog alege altă oră din listă — păstrăm același serviciu.',
+        occupied_label: formatSlotLabel(slotStart, business.timezone, uiLang),
+        client_message: bm('slotTakenReschedule', uiLang, {
+          slot: formatSlotLabel(slotStart, business.timezone, uiLang),
+        }),
+        ui_language: uiLang,
         alternatives: (listed.slots || []).map((s) => ({
           id: s.id,
-          label: formatSlotLabel(s.start, business.timezone),
+          label: formatSlotLabel(s.start, business.timezone, uiLang),
         })),
       },
       menu: listed.slots?.length ? slotMenu(listed.slots, business.timezone) : null,
@@ -2482,13 +2524,14 @@ async function applyReschedule({
         next_required_step: 'CHOOSE_SLOT',
         user_message_template_key: 'SLOT_UNAVAILABLE',
         data: {
-          occupied_label: formatSlotLabel(slotStart, business.timezone),
-          client_message:
-            `Înțeleg, *${formatSlotLabel(slotStart, business.timezone)}* nu mai e liber. ` +
-            'Te rog alege altă oră din listă — păstrăm același serviciu.',
+          occupied_label: formatSlotLabel(slotStart, business.timezone, uiLang),
+          client_message: bm('slotTakenReschedule', uiLang, {
+            slot: formatSlotLabel(slotStart, business.timezone, uiLang),
+          }),
+          ui_language: uiLang,
           alternatives: (listed.slots || []).map((s) => ({
             id: s.id,
-            label: formatSlotLabel(s.start, business.timezone),
+            label: formatSlotLabel(s.start, business.timezone, uiLang),
           })),
         },
         menu: listed.slots?.length ? slotMenu(listed.slots, business.timezone) : null,
@@ -2499,8 +2542,8 @@ async function applyReschedule({
       status: 'ERROR',
       user_message_template_key: 'ERROR_GENERIC',
       data: {
-        client_message:
-          'Îmi pare rău, nu am putut salva reprogramarea acum. Te rog încearcă din nou peste un moment.',
+        client_message: bm('errRescheduleSave', uiLang),
+        ui_language: uiLang,
       },
     });
   }
@@ -2625,7 +2668,6 @@ async function applyReschedule({
     requestId,
   });
 
-  const uiLang = resolveClientLanguage('', null, convState?.context_data);
   const whenLabel = formatSlotLabel(slotStart, business.timezone, uiLang);
   return handlerResult({
     status: 'SUCCESS',
@@ -2633,11 +2675,13 @@ async function applyReschedule({
     next_required_step: null,
     user_message_template_key: 'CONFIRMATION_RESCHEDULE',
     data: {
-      service_name: service.name || (uiLang === 'en' ? 'Appointment' : 'Programare'),
+      service_name: service.name || bm('appointmentFallback', uiLang),
       slot_label: whenLabel,
-      client_message: uiLang === 'en'
-        ? `Done — I moved your appointment for *${service.name || 'service'}* to *${whenLabel}*. See you soon! To change again, type *reschedule*.`
-        : `Gata — am mutat programarea ta la *${service.name || 'serviciu'}* pe *${whenLabel}*. Te așteptăm cu drag! Dacă mai schimbi ceva, scrie *reprogramare*.`,
+      client_message: bm('rescheduleDone', uiLang, {
+        service: service.name || bm('serviceFallback', uiLang),
+        when: whenLabel,
+      }),
+      ui_language: uiLang,
     },
     calendar_cta: calendarCta(business, service.name, slotStart, slotEnd),
   });
@@ -2778,13 +2822,10 @@ async function executeReschedule({
     conversationStep: CONVERSATION_STEPS.RESCHEDULING,
     extraContext,
     lang,
-    clientMessage: lang === 'en'
-      ? `Let's reschedule *${serviceName}*`
-        + (oldWhen ? ` from *${oldWhen}*` : '')
-        + '. First pick the *new day* — times appear after you choose the date.'
-      : `Reprogramăm *${serviceName}*`
-        + (oldWhen ? ` de *${oldWhen}*` : '')
-        + '. Alege mai întâi *ziua nouă* — orele apar după ce ai ales data.',
+    clientMessage: bm('reschedulePickDay', lang, {
+      service: serviceName,
+      from: oldWhen ? (lang === 'en' ? ` from *${oldWhen}*` : ` de *${oldWhen}*`) : '',
+    }),
   });
 }
 
@@ -2839,7 +2880,7 @@ async function executeCancel({
   }
 
   if (wantsAll && extract.source === 'menu' && appointments.length > 1) {
-    return askConfirmCancelAll({ business, recipientPhone, appointments, requestId });
+    return askConfirmCancelAll({ business, recipientPhone, appointments, requestId, lang });
   }
 
   const resolved = resolveAppointmentForModify(appointments, extract, convState, business, 'cancel');
@@ -2860,9 +2901,7 @@ async function executeCancel({
         requestId,
         includeCancelAll,
         lang,
-        clientMessage: lang === 'en'
-          ? `I could not find an appointment at *${hint}*. Which one do you want to cancel?`
-          : `Nu am găsit o programare la *${hint}*. Care vrei să anulezi?`,
+        clientMessage: bm('noApptAtHint', lang, { hint }),
       });
     }
 
@@ -2870,9 +2909,7 @@ async function executeCancel({
     const clientMessage = resolved.reason === 'ambiguous'
       ? t('whichAmbiguousCancel', lang)
       : (includeCancelAll
-        ? (lang === 'en'
-          ? `You have ${pool.length} appointments. Pick one or cancel all.`
-          : `Ai ${pool.length} programări. Alege una sau anulează-le pe toate.`)
+        ? bm('pickApptOrCancelAll', lang, { count: pool.length })
         : null);
     return askWhichAppointment({
       business,
@@ -2978,7 +3015,7 @@ async function executeHoursAndServices(business, lang = 'ro') {
 }
 
 async function executeContact(business, lang = 'ro') {
-  const linkButtons = buildContactLinkButtons(business);
+  const linkButtons = buildContactLinkButtons(business, lang);
   return handlerResult({
     status: 'SUCCESS',
     action_performed: 'CONTACT_LOOKUP',
@@ -3035,14 +3072,16 @@ async function executeCallback({ business, recipientPhone, extract, clientId, re
   });
 }
 
-async function executeSetName({ business, recipientPhone, extract, activeDraft, requestId }) {
+async function executeSetName({ business, recipientPhone, extract, activeDraft, requestId, convState }) {
+  const lang = resolveClientLanguage('', null, convState?.context_data);
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   const name = parseClientNameReply(extract.name || '');
   if (!name) {
     return handlerResult({
       status: 'MISSING_INFO',
       next_required_step: 'ASK_NAME',
       user_message_template_key: 'ASK_NAME',
-      data: { client_message: 'Te rog scrie prenumele și numele, ex: *Ana Popescu*.' },
+      data: { client_message: bm('askFullName', uiLang), ui_language: uiLang },
     });
   }
   const client = await getClientByPhone({
@@ -3084,7 +3123,8 @@ async function executeSetName({ business, recipientPhone, extract, activeDraft, 
     user_message_template_key: 'THANKS',
     data: {
       client_name: name,
-      client_message: 'Am salvat numele. Scrie *programare* ca să alegi din nou serviciul și ora.',
+      client_message: bm('nameSavedRestart', uiLang),
+      ui_language: uiLang,
     },
     menu: entryMenu(business),
   });
@@ -3138,27 +3178,26 @@ async function executeChat(business, textBody = '', lang = 'ro') {
     action_performed: null,
     next_required_step: null,
     user_message_template_key: 'CHAT_FALLBACK',
-    data: { business_name: business.name, client_language: lang },
+    data: { business_name: business.name, ui_language: lang },
   });
 }
 
 function executeStaleChoice({ business, convState }) {
   const lang = resolveClientLanguage('', null, convState?.context_data);
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   const last = readLastMenu(convState);
-  const clientMessage = lang === 'en'
-    ? 'That option is no longer on the current list. Please choose from the latest message (or type *booking*).'
-    : 'Opțiunea aia nu mai e pe lista curentă. Te rog alege din mesajul cel mai recent (sau scrie *programare*).';
+  const clientMessage = t('staleChoiceBody', uiLang);
   if (last?.options?.length) {
     const kind = last.kind || 'generic';
     const listButton = kind === 'day_grid'
-      ? 'Zile disponibile'
+      ? t('listDays', uiLang)
       : kind === 'time_grid'
-        ? 'Ore libere'
+        ? t('listTimes', uiLang)
         : kind === 'modify'
-          ? 'Programările tale'
+          ? t('listAppointments', uiLang)
           : kind === 'service'
-            ? 'Servicii'
-            : 'Alege';
+            ? t('listServices', uiLang)
+            : (uiLang === 'en' ? 'Choose' : 'Alege');
     return handlerResult({
       status: 'MISSING_INFO',
       action_performed: null,
@@ -3167,6 +3206,7 @@ function executeStaleChoice({ business, convState }) {
       data: {
         client_message: clientMessage,
         list_button: listButton,
+        ui_language: uiLang,
       },
       menu: { kind, options: last.options, catalog: last.options },
     });
@@ -3175,7 +3215,7 @@ function executeStaleChoice({ business, convState }) {
     status: 'SUCCESS',
     action_performed: 'STALE_CHOICE',
     user_message_template_key: 'STALE_CHOICE',
-    data: { client_message: clientMessage },
+    data: { client_message: clientMessage, ui_language: uiLang },
     menu: entryMenu(business),
   });
 }
@@ -3197,7 +3237,22 @@ function executeOffTopic(business, lang = 'ro') {
     action_performed: null,
     next_required_step: null,
     user_message_template_key: 'OFF_TOPIC',
-    data: { business_name: business.name, client_language: lang },
+    data: { business_name: business.name, ui_language: lang },
+  });
+}
+
+function executeLanguageInfo(business, lang = 'ro') {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
+  const key = uiLang === 'en' ? 'languageInfoEn' : 'languageInfoRo';
+  return handlerResult({
+    status: 'CHAT',
+    action_performed: null,
+    next_required_step: null,
+    user_message_template_key: 'LANGUAGE_INFO',
+    data: {
+      ui_language: uiLang,
+      client_message: t(key, uiLang),
+    },
   });
 }
 
@@ -3232,10 +3287,11 @@ function executeMissingInfo(business, textBody = '', lang = 'ro') {
 }
 
 async function executeClarifyNeeded({ business, recipientPhone, extract, convState, requestId }) {
+  const lang = resolveClientLanguage('', null, convState?.context_data);
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   const amb = extract.ambiguity || {};
   const value = Number(amb.value);
   if (!Number.isInteger(value) || value < 1 || value > 31) {
-    // Never show "Data de 0" / null labels — guide the user instead.
     return handlerResult({
       status: 'CHAT',
       action_performed: null,
@@ -3243,8 +3299,8 @@ async function executeClarifyNeeded({ business, recipientPhone, extract, convSta
       user_message_template_key: 'CHAT_FALLBACK',
       data: {
         business_name: business.name,
-        client_message:
-          'Nu am înțeles exact. Te rog alege o opțiune din meniu sau reformulează (ex: *vreau vineri la 11*).',
+        client_message: bm('clarifyNotUnderstood', uiLang),
+        ui_language: uiLang,
       },
     });
   }
@@ -3266,8 +3322,8 @@ async function executeClarifyNeeded({ business, recipientPhone, extract, convSta
       last_menu: {
         kind: 'clarify',
         options: [
-          { id: CLARIFY_IDS.DATE, title: `Data de ${value}` },
-          { id: CLARIFY_IDS.TIME, title: `Ora ${value}` },
+          { id: CLARIFY_IDS.DATE, title: uiLang === 'en' ? `Date ${value}` : `Data de ${value}` },
+          { id: CLARIFY_IDS.TIME, title: uiLang === 'en' ? `Time ${value}` : `Ora ${value}` },
         ],
       },
     },
@@ -3283,13 +3339,14 @@ async function executeClarifyNeeded({ business, recipientPhone, extract, convSta
       value,
       date_label: String(amb.date_label || value),
       time_label: String(amb.time_label || value),
-      client_message: clarificationPrompt(value),
+      client_message: clarificationPrompt(value, uiLang),
+      ui_language: uiLang,
     },
     menu: {
       kind: 'clarify',
       options: [
-        { id: CLARIFY_IDS.DATE, title: `Data de ${value}` },
-        { id: CLARIFY_IDS.TIME, title: `Ora ${value}` },
+        { id: CLARIFY_IDS.DATE, title: uiLang === 'en' ? `Date ${value}` : `Data de ${value}` },
+        { id: CLARIFY_IDS.TIME, title: uiLang === 'en' ? `Time ${value}` : `Ora ${value}` },
       ],
     },
     machine_action: MACHINE_ACTIONS.ACTION_ASK_CLARIFICATION,
@@ -3375,6 +3432,10 @@ async function dispatchExecute({
     return executeThanks(business, lang);
   }
 
+  if (action === 'language_info') {
+    return executeLanguageInfo(business, lang);
+  }
+
   let draft = activeDraft;
   // Keep the live pending draft for mid-flow "Modific" — TTL expiry here used to
   // null the draft and the old revise path fell through to saved-appointment lists.
@@ -3449,7 +3510,9 @@ async function dispatchExecute({
     });
   }
 
-  if (action === 'confirm') return executeConfirm({ business, recipientPhone, activeDraft: draft, requestId });
+  if (action === 'confirm') {
+    return executeConfirm({ business, recipientPhone, activeDraft: draft, requestId, convState });
+  }
   if (action === 'cancel_pending') return executeCancelPending({ business, recipientPhone, requestId });
   if (action === 'confirm_cancel') {
     if (convState.context_data?.cancel_all) {
@@ -3465,10 +3528,10 @@ async function dispatchExecute({
         return handlerResult({
           status: 'ERROR',
           user_message_template_key: 'ERROR_NO_APPOINTMENT',
-          data: { client_message: 'Programările nu au fost găsite.' },
+          data: { client_message: bm('errApptsNotFound', lang), ui_language: lang },
         });
       }
-      return executeCancelAllAppointments({ business, recipientPhone, appointments, requestId });
+      return executeCancelAllAppointments({ business, recipientPhone, appointments, requestId, lang });
     }
     const id = extract.appointment_id || convState.context_data?.appointment_id;
     const appointment = id ? await getDraftBookingById(id, business.id) : null;
@@ -3476,10 +3539,10 @@ async function dispatchExecute({
       return handlerResult({
         status: 'ERROR',
         user_message_template_key: 'ERROR_NO_APPOINTMENT',
-        data: { client_message: 'Programarea nu a fost găsită.' },
+        data: { client_message: bm('errApptNotFound', lang), ui_language: lang },
       });
     }
-    return executeCancelAppointment({ business, recipientPhone, appointment, requestId });
+    return executeCancelAppointment({ business, recipientPhone, appointment, requestId, lang });
   }
   if (action === 'abort') {
     await resetConversationState({ businessId: business.id, rawPhone: recipientPhone, requestId });
@@ -3801,12 +3864,12 @@ async function dispatchExecute({
     return executeCallback({ business, recipientPhone, extract, clientId, requestId, textBody });
   }
   if (action === 'set_name') {
-    return executeSetName({ business, recipientPhone, extract, activeDraft: draft, requestId });
+    return executeSetName({ business, recipientPhone, extract, activeDraft: draft, requestId, convState });
   }
   if (action === 'off_topic') return executeOffTopic(business, lang);
   if (action === 'missing_info') return executeMissingInfo(business, textBody, lang);
   if (action === 'show_services') {
-    return missingService(business, recipientPhone, draft, requestId);
+    return missingService(business, recipientPhone, draft, requestId, lang);
   }
   if (action === 'unknown_service') {
     const asked = String(extract.unknown_service_name || extract.client_service_label || '').trim();
@@ -3902,6 +3965,7 @@ function bookingMachineHandles(action) {
  */
 async function runBookingMachine(params) {
   const { business, recipientPhone, extract, convState, activeDraft, requestId, textBody } = params;
+  const lang = resolveClientLanguage(textBody || '', null, convState?.context_data);
   // Defense in depth: never collect a new service / draft while modify is active.
   const modifyGuard = convState?.context_data?.intent === 'reschedule'
     || convState?.context_data?.intent === 'cancel'
@@ -3983,7 +4047,7 @@ async function runBookingMachine(params) {
         }
         : {}),
       ...(reduced.action === MACHINE_ACTIONS.ACTION_ASK_SERVICE
-        ? { last_menu: serviceMenu(business) }
+        ? { last_menu: serviceMenu(business, lang) }
         : {}),
       ...(reduced.action === MACHINE_ACTIONS.ACTION_ASK_DATE_TIME
         || reduced.action === MACHINE_ACTIONS.ACTION_ASK_DATE
@@ -4016,7 +4080,7 @@ async function runBookingMachine(params) {
 
   if (reduced.action === MACHINE_ACTIONS.ACTION_ASK_SERVICE) {
     const services = getBookingConfig(business).services;
-    const menu = serviceMenu(business);
+    const menu = serviceMenu(business, lang);
     return handlerResult({
       status: 'MISSING_INFO',
       next_required_step: 'CHOOSE_SERVICE',
@@ -4029,8 +4093,9 @@ async function runBookingMachine(params) {
           price_ron: s.price_ron ?? null,
         })),
         service_name: reduced.draft.service_name,
-        list_button: 'Servicii',
+        list_button: t('listServices', lang),
         ui: 'list_picker',
+        ui_language: lang,
       },
       menu,
       machine_action: MACHINE_ACTIONS.ACTION_ASK_SERVICE,

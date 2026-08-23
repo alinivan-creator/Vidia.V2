@@ -1,6 +1,7 @@
 import { getConfiguredBusinessHours, formatBusinessHoursText } from '../utils/datetime.js';
 import { unknownInfoClientMessage } from '../utils/workingHours.js';
 import { WA_DIVIDER, waField, waJoin, waTitle } from '../utils/waCopy.js';
+import { t } from '../utils/uiI18n.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -71,22 +72,22 @@ export function getBusinessContactInfo(business) {
  * @returns {string}
  */
 export function formatContactMessage(business, lang = 'ro') {
-  const en = lang === 'en';
+  const uiLang = lang === 'en' ? 'en' : 'ro';
   const info = getBusinessContactInfo(business);
   const hasAny =
     info.phone || info.email || info.address || info.website || info.mapsUrl || info.hours;
 
   const structuredHours = getConfiguredBusinessHours(business);
   if (!hasAny && !structuredHours) {
-    return waJoin(waTitle(business.name), '', unknownInfoClientMessage(lang));
+    return waJoin(waTitle(business.name), '', unknownInfoClientMessage(uiLang));
   }
 
   const parts = [
     waTitle(business.name),
     '',
-    waField(en ? 'Phone' : 'Telefon', info.phone),
+    waField(t('contactPhone', uiLang), info.phone),
     waField('Email', info.email),
-    waField(en ? 'Address' : 'Adresă', info.address),
+    waField(t('contactAddress', uiLang), info.address),
   ];
 
   if (structuredHours) {
@@ -94,13 +95,13 @@ export function formatContactMessage(business, lang = 'ro') {
       '',
       WA_DIVIDER,
       '',
-      waTitle(en ? 'Hours' : 'Program'),
-      formatBusinessHoursText(structuredHours).replace(/^- /gm, ''),
+      waTitle(t('contactHours', uiLang)),
+      formatBusinessHoursText(structuredHours, uiLang).replace(/^- /gm, ''),
     );
   } else if (info.hours) {
-    parts.push('', waField(en ? 'Hours' : 'Program', info.hours));
+    parts.push('', waField(t('contactHours', uiLang), info.hours));
   }
 
-  parts.push('', en ? 'We are here for you.' : 'Suntem aici pentru tine.');
+  parts.push('', t('contactFooter', uiLang));
   return waJoin(...parts);
 }

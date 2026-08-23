@@ -5,13 +5,11 @@ import {
   isBusinessOperational,
   getCachedBusinessForWhatsAppTo,
 } from '../db/businessService.js';
-import { appendRecentTurn, touchSessionTimestamp, setConversationStep } from '../db/conversationStateService.js';
+import { appendRecentTurn, touchSessionTimestamp, setConversationStep, getOrCreateConversationState } from '../db/conversationStateService.js';
 import { logError } from '../db/loggerService.js';
 import { loadBusinessContext } from '../services/businessContext.js';
 import { routeInboundTurn } from '../services/inboundTurnService.js';
-import {
-  ensureClient,
-} from '../services/menuHandler.js';
+import { ensureClient } from '../services/menuHandler.js';
 import {
   rememberInboundMessageSid,
   sendTypingIndicator,
@@ -34,6 +32,8 @@ import {
 } from '../services/sessionValidator.js';
 import { beginInboundTurn } from '../services/turnSequencer.js';
 import { languageScrubPatch, needsLanguageScrub } from '../utils/clientLanguage.js';
+import { bm } from '../utils/bookingI18n.js';
+import { readSessionLanguage } from '../utils/uiI18n.js';
 
 /**
  * Twilio WhatsApp inbound webhook.
@@ -253,13 +253,13 @@ async function processTwilioWebhook(body, requestId) {
         status: business.status,
       });
       try {
+        const convForLang = await getOrCreateConversationState(business.id, recipientPhone);
+        const uiLang = readSessionLanguage(convForLang?.context_data);
         await sendTextMessage({
           business,
           recipientPhone,
           requestId,
-          text:
-            'Serviciul de programări este temporar inactiv. ' +
-            'Te rugăm să revii mai târziu sau să contactezi direct afacerea.',
+          text: bm('businessSuspended', uiLang),
         });
       } catch (error) {
         console.error('Eroare detalii:', error);

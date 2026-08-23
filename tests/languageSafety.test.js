@@ -18,7 +18,10 @@ import {
   withEnglishSwitchOption,
   resolveTurnLanguage,
   tf,
+  isLanguageCapabilityQuestion,
+  twilioContentLocale,
 } from '../src/utils/uiI18n.js';
+import { formatBusinessHoursText, DEFAULT_BUSINESS_HOURS } from '../src/utils/datetime.js';
 import { renderHandlerResult } from '../src/services/turnPresent.js';
 import { isConversationSessionExpired } from '../src/services/sessionValidator.js';
 
@@ -215,7 +218,10 @@ describe('minimal bilingual UI layer', () => {
         id: 'b1',
         name: 'Salon',
         timezone: 'Europe/Bucharest',
-        booking_settings: { contact: { phone: '+40123456789', email: 'a@b.ro' } },
+        booking_settings: {
+          contact: { phone: '+40123456789', email: 'a@b.ro' },
+          business_hours: DEFAULT_BUSINESS_HOURS,
+        },
       },
       {
         user_message_template_key: 'CONTACT',
@@ -225,6 +231,26 @@ describe('minimal bilingual UI layer', () => {
     assert.match(text, /Phone/i);
     assert.doesNotMatch(text, /Telefon/);
     assert.match(text, /We are here for you/i);
+    assert.match(text, /Monday/i);
+    assert.doesNotMatch(text, /\bLuni\b/);
+    assert.doesNotMatch(text, /închis/);
+  });
+
+  it('language capability questions are detected without switching alone', () => {
+    assert.equal(isLanguageCapabilityQuestion('Do you speak English?'), true);
+    assert.equal(isLanguageCapabilityQuestion('vorbesti engleza?'), true);
+    assert.equal(isLanguageCapabilityQuestion('book tomorrow'), false);
+  });
+
+  it('twilioContentLocale maps session language for list-picker hints', () => {
+    assert.equal(twilioContentLocale('en'), 'en');
+    assert.equal(twilioContentLocale('ro'), 'ro');
+  });
+
+  it('formatBusinessHoursText never leaks RO weekdays in EN', () => {
+    const text = formatBusinessHoursText(DEFAULT_BUSINESS_HOURS, 'en');
+    assert.match(text, /Sunday/);
+    assert.doesNotMatch(text, /Duminică/);
   });
 
   it('CHAT_FALLBACK renders English when ui_language is en', () => {
