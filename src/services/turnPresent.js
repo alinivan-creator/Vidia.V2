@@ -24,7 +24,7 @@ import { unknownInfoClientMessage } from '../utils/workingHours.js';
 import { missingBusinessInfoMessage } from '../utils/businessInfoLookup.js';
 import { formatServiceAskMessage, bookingExamplePhrase } from '../utils/serviceMatch.js';
 import { mergeMenuOptions } from '../utils/bookingGrid.js';
-import { t, localizeMenuOptions, normalizeUiLang, entryMenuBodyText, withEnglishSwitchOption } from '../utils/uiI18n.js';
+import { t, localizeMenuOptions, normalizeUiLang, entryMenuBodyText, withEnglishSwitchOption, tf } from '../utils/uiI18n.js';
 import { formatSlotLabel, localToUtc } from '../utils/datetime.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
@@ -121,13 +121,16 @@ export function renderHandlerResult(business, result) {
       );
     case 'ASK_CONFIRM': {
       const when = slotLabelForLang(business, d, lang) || String(d.slot_label || '');
+      const serviceLabel = en && d.client_service_label
+        ? String(d.client_service_label)
+        : (d.service_name || t('labelService', lang));
       if (en) {
         return waJoin(
           waTitle(t('confirmTitle', 'en')),
           '',
           waField(t('labelClient', 'en'), d.client_name),
           waField(t('labelSpecialist', 'en'), d.employee_name),
-          waField(t('labelService', 'en'), d.service_name || t('labelService', 'en')),
+          waField(t('labelService', 'en'), serviceLabel),
           waField(t('labelWhen', 'en'), when),
         );
       }
@@ -346,7 +349,7 @@ export function renderHandlerResult(business, result) {
       return [hoursBlock, serviceBlocks.join('\n')].filter(Boolean).join(`\n\n${WA_DIVIDER}\n\n`);
     }
     case 'CONTACT':
-      return formatContactMessage(business);
+      return formatContactMessage(business, lang);
     case 'MENU':
       return buildAiTransparencyWelcome(business, lang);
     case 'CALLBACK_SENT':
@@ -409,11 +412,11 @@ export function renderHandlerResult(business, result) {
           '',
           waFooter(['programare', 'orar', 'contact']),
         );
-    case 'UNKNOWN_SERVICE':
-      return (typeof d.client_message === 'string' && d.client_message.trim())
-        || (lang === 'en'
-          ? `Unfortunately we don't offer that service. Please choose from the list.`
-          : 'Din păcate nu oferim acest serviciu. Te rog alege din listă.');
+    case 'UNKNOWN_SERVICE': {
+      const label = String(d.service_name || d.unknown_service_name || '').trim()
+        || (en ? 'that service' : 'acest serviciu');
+      return tf('unknownServiceBody', lang, { label });
+    }
     case 'STALE_CHOICE':
       return (typeof d.client_message === 'string' && d.client_message.trim())
         || (en

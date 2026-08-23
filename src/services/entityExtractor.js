@@ -131,6 +131,7 @@ function buildParserSystemPrompt(ctx, session) {
     facts ? `FACTS ADMIN:\n${facts}` : 'FACTS ADMIN: (gol)',
     '',
     `Nume servicii valide (lista scurtă): ${serviceNames.join('; ') || '(gol — extracted_service=null mereu)'}`,
+    'Clientul poate scrie în engleză sau română. Pentru extracted_service folosește EXACT un nume din catalogul de mai sus (română), sau null dacă nu există corespondență onestă.',
     '',
     `session.current_state: ${session.current_state}`,
     `session.booking_wait: ${session.booking_wait || 'null'}`,

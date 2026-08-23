@@ -67,24 +67,26 @@ export function getBusinessContactInfo(business) {
 /**
  * Formats contact info as a WhatsApp-ready text block.
  * @param {Business} business
+ * @param {'ro' | 'en'} [lang]
  * @returns {string}
  */
-export function formatContactMessage(business) {
+export function formatContactMessage(business, lang = 'ro') {
+  const en = lang === 'en';
   const info = getBusinessContactInfo(business);
   const hasAny =
     info.phone || info.email || info.address || info.website || info.mapsUrl || info.hours;
 
   const structuredHours = getConfiguredBusinessHours(business);
   if (!hasAny && !structuredHours) {
-    return waJoin(waTitle(business.name), '', unknownInfoClientMessage());
+    return waJoin(waTitle(business.name), '', unknownInfoClientMessage(lang));
   }
 
   const parts = [
     waTitle(business.name),
     '',
-    waField('Telefon', info.phone),
+    waField(en ? 'Phone' : 'Telefon', info.phone),
     waField('Email', info.email),
-    waField('Adresă', info.address),
+    waField(en ? 'Address' : 'Adresă', info.address),
   ];
 
   if (structuredHours) {
@@ -92,13 +94,13 @@ export function formatContactMessage(business) {
       '',
       WA_DIVIDER,
       '',
-      waTitle('Program'),
+      waTitle(en ? 'Hours' : 'Program'),
       formatBusinessHoursText(structuredHours).replace(/^- /gm, ''),
     );
   } else if (info.hours) {
-    parts.push('', waField('Program', info.hours));
+    parts.push('', waField(en ? 'Hours' : 'Program', info.hours));
   }
 
-  parts.push('', 'Suntem aici pentru tine.');
+  parts.push('', en ? 'We are here for you.' : 'Suntem aici pentru tine.');
   return waJoin(...parts);
 }

@@ -130,6 +130,18 @@ const UI = {
   entryBooking: { ro: 'Programare', en: 'Booking' },
   entryDetails: { ro: 'Detalii & Prețuri', en: 'Details & prices' },
   entryContact: { ro: 'Contact & Locație', en: 'Contact & location' },
+  unknownServiceBody: {
+    ro: 'Din păcate nu oferim *{label}*. Poți alege din catalogul nostru sau te pot pune în legătură cu cineva de la locație.',
+    en: 'Unfortunately we don\'t offer *{label}*. Pick from our catalog or ask for a callback.',
+  },
+  seeServicesBtn: { ro: 'Vezi servicii', en: 'See services' },
+  callbackBtn: { ro: 'Contactează-mă', en: 'Call me back' },
+  contactPhone: { ro: 'Telefon', en: 'Phone' },
+  contactEmail: { ro: 'Email', en: 'Email' },
+  contactAddress: { ro: 'Adresă', en: 'Address' },
+  contactHours: { ro: 'Program', en: 'Hours' },
+  contactFooter: { ro: 'Suntem aici pentru tine.', en: 'We are here for you.' },
+  firstAvailable: { ro: 'Primul disponibil', en: 'First available' },
 };
 
 /**
@@ -141,6 +153,20 @@ export function t(key, lang = 'ro') {
   const row = UI[key];
   if (!row) return key;
   return lang === 'en' ? row.en : row.ro;
+}
+
+/**
+ * Interpolate `{var}` placeholders in a UI string.
+ * @param {string} key
+ * @param {UiLang} [lang]
+ * @param {Record<string, string>} [vars]
+ */
+export function tf(key, lang = 'ro', vars = {}) {
+  let out = t(key, lang);
+  for (const [k, v] of Object.entries(vars || {})) {
+    out = out.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v ?? ''));
+  }
+  return out;
 }
 
 /**
@@ -304,15 +330,20 @@ export function detectSessionLanguageFromText(textBody) {
 }
 
 /**
- * Language for the current inbound turn: message text wins, then explicit session pick, then ro.
+ * Language for the current turn.
+ * Session lock: once `session_language` is set, all bot copy stays in that language.
+ * Before lock, infer from inbound text (courtesy greetings stripped for mixed openers).
+ *
  * @param {string | null | undefined} textBody
  * @param {Record<string, unknown> | null | undefined} [ctx]
  * @returns {UiLang}
  */
 export function resolveTurnLanguage(textBody, ctx = null) {
+  if (hasExplicitSessionLanguage(ctx)) {
+    return readSessionLanguage(ctx);
+  }
   const detected = detectSessionLanguageFromText(textBody);
   if (detected) return detected;
-  if (hasExplicitSessionLanguage(ctx)) return readSessionLanguage(ctx);
   return 'ro';
 }
 

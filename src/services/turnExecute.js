@@ -420,17 +420,19 @@ function serviceMenu(business) {
 }
 
 /** Quick-replies after an unknown service: catalog again + human callback. */
-function unknownServiceOfferMenu(business) {
+function unknownServiceOfferMenu(business, lang = 'ro') {
+  const see = t('seeServicesBtn', lang);
+  const callback = t('callbackBtn', lang);
   return {
     kind: 'unknown_service',
     options: [
-      { id: 'show_services', title: 'Vezi servicii' },
-      { id: 'offer_callback', title: 'Contactează-mă' },
+      { id: 'show_services', title: see },
+      { id: 'offer_callback', title: callback },
     ],
     catalog: [
       ...serviceMenu(business).options,
-      { id: 'show_services', title: 'Vezi servicii' },
-      { id: 'offer_callback', title: 'Contactează-mă' },
+      { id: 'show_services', title: see },
+      { id: 'offer_callback', title: callback },
     ],
   };
 }
@@ -445,12 +447,13 @@ function slotMenu(slots, timezone) {
   };
 }
 
-function employeeMenu(employees) {
+function employeeMenu(employees, lang = 'ro') {
+  const en = lang === 'en';
   return {
     kind: 'employee',
     options: [
       ...employees.slice(0, 9).map((e) => ({ id: `${PREFIX.EMPLOYEE}${e.id}`, title: e.name })),
-      { id: PREFIX.ANY_EMPLOYEE, title: 'Primul disponibil' },
+      { id: PREFIX.ANY_EMPLOYEE, title: en ? t('firstAvailable', 'en') : t('firstAvailable', 'ro') },
     ],
   };
 }
@@ -2974,7 +2977,7 @@ async function executeHoursAndServices(business, lang = 'ro') {
   });
 }
 
-async function executeContact(business) {
+async function executeContact(business, lang = 'ro') {
   const linkButtons = buildContactLinkButtons(business);
   return handlerResult({
     status: 'SUCCESS',
@@ -2985,6 +2988,7 @@ async function executeContact(business) {
       contact: getBusinessContactInfo(business),
       business_name: business.name,
       link_ctas: linkButtons,
+      ui_language: lang,
     },
   });
 }
@@ -3791,7 +3795,7 @@ async function dispatchExecute({
   if (action === 'hours') return executeHours(business, lang);
   if (action === 'services') return executeServices(business, lang);
   if (action === 'hours_and_services') return executeHoursAndServices(business, lang);
-  if (action === 'contact') return executeContact(business);
+  if (action === 'contact') return executeContact(business, lang);
   if (action === 'menu') return executeMenu(business, recipientPhone, requestId);
   if (action === 'callback') {
     return executeCallback({ business, recipientPhone, extract, clientId, requestId, textBody });
@@ -3805,9 +3809,9 @@ async function dispatchExecute({
     return missingService(business, recipientPhone, draft, requestId);
   }
   if (action === 'unknown_service') {
-    const asked = String(extract.unknown_service_name || '').trim();
-    const label = asked || 'acest serviciu';
-    const menu = unknownServiceOfferMenu(business);
+    const asked = String(extract.unknown_service_name || extract.client_service_label || '').trim();
+    const label = asked || (lang === 'en' ? 'that service' : 'acest serviciu');
+    const menu = unknownServiceOfferMenu(business, lang);
     await setConversationStep({
       businessId: business.id,
       rawPhone: recipientPhone,
@@ -3828,9 +3832,8 @@ async function dispatchExecute({
       data: {
         business_name: business.name,
         service_name: asked || null,
-        client_message:
-          `Din păcate nu oferim *${label}*. ` +
-          'Poți alege din catalogul nostru sau te pot pune în legătură cu cineva de la locație.',
+        unknown_service_name: asked || null,
+        ui_language: lang,
         services: getBookingConfig(business).services.slice(0, 10).map((s) => ({
           id: s.id,
           name: s.name,
@@ -3839,7 +3842,6 @@ async function dispatchExecute({
         })),
       },
       menu,
-      // No ACTION_ASK_SERVICE — keep UNKNOWN_SERVICE copy (anti-hallucination).
     });
   }
 

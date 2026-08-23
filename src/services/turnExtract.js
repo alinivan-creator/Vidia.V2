@@ -22,6 +22,7 @@ import {
 } from './bookingWaitState.js';
 import { extractBookingEntities } from '../lib/ai/extractor.js';
 import { matchServiceMention } from '../utils/serviceMatch.js';
+import { matchServiceSemantically } from './serviceSemanticMatch.js';
 import {
   detectTimeWindowFromText,
   looksLikeAvailabilityQuestion,
@@ -779,6 +780,40 @@ function applyCatalogMatches(extract, textBody, services, employees, timezone, o
 }
 
 /**
+ * Catalog match + AI semantic fallback (EN phrase → RO Supabase service id).
+ * @param {import('../db/businessService.js').Business | null} business
+ * @param {string | null} requestId
+ */
+async function applyCatalogMatchesWithSemantic(extract, textBody, services, employees, timezone, opts = {}, business = null, requestId = null) {
+  let next = applyCatalogMatches(extract, textBody, services, employees, timezone, opts);
+
+  const needsSemantic = !next.service_id
+    && business?.id
+    && (next.service_name || (next.action === 'book' && textBody));
+
+  if (needsSemantic) {
+    const phrase = String(next.service_name || textBody || '').trim();
+    const semantic = await matchServiceSemantically({
+      business,
+      text: phrase,
+      services,
+      requestId,
+    });
+    if (semantic) {
+      next = {
+        ...next,
+        service_id: semantic.id,
+        service_name: semantic.name,
+        client_service_label: semantic.client_label,
+        unknown_service_name: null,
+      };
+    }
+  }
+
+  return next;
+}
+
+/**
  * @param {TurnExtract} next
  * @param {string} text
  * @param {string} timezone
@@ -1294,7 +1329,7 @@ async function extractTurnIntentImpl({
     if (mapped.action === 'unknown') {
       return emptyExtract({ action: 'chat', confidence: 'low', source: 'nlu', extraction: nlu });
     }
-    return finalizeGroundedExtract(applyCatalogMatches(
+    return finalizeGroundedExtract(await applyCatalogMatchesWithSemantic(
       {
         ...mapped,
         extraction: nlu,
@@ -1308,6 +1343,8 @@ async function extractTurnIntentImpl({
         freezeTime: nlu.intent === 'change_date',
         dayHours,
       },
+      business,
+      requestId,
     ));
   }
 
@@ -1349,7 +1386,7 @@ async function extractTurnIntentImpl({
     extract.action = 'off_topic';
   }
 
-  extract = finalizeGroundedExtract(applyCatalogMatches(extract, textBody, services, employees, tz, { dayHours }));
+  extract = finalizeGroundedExtract(await applyCatalogMatchesWithSemantic(extract, textBody, services, employees, tz, { dayHours }, business, requestId));
   if (!extract.time_window && !extract.time_text) {
     extract.time_window = detectTimeWindowFromText(textBody);
   }

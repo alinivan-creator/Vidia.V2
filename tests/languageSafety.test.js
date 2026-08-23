@@ -17,6 +17,7 @@ import {
   entryMenuBodyText,
   withEnglishSwitchOption,
   resolveTurnLanguage,
+  tf,
 } from '../src/utils/uiI18n.js';
 import { renderHandlerResult } from '../src/services/turnPresent.js';
 import { isConversationSessionExpired } from '../src/services/sessionValidator.js';
@@ -77,24 +78,31 @@ describe('minimal bilingual UI layer', () => {
     assert.equal(detectSessionLanguageFromText('Hi'), 'en');
   });
 
-  it('resolveTurnLanguage mirrors inbound text before session default', () => {
+  it('resolveTurnLanguage locks session language once established', () => {
     assert.equal(
-      resolveTurnLanguage('you have eat for free?', { session_language: 'ro' }),
+      resolveTurnLanguage('you have eat for free?', { session_language: 'en' }),
       'en',
     );
     assert.equal(
-      resolveTurnLanguage('Salut', { session_language: 'en' }),
+      resolveTurnLanguage('Salut, vreau programare', { session_language: 'en' }),
+      'en',
+    );
+    assert.equal(
+      resolveTurnLanguage('Salut, vreau programare', { session_language: 'ro' }),
       'ro',
     );
-    assert.equal(resolveTurnLanguage('ok', { session_language: 'en' }), 'en');
-    assert.equal(resolveTurnLanguage('ok', {}), 'ro');
   });
 
-  it('resolveClientLanguage prefers message language over locked session', () => {
+  it('resolveClientLanguage respects session lock', () => {
     assert.equal(
-      resolveClientLanguage('you have eat for free?', null, { session_language: 'ro' }),
+      resolveClientLanguage('Salut', null, { session_language: 'en' }),
       'en',
     );
+  });
+
+  it('unknown service copy is localized via tf()', () => {
+    assert.match(tf('unknownServiceBody', 'en', { label: 'teeth whitening' }), /teeth whitening/i);
+    assert.match(tf('unknownServiceBody', 'ro', { label: 'albire' }), /albire/);
   });
 
   it('recognizes restart session and English switch helpers', () => {
@@ -199,6 +207,24 @@ describe('minimal bilingual UI layer', () => {
     assert.match(text, /See you soon/);
     assert.match(text, /Monday/i);
     assert.doesNotMatch(text, /Programare confirmată/);
+  });
+
+  it('CONTACT renders English labels when ui_language is en', () => {
+    const text = renderHandlerResult(
+      {
+        id: 'b1',
+        name: 'Salon',
+        timezone: 'Europe/Bucharest',
+        booking_settings: { contact: { phone: '+40123456789', email: 'a@b.ro' } },
+      },
+      {
+        user_message_template_key: 'CONTACT',
+        data: { ui_language: 'en' },
+      },
+    );
+    assert.match(text, /Phone/i);
+    assert.doesNotMatch(text, /Telefon/);
+    assert.match(text, /We are here for you/i);
   });
 
   it('CHAT_FALLBACK renders English when ui_language is en', () => {
