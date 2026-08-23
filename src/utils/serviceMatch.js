@@ -65,6 +65,13 @@ const SERVICE_STOP_TOKENS = new Set([
   'si', 'sau', 'cu', 'la', 'de', 'pentru', 'un', 'o', 'the', 'and', 'for', 'or', 'with',
 ]);
 
+/** Never treat menu / FAQ pivots as typed service names while the picker is open. */
+const SERVICE_PIVOT_WORDS = new Set([
+  'contact', 'locatie', 'adresa', 'telefon', 'email', 'orar', 'program', 'meniu', 'menu',
+  'servicii', 'services', 'detalii', 'pret', 'preturi', 'anulez', 'anulare', 'cancel',
+  'stop', 'help', 'ajutor', 'english', 'romana', 'română',
+]);
+
 /**
  * True when free text looks like a typed service name (not date/time/menu).
  * @param {string | null | undefined} text
@@ -73,9 +80,21 @@ export function isTypedServiceAttempt(text) {
   const n = normalize(text);
   if (!n || n.length < 3) return false;
   if (/^\d{1,2}$/.test(n)) return false;
-  if (n === 'meniu' || n === 'menu' || n === 'servicii' || n === 'services') return false;
+  if (SERVICE_PIVOT_WORDS.has(n)) return false;
+  if ([...SERVICE_PIVOT_WORDS].some((w) => n === w || n.startsWith(`${w} `))) return false;
   const tokens = n.split(/[^a-z0-9]+/).filter((t) => t.length >= 3 && !SERVICE_STOP_TOKENS.has(t));
   return tokens.length >= 1;
+}
+
+/**
+ * Same token bag regardless of order — "clasic tuns" matches "Tuns Clasic".
+ * @param {string} a
+ * @param {string} b
+ */
+function sameTokenBag(a, b) {
+  const ta = nameTokens(a).sort().join('|');
+  const tb = nameTokens(b).sort().join('|');
+  return ta.length > 0 && ta === tb;
 }
 
 /**
@@ -156,6 +175,12 @@ export function matchServiceMention(text, services) {
   if (!n || n.length < 3 || !list.length) return null;
 
   const groups = activeMorphologyGroups(list);
+
+  for (const s of list) {
+    const name = normalize(s.name);
+    if (name && name === n) return s;
+    if (name && sameTokenBag(text, s.name)) return s;
+  }
 
   /** @type {{ id: string, name: string } | null} */
   let best = null;

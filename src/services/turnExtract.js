@@ -828,6 +828,73 @@ async function applyCatalogMatchesWithSemantic(extract, textBody, services, empl
 }
 
 /**
+ * While the service picker is open: match catalog rows, allow FAQ pivots, then semantic fallback.
+ * @param {string} textBody
+ * @param {import('../db/businessService.js').Business} business
+ * @param {{ id: string, name: string }[]} services
+ * @param {string | null} requestId
+ * @returns {Promise<TurnExtract | null>}
+ */
+async function resolveTypedServiceDuringWait(textBody, business, services, requestId) {
+  if (!isTypedServiceAttempt(textBody)) return null;
+
+  const triage = triageUserIntent(textBody, {
+    businessType: business.business_type,
+    services,
+  });
+  if (triage.intent === 'contact') {
+    return emptyExtract({ action: 'contact', confidence: 'high', source: 'keyword' });
+  }
+  if (triage.intent === 'menu') {
+    return emptyExtract({ action: 'menu', confidence: 'high', source: 'keyword' });
+  }
+  if (triage.intent === 'faq') {
+    return emptyExtract({
+      action: faqActionFromText(textBody),
+      confidence: 'high',
+      source: 'keyword',
+    });
+  }
+  if (triage.intent === 'cancel') {
+    return emptyExtract({ action: 'cancel', confidence: 'high', source: 'keyword' });
+  }
+
+  const named = matchServiceMention(textBody, services);
+  if (named) {
+    return emptyExtract({
+      action: 'select_service',
+      service_id: named.id,
+      service_name: named.name,
+      confidence: 'high',
+      source: 'parser',
+    });
+  }
+
+  const semantic = await matchServiceSemantically({
+    business,
+    text: textBody,
+    services,
+    requestId,
+  });
+  if (semantic) {
+    return emptyExtract({
+      action: 'select_service',
+      service_id: semantic.id,
+      service_name: semantic.name,
+      confidence: 'medium',
+      source: 'nlu',
+    });
+  }
+
+  return finalizeGroundedExtract(emptyExtract({
+    action: 'unknown_service',
+    unknown_service_name: String(textBody || '').trim(),
+    confidence: 'high',
+    source: 'parser',
+  }));
+}
+
+/**
  * @param {TurnExtract} next
  * @param {string} text
  * @param {string} timezone
@@ -998,6 +1065,30 @@ async function extractTurnIntentImpl({
       }), textBody);
     }
   }
+
+  if (
+    !tappedId
+    && (wait === BOOKING_WAIT.SERVICE || step === CONVERSATION_STEPS.WAITING_FOR_SERVICE)
+  ) {
+    const pivot = triageUserIntent(textBody, { businessType: business.business_type, services });
+    if (pivot.intent === 'contact') {
+      return emptyExtract({ action: 'contact', confidence: 'high', source: 'keyword' });
+    }
+    if (pivot.intent === 'menu') {
+      return emptyExtract({ action: 'menu', confidence: 'high', source: 'keyword' });
+    }
+    if (pivot.intent === 'faq') {
+      return emptyExtract({
+        action: faqActionFromText(textBody),
+        confidence: 'high',
+        source: 'keyword',
+      });
+    }
+    if (pivot.intent === 'cancel') {
+      return emptyExtract({ action: 'cancel', confidence: 'high', source: 'keyword' });
+    }
+  }
+
   if (!tappedId && looksLikeNewBookingRequest(textBody, { services })) {
     // Cold-start book without a day/time — fall through when the utterance already
     // carries a slot so parsers below can fill date_text / time_text.
@@ -1013,14 +1104,8 @@ async function extractTurnIntentImpl({
             source: 'parser',
           });
         }
-        if (isTypedServiceAttempt(textBody)) {
-          return finalizeGroundedExtract(emptyExtract({
-            action: 'unknown_service',
-            unknown_service_name: String(textBody || '').trim(),
-            confidence: 'high',
-            source: 'parser',
-          }));
-        }
+        const duringWait = await resolveTypedServiceDuringWait(textBody, business, services, requestId);
+        if (duringWait) return duringWait;
       } else {
         return emptyExtract({
           action: 'book',
@@ -1368,12 +1453,8 @@ async function extractTurnIntentImpl({
     && triage.intent !== 'faq'
     && triage.intent !== 'cancel'
   ) {
-    return finalizeGroundedExtract(emptyExtract({
-      action: 'unknown_service',
-      unknown_service_name: String(textBody || '').trim(),
-      confidence: 'high',
-      source: 'parser',
-    }));
+    const duringWait = await resolveTypedServiceDuringWait(textBody, business, services, requestId);
+    if (duringWait) return duringWait;
   }
   const nlu = await extractBookingEntities({
     business,
