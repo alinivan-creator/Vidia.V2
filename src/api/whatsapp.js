@@ -399,7 +399,10 @@ async function processTwilioWebhook(body, requestId) {
         to: toRaw,
         toClean,
         bodyPreview: textBody.slice(0, 200),
+        inboundText: String(body?.Body ?? '').slice(0, 500),
         messageSid: body?.MessageSid,
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+        errorMessage: error instanceof Error ? error.message : String(error),
         alert: true,
       },
     });

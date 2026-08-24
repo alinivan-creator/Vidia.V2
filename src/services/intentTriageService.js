@@ -190,7 +190,7 @@ export function detectModificationIntent(text) {
   if (reschedulePatterns.some((re) => re.test(n))) {
     return 'reschedule';
   }
-  if (/\bmut\b/.test(n) && /\b(programar|rezervar|ora|data)\b/.test(n)) {
+  if (/\bmut\w*\b/.test(n) && /\b(programar|rezervar|ora|data)\w*\b/.test(n)) {
     return 'reschedule';
   }
   if (/\bmodific\w*/.test(n) && !looksLikeHoursOrPriceFaq(n)) {

@@ -57,6 +57,7 @@ import {
   shouldOfferServiceListNotUnknown,
   turnActionForBookingIntent,
 } from './bookingIntentMapper.js';
+import { isInFlightBookingContext } from './inFlightBookingSession.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -615,6 +616,46 @@ function firstDigitPair(text) {
 }
 
 /**
+ * Split "vineri 9:30 … muta la 15:00" into existing vs new slot hints for reschedule.
+ *
+ * @param {TurnExtract} extract
+ * @param {string} textBody
+ * @param {string} timezone
+ * @param {import('../schemas/extractionResult.js').ExtractionResult | null | undefined} [parsed]
+ * @returns {TurnExtract}
+ */
+function enrichRescheduleKeywordExtract(extract, textBody, timezone, parsed = null) {
+  if (parsed?.booking_intent === 'reschedule_request') {
+    return {
+      ...extract,
+      date_text: parsed.existing_appointment_date ?? extract.date_text,
+      time_text: parsed.existing_appointment_time_hhmm ?? extract.time_text,
+      reschedule_new_date: parsed.requested_reschedule_date ?? extract.reschedule_new_date ?? null,
+      reschedule_new_time: parsed.requested_reschedule_time_hhmm ?? extract.reschedule_new_time ?? null,
+    };
+  }
+
+  const raw = String(textBody || '');
+  const n = raw.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const mutaMatch = n.match(/\b(mut|muta|mutam|mutati|reprogram|schimb)\w*/);
+  const splitAt = mutaMatch?.index ?? -1;
+  const existingPart = splitAt > 0 ? raw.slice(0, splitAt) : raw;
+  const newPart = splitAt > 0 ? raw.slice(splitAt) : '';
+  const existing = parseRomanianDateTimeParts(existingPart, timezone);
+  const requested = newPart
+    ? parseRomanianDateTimeParts(newPart, timezone)
+    : { dateKey: null, timeHHmm: null };
+
+  return {
+    ...extract,
+    date_text: existing.dateKey || extract.date_text,
+    time_text: existing.timeHHmm || extract.time_text,
+    reschedule_new_date: requested.dateKey || extract.reschedule_new_date || null,
+    reschedule_new_time: requested.timeHHmm || extract.reschedule_new_time || null,
+  };
+}
+
+/**
  * Map Layer 1 ExtractionResult onto TurnExtract. Does not talk to the client.
  *
  * @param {import('../schemas/extractionResult.js').ExtractionResult} parsed
@@ -627,22 +668,49 @@ function firstDigitPair(text) {
  * @returns {TurnExtract}
  */
 function mapExtractionToTurnExtract(parsed, { textBody, isPendingHold, inModify, wait, timezone }) {
-  const mod = detectModificationIntent(textBody);
-  if (mod === 'cancel') {
+  if (parsed.booking_intent === 'reschedule_request') {
+    return emptyExtract({
+      action: 'reschedule',
+      date_text: parsed.existing_appointment_date,
+      time_text: parsed.existing_appointment_time_hhmm,
+      reschedule_new_date: parsed.requested_reschedule_date,
+      reschedule_new_time: parsed.requested_reschedule_time_hhmm,
+      confidence: confidenceBand(parsed.confidence),
+      source: 'nlu',
+      extraction: parsed,
+    });
+  }
+
+  if (parsed.booking_intent === 'cancellation') {
     return emptyExtract({
       action: isPendingHold ? 'cancel_pending' : 'cancel',
+      date_text: parsed.existing_appointment_date,
+      time_text: parsed.existing_appointment_time_hhmm,
+      confidence: confidenceBand(parsed.confidence),
+      source: 'nlu',
+      extraction: parsed,
+    });
+  }
+
+  const mod = detectModificationIntent(textBody);
+  if (mod === 'cancel') {
+    const cancelHints = parseRomanianDateTimeParts(textBody, timezone);
+    return emptyExtract({
+      action: isPendingHold ? 'cancel_pending' : 'cancel',
+      date_text: cancelHints.dateKey,
+      time_text: cancelHints.timeHHmm,
       confidence: 'high',
       source: 'keyword',
       extraction: parsed,
     });
   }
   if (mod === 'reschedule') {
-    return emptyExtract({
+    return enrichRescheduleKeywordExtract(emptyExtract({
       action: 'reschedule',
       confidence: 'high',
       source: 'keyword',
       extraction: parsed,
-    });
+    }), textBody, timezone, parsed);
   }
 
   const numeric = interpretNumericFreeText({
@@ -714,30 +782,6 @@ function mapExtractionToTurnExtract(parsed, { textBody, isPendingHold, inModify,
     action = bookingAction;
   } else if (parsed.extracted_date || parsed.extracted_time || parsed.extracted_service) {
     action = bookingAction;
-  }
-
-  if (parsed.booking_intent === 'reschedule_request') {
-    return emptyExtract({
-      action: 'reschedule',
-      date_text: parsed.existing_appointment_date,
-      time_text: parsed.existing_appointment_time_hhmm,
-      reschedule_new_date: parsed.requested_reschedule_date,
-      reschedule_new_time: parsed.requested_reschedule_time_hhmm,
-      confidence: confidenceBand(parsed.confidence),
-      source: 'nlu',
-      extraction: parsed,
-    });
-  }
-
-  if (parsed.booking_intent === 'cancellation') {
-    return emptyExtract({
-      action: isPendingHold ? 'cancel_pending' : 'cancel',
-      date_text: parsed.existing_appointment_date,
-      time_text: parsed.existing_appointment_time_hhmm,
-      confidence: confidenceBand(parsed.confidence),
-      source: 'nlu',
-      extraction: parsed,
-    });
   }
 
   const classifiedAction = turnActionForBookingIntent(parsed, isPendingHold);
@@ -1172,12 +1216,14 @@ async function extractTurnIntentImpl({
       });
     }
     if (routed === 'reschedule') {
-      return annotateModifyExtract(emptyExtract({
-        action: 'reschedule',
-        date_text: extractDateKey(textBody, tz),
-        confidence: 'high',
-        source: 'keyword',
-      }), textBody);
+      return annotateModifyExtract(
+        enrichRescheduleKeywordExtract(emptyExtract({
+          action: 'reschedule',
+          confidence: 'high',
+          source: 'keyword',
+        }), textBody, tz),
+        textBody,
+      );
     }
   }
 
@@ -1411,12 +1457,14 @@ async function extractTurnIntentImpl({
       });
     }
     if (routed === 'reschedule') {
-      return annotateModifyExtract(emptyExtract({
-        action: 'reschedule',
-        date_text: extractDateKey(textBody, tz),
-        confidence: 'high',
-        source: 'keyword',
-      }), textBody);
+      return annotateModifyExtract(
+        enrichRescheduleKeywordExtract(emptyExtract({
+          action: 'reschedule',
+          confidence: 'high',
+          source: 'keyword',
+        }), textBody, tz),
+        textBody,
+      );
     }
   }
 
