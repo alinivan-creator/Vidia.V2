@@ -63,6 +63,8 @@ function stemToken(token, groups) {
 /** @type {Set<string>} */
 const SERVICE_STOP_TOKENS = new Set([
   'si', 'sau', 'cu', 'la', 'de', 'pentru', 'un', 'o', 'the', 'and', 'for', 'or', 'with',
+  // Booking desire / filler — "vreau tuns" must still match "Tuns Clasic".
+  'vreau', 'vrea', 'doresc', 'aveti', 'puteti', 'sa', 'ma', 'imi', 'want', 'need', 'please',
 ]);
 
 /** Never treat menu / FAQ pivots as typed service names while the picker is open. */

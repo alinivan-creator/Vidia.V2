@@ -258,10 +258,38 @@ export function looksLikeOffTopicChat(text) {
   return false;
 }
 
+/**
+ * Opening-hours / schedule FAQ across verticals — not a booking for that day.
+ * "Ce program aveți mâine?", "Până la cât sunteți deschiși?"
+ * @param {string} text
+ */
+export function looksLikeOpeningHoursQuestion(text) {
+  const n = normalize(text);
+  if (!n) return false;
+  // Real booking phrasing wins over hours FAQ.
+  if (/\b(programar|rezervar|appointment)\b/.test(n) || /\b(book a|book an|want to book)\b/.test(n)) {
+    return false;
+  }
+  if (/\b(program|orar|orele|hours|opening)\b/.test(n) && !/\bprogramar/.test(n)) return true;
+  if (/\b(deschid|deschis|deschisi|deschise|inchid|inchis|inchisi|inchise)\b/.test(n)) return true;
+  if (/\b(pana la cat|de la cat|la ce ora|cat timp|cand sunteti|cand deschid|program de lucru|working hours|open until|close at)\b/.test(n)) {
+    return true;
+  }
+  return false;
+}
+
 export function looksLikeDatetimeOrSlot(text) {
   const n = normalize(text);
   if (!n) return false;
   if (looksLikeOffTopicChat(n)) return false;
+  // Day word inside an hours FAQ ("program mâine") is not a booking slot.
+  if (looksLikeOpeningHoursQuestion(n)) {
+    const hasClock = (
+      (/\b\d{1,2}([:.,]h?\d{2})?\b/.test(n) && /\b(la|ora|pe|at|am|pm)\b/.test(n))
+      || /\b\d{1,2}[:.,]\d{2}\b/.test(n)
+    );
+    if (!hasClock) return false;
+  }
   const days = [
     'luni', 'marti', 'miercuri', 'joi', 'vineri', 'sambata', 'duminica',
     'maine', 'azi', 'astazi', 'poimaine', 'ieri', 'alaltaieri', 'today', 'tomorrow', 'yesterday',
@@ -390,6 +418,8 @@ export function looksLikeNewBookingRequest(text, opts = {}) {
   if (looksLikeExistingAppointmentQuery(n)) return false;
   if (looksLikeBusinessFactQuestion(n)) return false;
   if (looksLikeOffTopicChat(n)) return false;
+  // "Până la cât sunteți deschiși mâine?" is hours FAQ — not booking via "la" + day.
+  if (looksLikeOpeningHoursQuestion(n)) return false;
   if (looksLikeAvailabilityQuestion(n)) return true;
   if (
     n === 'programare'
@@ -452,7 +482,7 @@ export function looksLikeGeneralBookingOnly(text, opts = {}) {
 
 /**
  * Instant keyword triage — no LLM. Keeps WhatsApp routing snappy.
- * Order: modify → list existing → callback → book → contact → faq → menu → unknown.
+ * Order: modify → list existing → callback → hours FAQ → book → contact → faq → menu → unknown.
  *
  * @param {string} text
  * @param {{ businessType?: string, services?: { id?: string, name?: string }[] }} [opts]
@@ -525,6 +555,11 @@ export function triageUserIntent(text, opts = {}) {
     return { intent: 'list_appointments', confidence: 'high', reason: 'list_existing_bookings' };
   }
 
+  // Hours/schedule FAQ must beat book — "maine" + "la" must not steal orar questions.
+  if (looksLikeOpeningHoursQuestion(n)) {
+    return { intent: 'faq', confidence: 'high', reason: 'opening_hours' };
+  }
+
   if (looksLikeNewBookingRequest(n, opts)) {
     if (opts.businessType === 'consulting') {
       return { intent: 'callback', confidence: 'high', reason: 'consulting_booking_interest' };
@@ -566,8 +601,15 @@ export function triageUserIntent(text, opts = {}) {
     'orele',
     'hours',
     'deschid',
+    'deschis',
+    'deschisi',
     'inchid',
+    'inchis',
+    'inchisi',
     'cand sunteti',
+    'pana la cat',
+    'de la cat',
+    'la ce ora',
     'durata',
     'cat dureaza',
   ];

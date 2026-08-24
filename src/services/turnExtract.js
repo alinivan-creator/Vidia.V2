@@ -44,6 +44,7 @@ import {
   looksLikeGeneralBookingOnly,
   looksLikeExistingAppointmentQuery,
   looksLikeOutOfScopeRequest,
+  looksLikeOpeningHoursQuestion,
   isExplicitConfirmReply,
   isExplicitCancelReply,
   isAffirmativeReply,
@@ -506,6 +507,10 @@ export function resolveDeterministicInbound({
     });
   }
   if (numeric.kind === 'date' || numeric.kind === 'time' || numeric.kind === 'datetime') {
+    // Hours FAQ with a day word ("program mâine") must not become a booking draft.
+    if (looksLikeOpeningHoursQuestion(textBody)) {
+      return null;
+    }
     const named = matchServiceMention(textBody, getBookingConfig(business).services);
     return emptyExtract({
       action: inModify ? 'reschedule' : 'book',
@@ -535,8 +540,10 @@ export function looksLikePersonName(text) {
 
 function faqActionFromText(text) {
   const n = normalize(text);
-  const hours = /\b(program|orar|orele|deschid|inchid|cand sunteti|hours|opening)\b/.test(n)
-    && !/\bprogramar/.test(n);
+  const hours = (
+    /\b(program|orar|orele|deschid|deschis|deschisi|deschise|inchid|inchis|inchisi|inchise|cand sunteti|hours|opening)\b/.test(n)
+    || /\b(pana la cat|de la cat|la ce ora|cat timp|program de lucru)\b/.test(n)
+  ) && !/\bprogramar/.test(n);
   const prices = /\b(pret|preturi|cost|tarif|price|prices)\b/.test(n);
   if (hours && prices) return 'hours_and_services';
   if (hours) return 'hours';
@@ -1285,15 +1292,22 @@ async function extractTurnIntentImpl({
         }
         const duringWait = await resolveTypedServiceDuringWait(textBody, business, services, requestId);
         if (duringWait) return duringWait;
-      } else {
+      } else if (named) {
         return emptyExtract({
           action: 'book',
-          service_id: named?.id ?? null,
-          service_name: named?.name ?? null,
+          service_id: named.id,
+          service_name: named.name,
+          confidence: 'high',
+          source: 'keyword',
+        });
+      } else if (looksLikeGeneralBookingOnly(textBody, { services })) {
+        return emptyExtract({
+          action: 'book',
           confidence: 'high',
           source: 'keyword',
         });
       }
+      // Catalog-ish text without a confident service match — let NLU resolve.
     }
   }
 
@@ -1544,6 +1558,25 @@ async function extractTurnIntentImpl({
     }
   }
 
+  // Contact / FAQ / menu beat deterministic date parsing ("maine" must not steal orar).
+  const triage = triageUserIntent(textBody, { businessType: business.business_type, services });
+  if (triage.intent === 'sms_opt_in' || triage.intent === 'sms_opt_out') {
+    return emptyExtract({ action: triage.intent, confidence: 'high', source: 'keyword' });
+  }
+  if (triage.intent === 'contact') {
+    return emptyExtract({ action: 'contact', confidence: 'high', source: 'keyword' });
+  }
+  if (triage.intent === 'menu') {
+    return emptyExtract({ action: 'menu', confidence: 'high', source: 'keyword' });
+  }
+  if (triage.intent === 'faq') {
+    return emptyExtract({
+      action: faqActionFromText(textBody),
+      confidence: 'high',
+      source: 'keyword',
+    });
+  }
+
   const deterministic = resolveDeterministicInbound({
     textBody,
     lastMenu,
@@ -1583,32 +1616,12 @@ async function extractTurnIntentImpl({
 
   if (
     step === CONVERSATION_STEPS.OFFERING_RESUME
-    && (isExplicitConfirmReply(textBody) || wantsSameExpiredBooking(textBody, triageUserIntent(textBody, { businessType: business.business_type, services })))
+    && (isExplicitConfirmReply(textBody) || wantsSameExpiredBooking(textBody, triage))
   ) {
     return emptyExtract({ action: 'resume_yes', confidence: 'high', source: 'state' });
   }
   if (step === CONVERSATION_STEPS.OFFERING_RESUME && isExplicitCancelReply(textBody)) {
     return emptyExtract({ action: 'resume_no', confidence: 'high', source: 'state' });
-  }
-
-  const triage = triageUserIntent(textBody, { businessType: business.business_type, services });
-  if (triage.intent === 'sms_opt_in' || triage.intent === 'sms_opt_out') {
-    return emptyExtract({ action: triage.intent, confidence: 'high', source: 'keyword' });
-  }
-
-  // Contact / FAQ / menu never wait on NLU — keyword triage is authoritative here.
-  if (triage.intent === 'contact') {
-    return emptyExtract({ action: 'contact', confidence: 'high', source: 'keyword' });
-  }
-  if (triage.intent === 'menu') {
-    return emptyExtract({ action: 'menu', confidence: 'high', source: 'keyword' });
-  }
-  if (triage.intent === 'faq') {
-    return emptyExtract({
-      action: faqActionFromText(textBody),
-      confidence: 'high',
-      source: 'keyword',
-    });
   }
 
   const inModify = step === CONVERSATION_STEPS.RESCHEDULING
