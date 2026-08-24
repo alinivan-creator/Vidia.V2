@@ -20,6 +20,14 @@ export const EXTRACTION_INTENTS = /** @type {const} */ ([
 
 export const TIME_WINDOWS = /** @type {const} */ (['morning', 'afternoon', 'evening']);
 
+export const BOOKING_INTENT_TYPES = /** @type {const} */ ([
+  'general_booking_request',
+  'specific_service_request',
+  'cancellation',
+  'question',
+  'other',
+]);
+
 const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const hhmm = z.string().regex(/^\d{2}:\d{2}$/);
 
@@ -32,6 +40,8 @@ export const ExtractionResultSchema = z.object({
   is_ambiguous: z.boolean(),
   ambiguity_reason: z.string().nullable(),
   confidence: z.number().min(0).max(1),
+  booking_intent: z.enum(BOOKING_INTENT_TYPES).nullable().optional(),
+  service_confidence: z.enum(['high', 'low']).nullable().optional(),
 });
 
 /** @typedef {z.infer<typeof ExtractionResultSchema>} ExtractionResult */
@@ -102,6 +112,12 @@ export function parseExtractionResult(raw) {
   const timeWindow = TIME_WINDOWS.includes(/** @type {typeof TIME_WINDOWS[number]} */ (windowRaw))
     ? windowRaw
     : null;
+  const bookingIntent = BOOKING_INTENT_TYPES.includes(/** @type {typeof BOOKING_INTENT_TYPES[number]} */ (row.booking_intent))
+    ? row.booking_intent
+    : null;
+  const serviceConfidence = row.service_confidence === 'high' || row.service_confidence === 'low'
+    ? row.service_confidence
+    : null;
   const candidate = {
     intent,
     extracted_service: service,
@@ -111,6 +127,8 @@ export function parseExtractionResult(raw) {
     is_ambiguous: Boolean(row.is_ambiguous),
     ambiguity_reason: reason,
     confidence: Number.isFinite(confidence) ? Math.min(1, Math.max(0, confidence)) : 0,
+    booking_intent: bookingIntent,
+    service_confidence: serviceConfidence,
   };
   const parsed = ExtractionResultSchema.safeParse(candidate);
   return parsed.success ? parsed.data : null;

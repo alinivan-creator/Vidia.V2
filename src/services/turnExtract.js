@@ -41,6 +41,7 @@ import {
   looksLikeOffTopicChat,
   looksLikeDatetimeOrSlot,
   looksLikeNewBookingRequest,
+  looksLikeGeneralBookingOnly,
   looksLikeExistingAppointmentQuery,
   looksLikeOutOfScopeRequest,
   isExplicitConfirmReply,
@@ -51,6 +52,10 @@ import {
   triageUserIntent,
 } from './intentTriageService.js';
 import { isLanguageCapabilityQuestion } from '../utils/uiI18n.js';
+import {
+  allowUnknownServiceError,
+  shouldOfferServiceListNotUnknown,
+} from './bookingIntentMapper.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -787,11 +792,27 @@ function applyCatalogMatches(extract, textBody, services, employees, timezone, o
  */
 async function applyCatalogMatchesWithSemantic(extract, textBody, services, employees, timezone, opts = {}, business = null, requestId = null) {
   let next = applyCatalogMatches(extract, textBody, services, employees, timezone, opts);
+  const extraction = next.extraction;
+  const offerList = shouldOfferServiceListNotUnknown(extraction)
+    || looksLikeGeneralBookingOnly(textBody, { services });
+
+  if (offerList && !matchServiceMention(textBody, services)) {
+    next.service_id = null;
+    next.service_name = null;
+    next.unknown_service_name = null;
+    if (next.action === 'unknown_service') next.action = 'book';
+    return next;
+  }
 
   const needsSemantic = !next.service_id
     && !next.unknown_service_name
     && business?.id
-    && (next.service_name || (next.action === 'book' && textBody));
+    && (next.service_name || (
+      next.action === 'book'
+      && textBody
+      && !offerList
+      && extraction?.booking_intent === 'specific_service_request'
+    ));
 
   if (needsSemantic) {
     const phrase = String(next.service_name || textBody || '').trim();
@@ -811,15 +832,21 @@ async function applyCatalogMatchesWithSemantic(extract, textBody, services, empl
       };
     } else if (!next.service_id && !next.unknown_service_name) {
       const leftover = String(next.service_name || '').trim();
-      if (leftover) {
+      const mayReject = allowUnknownServiceError(extraction)
+        || (!extraction?.booking_intent && leftover);
+      if (leftover && mayReject) {
         next.unknown_service_name = leftover;
         next.service_name = null;
       } else if (
         (next.action === 'book' || next.action === 'select_service')
         && isTypedServiceAttempt(textBody)
         && !matchServiceMention(textBody, services)
+        && allowUnknownServiceError(extraction)
       ) {
         next.unknown_service_name = String(textBody || '').trim();
+      } else {
+        next.unknown_service_name = null;
+        next.service_name = null;
       }
     }
   }
@@ -836,6 +863,9 @@ async function applyCatalogMatchesWithSemantic(extract, textBody, services, empl
  * @returns {Promise<TurnExtract | null>}
  */
 async function resolveTypedServiceDuringWait(textBody, business, services, requestId) {
+  if (looksLikeGeneralBookingOnly(textBody, { services })) {
+    return emptyExtract({ action: 'book', confidence: 'high', source: 'keyword' });
+  }
   if (!isTypedServiceAttempt(textBody)) return null;
 
   const triage = triageUserIntent(textBody, {
@@ -1129,6 +1159,13 @@ async function extractTurnIntentImpl({
             service_name: named.name,
             confidence: 'high',
             source: 'parser',
+          });
+        }
+        if (looksLikeGeneralBookingOnly(textBody, { services })) {
+          return emptyExtract({
+            action: 'book',
+            confidence: 'high',
+            source: 'keyword',
           });
         }
         const duringWait = await resolveTypedServiceDuringWait(textBody, business, services, requestId);

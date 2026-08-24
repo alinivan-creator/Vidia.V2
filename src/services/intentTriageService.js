@@ -1,5 +1,5 @@
 import { looksLikeBusinessFactQuestion } from '../utils/businessInfoLookup.js';
-import { mentionsCatalogVocabulary } from '../utils/serviceMatch.js';
+import { isTypedServiceAttempt, matchServiceMention, mentionsCatalogVocabulary } from '../utils/serviceMatch.js';
 import { detectTimeWindowFromText, looksLikeAvailabilityQuestion } from '../utils/timeWindow.js';
 
 export { looksLikeAvailabilityQuestion, detectTimeWindowFromText };
@@ -418,6 +418,26 @@ export function looksLikeNewBookingRequest(text, opts = {}) {
     return true;
   }
   return false;
+}
+
+/**
+ * Booking intent without naming a concrete catalog service (not "tuns si vopsit").
+ * @param {string} text
+ * @param {{ services?: { id?: string, name?: string }[] }} [opts]
+ */
+export function looksLikeGeneralBookingOnly(text, opts = {}) {
+  if (!looksLikeNewBookingRequest(text, opts)) return false;
+  const services = Array.isArray(opts.services) ? opts.services : [];
+  if (services.length && matchServiceMention(text, services)) return false;
+  const n = normalize(text);
+  if (
+    services.length
+    && isTypedServiceAttempt(text)
+    && mentionsCatalogVocabulary(n, services)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 /**
