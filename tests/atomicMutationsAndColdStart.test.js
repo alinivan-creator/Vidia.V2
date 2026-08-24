@@ -72,6 +72,9 @@ describe('Gratitude / thanks', () => {
     assert.equal(looksLikeGratitude('mersi frumos'), true);
     assert.equal(looksLikeGratitude('thanks'), true);
     assert.equal(looksLikeGratitude('thank you'), true);
+    assert.equal(looksLikeGratitude('In regula multumesc'), true);
+    assert.equal(looksLikeGratitude('ok multumesc'), true);
+    assert.equal(looksLikeGratitude('este in regula'), true);
     assert.equal(looksLikeGratitude('vreau o programare'), false);
   });
 

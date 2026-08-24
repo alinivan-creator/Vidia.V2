@@ -21,6 +21,8 @@ import {
 } from '../utils/datetime.js';
 import { parseRomanianDateTimeParts, coerceHHmmToOpenHours } from '../utils/roDateTime.js';
 import { getHoursForDate } from '../utils/workingHours.js';
+import { getBookingWait } from './bookingWaitState.js';
+import { logError } from '../db/loggerService.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 /** @typedef {import('../schemas/extractionResult.js').ExtractionResult} ExtractionResult */
@@ -140,7 +142,8 @@ export async function extractEntities({
 }) {
   if (!business?.id) return null;
 
-  const timezone = business.timezone || 'Europe/Bucharest';
+  try {
+    const timezone = business.timezone || 'Europe/Bucharest';
   const clock = buildSystemClock(timezone);
   const ctxData = convState?.context_data || {};
   const session = {
@@ -224,4 +227,20 @@ export async function extractEntities({
   }
 
   return parsed;
+  } catch (error) {
+    console.error('[entityExtractor] extractEntities failed', error);
+    await logError({
+      message: 'Gemini entity extraction crashed',
+      source: 'ai',
+      severity: 'error',
+      businessId: business.id,
+      requestId,
+      error,
+      details: {
+        textPreview: String(textBody ?? '').slice(0, 200),
+        step: convState?.current_step ?? null,
+      },
+    });
+    return null;
+  }
 }

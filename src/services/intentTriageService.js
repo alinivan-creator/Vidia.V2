@@ -65,11 +65,21 @@ export function refersToSavedAppointments(text) {
 export function looksLikeGratitude(text) {
   const n = normalize(text);
   if (!n) return false;
+  // Mixed thanks + booking/modify language is not pure courtesy.
+  if (/\b(programar|reprogram|anul|mut\w*|modific|schimb)\w*/.test(n)) return false;
+
   if (/^(multumesc|multumesc frumos|multumesc mult|mersi|mersi frumos|merci|thanks|thank you|thx|ty|ms|ms frumos)[\s!.❤️🙏]*$/i.test(n)) {
     return true;
   }
   if (/^(iti|va)\s+multumesc[\s!.❤️🙏]*$/i.test(n)) return true;
   if (/^thanks?\s+(a\s+lot|so\s+much)?[\s!.]*$/i.test(n)) return true;
+  // Post-flow acknowledgments: "In regula multumesc", "ok multumesc", "este in regula".
+  if (/^(in regula|este in regula|e in regula|ok|okay|perfect|bine|super|foarte bine)([,\s!.]+(multumesc|mersi|merci|thanks|frumos|mult))?[\s!.❤️🙏]*$/.test(n)) {
+    return true;
+  }
+  if (/\b(in regula|este in regula|e in regula)\b/.test(n) && /\b(multumesc|mersi|merci|thanks)\b/.test(n)) {
+    return true;
+  }
   return false;
 }
 

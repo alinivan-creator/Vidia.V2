@@ -81,3 +81,36 @@ describe('reschedule HH:MM crash audit', () => {
     assert.equal(extraction?.requested_reschedule_time_hhmm, '15:00');
   });
 });
+
+describe('post-flow courtesy after idle reset', () => {
+  const idleAfterFlow = {
+    current_step: CONVERSATION_STEPS.IDLE,
+    context_data: {
+      session_language: 'ro',
+      ai_disclosed: true,
+      recent_turns: [],
+      last_menu: null,
+      intent: null,
+      booking_wait: null,
+    },
+  };
+
+  for (const text of [
+    'In regula multumesc',
+    'in regula, multumesc',
+    'ok multumesc',
+    'este in regula',
+  ]) {
+    it(`extractTurnIntent handles post-flow courtesy: "${text}"`, async () => {
+      const extract = await extractTurnIntent({
+        business: salonBusiness,
+        textBody: text,
+        typedText: text,
+        convState: idleAfterFlow,
+        requestId: 'post-flow-courtesy',
+      });
+      assert.equal(extract.action, 'thanks');
+      assert.equal(extract.source, 'keyword');
+    });
+  }
+});
