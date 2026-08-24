@@ -23,8 +23,14 @@ export const TIME_WINDOWS = /** @type {const} */ (['morning', 'afternoon', 'even
 export const BOOKING_INTENT_TYPES = /** @type {const} */ ([
   'general_booking_request',
   'specific_service_request',
+  'reschedule_request',
   'cancellation',
+  'unable_to_attend',
+  'running_late',
   'question',
+  'off_topic',
+  'special_request',
+  'chitchat',
   'other',
 ]);
 
@@ -42,6 +48,14 @@ export const ExtractionResultSchema = z.object({
   confidence: z.number().min(0).max(1),
   booking_intent: z.enum(BOOKING_INTENT_TYPES).nullable().optional(),
   service_confidence: z.enum(['high', 'low']).nullable().optional(),
+  modify_target_raw: z.string().nullable().optional(),
+  modify_new_raw: z.string().nullable().optional(),
+  existing_appointment_date: ymd.nullable().optional(),
+  existing_appointment_time_hhmm: hhmm.nullable().optional(),
+  requested_reschedule_date: ymd.nullable().optional(),
+  requested_reschedule_time_hhmm: hhmm.nullable().optional(),
+  sensitive_topic: z.boolean().optional(),
+  contains_complaint_or_feedback: z.boolean().optional(),
 });
 
 /** @typedef {z.infer<typeof ExtractionResultSchema>} ExtractionResult */
@@ -118,6 +132,12 @@ export function parseExtractionResult(raw) {
   const serviceConfidence = row.service_confidence === 'high' || row.service_confidence === 'low'
     ? row.service_confidence
     : null;
+  const modifyTargetRaw = emptyToNull(row.modify_target_raw);
+  const modifyNewRaw = emptyToNull(row.modify_new_raw);
+  const existingDate = emptyToNull(row.existing_appointment_date);
+  const existingTime = emptyToNull(row.existing_appointment_time_hhmm);
+  const requestedDate = emptyToNull(row.requested_reschedule_date);
+  const requestedTime = emptyToNull(row.requested_reschedule_time_hhmm);
   const candidate = {
     intent,
     extracted_service: service,
@@ -129,6 +149,14 @@ export function parseExtractionResult(raw) {
     confidence: Number.isFinite(confidence) ? Math.min(1, Math.max(0, confidence)) : 0,
     booking_intent: bookingIntent,
     service_confidence: serviceConfidence,
+    modify_target_raw: modifyTargetRaw,
+    modify_new_raw: modifyNewRaw,
+    existing_appointment_date: existingDate && /^\d{4}-\d{2}-\d{2}$/.test(existingDate) ? existingDate : null,
+    existing_appointment_time_hhmm: existingTime && /^\d{2}:\d{2}$/.test(existingTime) ? existingTime : null,
+    requested_reschedule_date: requestedDate && /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) ? requestedDate : null,
+    requested_reschedule_time_hhmm: requestedTime && /^\d{2}:\d{2}$/.test(requestedTime) ? requestedTime : null,
+    sensitive_topic: Boolean(row.sensitive_topic),
+    contains_complaint_or_feedback: Boolean(row.contains_complaint_or_feedback),
   };
   const parsed = ExtractionResultSchema.safeParse(candidate);
   return parsed.success ? parsed.data : null;

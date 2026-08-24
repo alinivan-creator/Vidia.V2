@@ -2186,6 +2186,147 @@ function executeThanks(business, lang = 'ro') {
   });
 }
 
+function executeUnableToAttend(business, lang = 'ro') {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
+  return handlerResult({
+    status: 'CHAT',
+    action_performed: null,
+    next_required_step: null,
+    user_message_template_key: 'UNABLE_TO_ATTEND',
+    data: {
+      ui_language: uiLang,
+      client_message: bm('unableToAttendChoice', uiLang),
+    },
+  });
+}
+
+async function executeRunningLate({
+  business,
+  recipientPhone,
+  extract,
+  clientId,
+  requestId,
+  textBody,
+  lang = 'ro',
+}) {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
+  await createCallbackRequest({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    message: textBody || extract?.extraction?.modify_target_raw || 'running_late',
+    reason: 'running_late',
+    clientId,
+    requestId,
+  });
+  return handlerResult({
+    status: 'SUCCESS',
+    action_performed: 'RUNNING_LATE',
+    next_required_step: null,
+    user_message_template_key: 'RUNNING_LATE',
+    data: {
+      ui_language: uiLang,
+      client_message: bm('runningLateAck', uiLang),
+    },
+  });
+}
+
+async function executeSpecialRequest({
+  business,
+  recipientPhone,
+  extract,
+  clientId,
+  requestId,
+  textBody,
+  lang = 'ro',
+}) {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
+  await createCallbackRequest({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    message: textBody || 'special_request_unverified',
+    reason: 'special_request_unverified',
+    clientId,
+    requestId,
+  });
+  return handlerResult({
+    status: 'SUCCESS',
+    action_performed: 'SPECIAL_REQUEST',
+    next_required_step: null,
+    user_message_template_key: 'SPECIAL_REQUEST',
+    data: {
+      ui_language: uiLang,
+      client_message: bm('specialRequestForwarded', uiLang),
+    },
+  });
+}
+
+async function executeChitchat({
+  business,
+  recipientPhone,
+  extract,
+  clientId,
+  requestId,
+  textBody,
+  lang = 'ro',
+}) {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
+  const hasFeedback = Boolean(extract?.extraction?.contains_complaint_or_feedback);
+  if (hasFeedback) {
+    await createCallbackRequest({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      message: textBody || 'client_feedback',
+      reason: 'client_feedback',
+      clientId,
+      requestId,
+    });
+  }
+  return handlerResult({
+    status: 'SUCCESS',
+    action_performed: hasFeedback ? 'CLIENT_FEEDBACK' : 'CHITCHAT',
+    next_required_step: null,
+    user_message_template_key: 'CHITCHAT',
+    data: {
+      ui_language: uiLang,
+      client_message: bm('chitchatReply', uiLang),
+    },
+  });
+}
+
+async function executeSensitiveQuestion({
+  business,
+  recipientPhone,
+  extract,
+  clientId,
+  requestId,
+  textBody,
+  lang = 'ro',
+}) {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
+  const looked = lookupBusinessInfo(business, textBody);
+  if (looked.found && !extract?.extraction?.sensitive_topic) {
+    return executeMissingInfo(business, textBody, lang);
+  }
+  await createCallbackRequest({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    message: textBody || 'sensitive_topic',
+    reason: 'sensitive_topic',
+    clientId,
+    requestId,
+  });
+  return handlerResult({
+    status: 'CHAT',
+    action_performed: 'SENSITIVE_QUESTION',
+    next_required_step: null,
+    user_message_template_key: 'SENSITIVE_QUESTION',
+    data: {
+      ui_language: uiLang,
+      client_message: bm('sensitiveQuestionSafe', uiLang),
+    },
+  });
+}
+
 async function executeCancelAppointment({
   business,
   recipientPhone,
@@ -2757,11 +2898,57 @@ async function executeReschedule({
     }
   }
 
+  const newDateHint = extract.reschedule_new_date
+    || extract.extraction?.requested_reschedule_date
+    || null;
+  const newTimeHint = extract.reschedule_new_time
+    || extract.extraction?.requested_reschedule_time_hhmm
+    || null;
+
+  if (resolved.reason === 'slot_hint') {
+    if (newDateHint && newTimeHint) {
+      return applyReschedule({
+        business,
+        recipientPhone,
+        appointment,
+        slotStart: localToUtc(newDateHint, newTimeHint, business.timezone),
+        convState,
+        requestId,
+      });
+    }
+    if (newTimeHint && appointment?.selected_slot_start) {
+      const apptDate = formatDateKey(new Date(appointment.selected_slot_start), business.timezone);
+      return applyReschedule({
+        business,
+        recipientPhone,
+        appointment,
+        slotStart: localToUtc(apptDate, newTimeHint, business.timezone),
+        convState,
+        requestId,
+      });
+    }
+    if (newDateHint && !newTimeHint) {
+      return missingSlotsResult({
+        business,
+        recipientPhone,
+        draft: appointment,
+        service: appointment.selected_service,
+        employeeId,
+        dateKey: newDateHint,
+        requestId,
+        reasonKey: 'MISSING_SLOT',
+        conversationStep: CONVERSATION_STEPS.RESCHEDULING,
+        extraContext,
+        lang,
+      });
+    }
+  }
+
   // slot_hint = date/time named the existing booking; otherwise date/time is the NEW slot.
   const slotStep = nextRescheduleSlotStep({
     resolvedReason: resolved.reason,
-    extractDate: extract.date_text,
-    extractTime: extract.time_text,
+    extractDate: resolved.reason === 'slot_hint' ? newDateHint : (newDateHint || extract.date_text),
+    extractTime: resolved.reason === 'slot_hint' ? newTimeHint : (newTimeHint || extract.time_text),
     pendingDate: typeof convState.context_data?.pending_date_text === 'string'
       ? convState.context_data.pending_date_text
       : null,
@@ -3870,6 +4057,27 @@ async function dispatchExecute({
     return executeSetName({ business, recipientPhone, extract, activeDraft: draft, requestId, convState });
   }
   if (action === 'off_topic') return executeOffTopic(business, lang);
+  if (action === 'unable_to_attend') return executeUnableToAttend(business, lang);
+  if (action === 'running_late') {
+    return executeRunningLate({
+      business, recipientPhone, extract, clientId, requestId, textBody, lang,
+    });
+  }
+  if (action === 'special_request') {
+    return executeSpecialRequest({
+      business, recipientPhone, extract, clientId, requestId, textBody, lang,
+    });
+  }
+  if (action === 'chitchat') {
+    return executeChitchat({
+      business, recipientPhone, extract, clientId, requestId, textBody, lang,
+    });
+  }
+  if (action === 'sensitive_question') {
+    return executeSensitiveQuestion({
+      business, recipientPhone, extract, clientId, requestId, textBody, lang,
+    });
+  }
   if (action === 'missing_info') return executeMissingInfo(business, textBody, lang);
   if (action === 'show_services') {
     return executeServices(business, lang);

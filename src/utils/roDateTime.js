@@ -595,3 +595,17 @@ export function extractDateKey(text, timezone) {
 export function extractTimeText(text, timezone = 'Europe/Bucharest') {
   return parseRomanianDateTimeParts(text, timezone).timeHHmm;
 }
+
+/**
+ * Deterministic relative date/time resolution from raw client text (not LLM-calculated).
+ * Anchor: server reference date in the client's timezone.
+ *
+ * @param {string} rawText
+ * @param {string} timezone
+ * @param {Date} [referenceDate]
+ * @param {{ dayHours?: { open?: string, close?: string } | null }} [opts]
+ * @returns {import('./roDateTime.js').ParsedDateTime}
+ */
+export function resolveRelativeDate(rawText, timezone, referenceDate = new Date(), opts = {}) {
+  return parseRomanianDateTimeParts(String(rawText || ''), timezone, referenceDate, opts);
+}

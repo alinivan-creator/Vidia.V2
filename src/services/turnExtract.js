@@ -55,6 +55,7 @@ import { isLanguageCapabilityQuestion } from '../utils/uiI18n.js';
 import {
   allowUnknownServiceError,
   shouldOfferServiceListNotUnknown,
+  turnActionForBookingIntent,
 } from './bookingIntentMapper.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
@@ -71,6 +72,8 @@ const PREFIX = BOOKING_PREFIXES;
  * @property {Date | null} datetime
  * @property {string | null} date_text
  * @property {string | null} time_text
+ * @property {string | null} [reschedule_new_date]
+ * @property {string | null} [reschedule_new_time]
  * @property {'morning' | 'afternoon' | 'evening' | null} [time_window]
  * @property {string | null} appointment_id
  * @property {string | null} slot_id
@@ -713,6 +716,55 @@ function mapExtractionToTurnExtract(parsed, { textBody, isPendingHold, inModify,
     action = bookingAction;
   }
 
+  if (parsed.booking_intent === 'reschedule_request') {
+    return emptyExtract({
+      action: 'reschedule',
+      date_text: parsed.existing_appointment_date,
+      time_text: parsed.existing_appointment_time_hhmm,
+      reschedule_new_date: parsed.requested_reschedule_date,
+      reschedule_new_time: parsed.requested_reschedule_time_hhmm,
+      confidence: confidenceBand(parsed.confidence),
+      source: 'nlu',
+      extraction: parsed,
+    });
+  }
+
+  if (parsed.booking_intent === 'cancellation') {
+    return emptyExtract({
+      action: isPendingHold ? 'cancel_pending' : 'cancel',
+      date_text: parsed.existing_appointment_date,
+      time_text: parsed.existing_appointment_time_hhmm,
+      confidence: confidenceBand(parsed.confidence),
+      source: 'nlu',
+      extraction: parsed,
+    });
+  }
+
+  const classifiedAction = turnActionForBookingIntent(parsed, isPendingHold);
+  if (classifiedAction && classifiedAction !== 'book') {
+    return emptyExtract({
+      action: classifiedAction,
+      confidence: confidenceBand(parsed.confidence),
+      source: 'nlu',
+      extraction: parsed,
+    });
+  }
+
+  if (classifiedAction === 'book') {
+    return emptyExtract({
+      action: 'book',
+      service_name: parsed.extracted_service,
+      date_text: parsed.extracted_date,
+      time_text: parsed.extracted_time,
+      time_window: parsed.extracted_time
+        ? null
+        : (normalizeTimeWindow(parsed.time_window) || detectTimeWindowFromText(textBody)),
+      confidence: confidenceBand(parsed.confidence),
+      source: 'nlu',
+      extraction: parsed,
+    });
+  }
+
   return emptyExtract({
     action,
     service_name: parsed.extracted_service,
@@ -793,6 +845,23 @@ function applyCatalogMatches(extract, textBody, services, employees, timezone, o
 async function applyCatalogMatchesWithSemantic(extract, textBody, services, employees, timezone, opts = {}, business = null, requestId = null) {
   let next = applyCatalogMatches(extract, textBody, services, employees, timezone, opts);
   const extraction = next.extraction;
+
+  if (
+    extraction?.booking_intent === 'reschedule_request'
+    || extraction?.booking_intent === 'cancellation'
+    || extraction?.booking_intent === 'unable_to_attend'
+    || extraction?.booking_intent === 'running_late'
+    || extraction?.booking_intent === 'special_request'
+    || extraction?.booking_intent === 'chitchat'
+    || extraction?.booking_intent === 'off_topic'
+    || extraction?.booking_intent === 'question'
+  ) {
+    next.service_id = null;
+    next.service_name = null;
+    next.unknown_service_name = null;
+    return next;
+  }
+
   const offerList = shouldOfferServiceListNotUnknown(extraction)
     || looksLikeGeneralBookingOnly(textBody, { services });
 

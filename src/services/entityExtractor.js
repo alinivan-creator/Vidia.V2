@@ -12,7 +12,7 @@ import {
 import {
   completeTenantChat,
 } from './aiContextLoader.js';
-import { getBookingWait } from './bookingWaitState.js';
+import { recordBookingIntentClassification } from './bookingIntentAudit.js';
 import {
   formatDateKey,
   formatTime,
@@ -195,6 +195,13 @@ export async function extractEntities({
   const classification = parseBookingIntentClassification(raw);
   if (!classification) return null;
 
+  void recordBookingIntentClassification({
+    businessId: business.id,
+    requestId,
+    textBody,
+    classification,
+  });
+
   let parsed = mapBookingIntentToExtraction(
     classification,
     textBody,
@@ -203,13 +210,18 @@ export async function extractEntities({
   );
   if (!parsed) return null;
 
-  parsed = applyDeterministicDateTime(
-    parsed,
-    textBody,
-    timezone,
-    business,
-    session.pending_date,
-  );
+  if (
+    parsed.booking_intent !== 'reschedule_request'
+    && parsed.booking_intent !== 'cancellation'
+  ) {
+    parsed = applyDeterministicDateTime(
+      parsed,
+      textBody,
+      timezone,
+      business,
+      session.pending_date,
+    );
+  }
 
   return parsed;
 }

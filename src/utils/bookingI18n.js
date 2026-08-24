@@ -156,6 +156,26 @@ export const BOOKING_MSG = {
     ro: 'Reprogramarea pentru *{service}*{from}. Vă rugăm selectați mai întâi *noua zi* — intervalele orare apar după selectarea datei.',
     en: 'Rescheduling *{service}*{from}. Please select the *new day* first — time slots appear after you choose the date.',
   },
+  unableToAttendChoice: {
+    ro: 'Înțeleg că nu mai poți ajunge. Preferi să *anulezi* programarea sau să o *reprogramăm*? Scrie „anulez” sau „reprogramare”.',
+    en: 'I understand you cannot make it. Would you like to *cancel* or *reschedule*? Reply with “cancel” or “reschedule”.',
+  },
+  runningLateAck: {
+    ro: 'Am înregistrat că vei întârzia. Echipa a fost notificată. Mulțumim că ne-ai anunțat!',
+    en: 'We noted that you will be running late. The team has been notified. Thank you for letting us know!',
+  },
+  specialRequestForwarded: {
+    ro: 'Am transmis cererea colegilor — revin cu un răspuns după confirmare. Nu pot confirma automat slotul.',
+    en: 'We forwarded your request to the team — we will reply once confirmed. We cannot auto-book this slot.',
+  },
+  chitchatReply: {
+    ro: 'Cu plăcere! Dacă mai aveți nevoie de ceva, sunt aici.',
+    en: 'You are welcome! If you need anything else, I am here.',
+  },
+  sensitiveQuestionSafe: {
+    ro: 'Pentru întrebări medicale sau de siguranță, cel mai bine discutați direct cu echipa — am transmis mesajul colegilor.',
+    en: 'For medical or safety questions, it is best to speak with the team directly — we forwarded your message.',
+  },
 };
 
 /**
