@@ -4,11 +4,44 @@
  * on context_data.pending_action so the next turn is interpreted against that ask.
  */
 
-import { CONVERSATION_STEPS, setConversationStep } from '../db/conversationStateService.js';
+import { CONVERSATION_STEPS, setConversationStep, readLastMenu } from '../db/conversationStateService.js';
 import { BOOKING_WAIT, getBookingWait } from './bookingWaitState.js';
 import { readPendingOffer } from './pendingOfferService.js';
 import { resolveStaffMentionFromText } from '../db/employeeService.js';
 import { isAffirmativeReply, isExplicitCancelReply } from './intentTriageService.js';
+import { BOOKING_PREFIXES } from './flowIds.js';
+
+/**
+ * "Care listă?", "ce listă?", "which list?", "unde e lista?"
+ * @param {string} text
+ */
+export function looksLikeListClarification(text) {
+  const n = String(text ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!n) return false;
+  if (/\b(care|ce|unde|which|where|show|arata|afiiseaza|afiseaza)\b/.test(n)
+    && /\b(lista|list|optiuni|options|alegeri)\b/.test(n)) {
+    return true;
+  }
+  if (/^(lista|list|optiunile|the list)[\s?!.]*$/i.test(n)) return true;
+  return false;
+}
+
+/**
+ * @param {string} text
+ * @param {{ id: string }[]} options
+ */
+function resolveNumberedOption(text, options) {
+  const match = /^(\d{1,2})$/.exec(String(text ?? '').trim());
+  if (!match || !options?.length) return null;
+  const index = Number(match[1]) - 1;
+  if (index < 0 || index >= options.length) return null;
+  return options[index].id;
+}
 
 /** @typedef {'awaiting_employee_confirmation' | 'awaiting_employee_selection' | 'awaiting_service_selection' | 'awaiting_date' | 'awaiting_time' | 'awaiting_date_time' | 'awaiting_confirmation' | 'awaiting_reschedule_time' | 'awaiting_clarification' | null} PendingActionKind */
 
@@ -179,6 +212,11 @@ export function interpretPendingActionReply({
       return { action: 'abort', confidence: 'high', source: 'pending_action' };
     }
 
+    // "Care listă?" while awaiting staff — re-send employee picker, never services FAQ.
+    if (looksLikeListClarification(text)) {
+      return { action: 'reprompt_employee', confidence: 'high', source: 'pending_action' };
+    }
+
     // Merge offered / option names so alternate picks resolve even if the
     // live catalog query is briefly empty (still prefer real employee rows).
     const catalog = [...employees];
@@ -196,6 +234,32 @@ export function interpretPendingActionReply({
         continue;
       }
       catalog.push({ id: `name:${String(name).toLowerCase()}`, name: String(name), active: true });
+    }
+
+    // Numeric pick against the employee last_menu (1 = first specialist).
+    const lastMenu = readLastMenu(convState);
+    if (lastMenu?.kind === 'employee' && lastMenu.options?.length) {
+      const choiceId = resolveNumberedOption(text, lastMenu.options);
+      if (choiceId === BOOKING_PREFIXES.ANY_EMPLOYEE) {
+        return {
+          action: 'select_employee',
+          employee_id: 'any',
+          employee_name: null,
+          confidence: 'high',
+          source: 'pending_action',
+        };
+      }
+      if (choiceId?.startsWith(BOOKING_PREFIXES.EMPLOYEE)) {
+        const id = choiceId.slice(BOOKING_PREFIXES.EMPLOYEE.length);
+        const emp = catalog.find((e) => e.id === id);
+        return {
+          action: 'select_employee',
+          employee_id: id,
+          employee_name: emp?.name || null,
+          confidence: 'high',
+          source: 'pending_action',
+        };
+      }
     }
 
     if (

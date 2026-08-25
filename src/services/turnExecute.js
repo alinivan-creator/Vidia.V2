@@ -4609,6 +4609,54 @@ async function dispatchExecute({
     });
   }
 
+  if (action === 'reprompt_employee') {
+    const service = resolveServiceForBooking(business, {
+      extract,
+      activeDraft: draft,
+      draft,
+      convState,
+    });
+    if (!service) {
+      return missingService(business, recipientPhone, draft, requestId, lang, convState);
+    }
+    const bookable = await listBookableEmployeesForService(business, service.id);
+    if (bookable.length > 1) {
+      return askEmployeeChoiceResult({
+        business,
+        recipientPhone,
+        draft,
+        service,
+        employees: bookable,
+        requestId,
+        lang,
+      });
+    }
+    if (bookable.length === 1) {
+      return executeBook({
+        business,
+        recipientPhone,
+        extract: {
+          ...extract,
+          action: 'book',
+          employee_id: bookable[0].id,
+          employee_name: bookable[0].name,
+        },
+        clientId,
+        requestId,
+        activeDraft: draft,
+        convState,
+      });
+    }
+    return handlerResult({
+      status: 'ERROR',
+      user_message_template_key: 'ERROR_GENERIC',
+      data: {
+        client_message: bm('errEmployeeCalendarMissing', lang === 'en' ? 'en' : 'ro'),
+        ui_language: lang === 'en' ? 'en' : 'ro',
+      },
+    });
+  }
+
   if (action === 'select_appointment') {
     // Intent comes from conversation context set when listing appointments
     // (cancel vs reschedule). Must never ReferenceError — that surfaces as

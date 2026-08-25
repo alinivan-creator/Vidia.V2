@@ -458,6 +458,13 @@ export function resolveDeterministicInbound({
   now = new Date(),
 }) {
   const loneNumber = /^\d{1,2}$/.test(String(textBody ?? '').trim());
+  if (wait === BOOKING_WAIT.EMPLOYEE && loneNumber && lastMenu?.options?.length) {
+    const empMenu = lastMenu.kind === 'employee' ? lastMenu : null;
+    if (empMenu) {
+      const choiceId = resolveNumberedChoice(textBody, empMenu.options);
+      if (choiceId) return extractFromChoiceId(choiceId, {}, business);
+    }
+  }
   if (wait === BOOKING_WAIT.SERVICE && loneNumber) {
     const catalog = getBookingConfig(business).services;
     const serviceMenu = lastMenu?.kind === 'service' && lastMenu.options?.length
@@ -1892,7 +1899,7 @@ async function extractTurnIntentImpl({
       'menu', 'contact', 'list_appointments', 'callback', 'hours', 'services', 'hours_and_services',
       'missing_info', 'resolve_clarification', 'clarify_needed', 'abort', 'set_name',
       'select_service', 'select_employee', 'accept_offer', 'resume_yes', 'resume_no',
-      'unknown_service', 'show_services',
+      'unknown_service', 'show_services', 'reprompt_employee',
     ]);
     if (hasTemporal || leavePicker.has(extract.action)) {
       return extract;

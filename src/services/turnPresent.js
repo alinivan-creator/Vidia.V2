@@ -688,6 +688,7 @@ export async function presentTurn({
     'ASK_TIME',
     'MISSING_SLOT',
     'MISSING_SERVICE',
+    'MISSING_EMPLOYEE',
     'MISSING_APPOINTMENT',
     'UNKNOWN_SERVICE',
     'COLLEAGUE_FALLBACK',
@@ -735,6 +736,7 @@ export async function presentTurn({
     const kind = String(result.menu.kind || '');
     const wantsList = kind === 'day_grid'
       || kind === 'service'
+      || kind === 'employee'
       || kind === 'modify'
       || (kind === 'time_grid' && d.ui === 'list_picker')
       || (kind === 'time_grid' && result.menu.options.length > 3);
@@ -743,23 +745,38 @@ export async function presentTurn({
       const buttonLabel = en
         ? (kind === 'day_grid' ? t('listDays', 'en')
           : kind === 'service' ? t('listServices', 'en')
-            : kind === 'modify' ? t('listAppointments', 'en')
-              : t('listTimes', 'en'))
+            : kind === 'employee' ? t('listTeam', 'en')
+              : kind === 'modify' ? t('listAppointments', 'en')
+                : t('listTimes', 'en'))
         : (typeof d.list_button === 'string' && d.list_button
           ? d.list_button
-          : (kind === 'day_grid' ? 'Zile disponibile' : kind === 'service' ? 'Servicii' : kind === 'modify' ? 'Programările tale' : 'Ore libere'));
+          : (kind === 'day_grid' ? 'Zile disponibile'
+            : kind === 'service' ? 'Servicii'
+              : kind === 'employee' ? 'Echipă'
+                : kind === 'modify' ? 'Programările tale'
+                  : 'Ore libere'));
       const sectionTitle = en
         ? (kind === 'day_grid' ? t('sectionDays', 'en')
           : kind === 'service' ? t('sectionServices', 'en')
-            : kind === 'modify' ? t('sectionAppointments', 'en')
-              : t('sectionTimes', 'en'))
-        : (kind === 'day_grid' ? 'Zile' : kind === 'service' ? 'Servicii' : kind === 'modify' ? 'Programări' : 'Ore');
+            : kind === 'employee' ? t('sectionTeam', 'en')
+              : kind === 'modify' ? t('sectionAppointments', 'en')
+                : t('sectionTimes', 'en'))
+        : (kind === 'day_grid' ? 'Zile'
+          : kind === 'service' ? 'Servicii'
+            : kind === 'employee' ? 'Echipă'
+              : kind === 'modify' ? 'Programări'
+                : 'Ore');
       const rowDesc = en
         ? (kind === 'day_grid' ? t('available', 'en')
           : kind === 'service' ? t('fromCatalog', 'en')
-            : kind === 'modify' ? t('activeBooking', 'en')
-              : t('freeSlot', 'en'))
-        : (kind === 'day_grid' ? 'Disponibil' : kind === 'service' ? 'Din catalog' : kind === 'modify' ? 'Programare activă' : 'Liber');
+            : kind === 'employee' ? t('teamMember', 'en')
+              : kind === 'modify' ? t('activeBooking', 'en')
+                : t('freeSlot', 'en'))
+        : (kind === 'day_grid' ? 'Disponibil'
+          : kind === 'service' ? 'Din catalog'
+            : kind === 'employee' ? 'Specialist'
+              : kind === 'modify' ? 'Programare activă'
+                : 'Liber');
       const listOptions = localizeMenuOptions(result.menu.options, lang);
       await sendInteractiveList({
         business,
