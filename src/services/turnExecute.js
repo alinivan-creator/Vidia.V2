@@ -2001,15 +2001,30 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
     excludeEventIds: ownEventId ? [ownEventId] : [],
     requestId,
   });
-  // Spec race check: live FreeBusy on the chosen calendar immediately before write.
-  const freeBusyBusy = await isGoogleSlotBusy({
-    business,
-    startIso: startDate.toISOString(),
-    endIso: endDate.toISOString(),
-    calendarId: confirmCalId,
-    requestId,
-  });
+  // FreeBusy sees our own Google HOLD as busy — skip when we already hold this slot.
+  // External conflicts are covered by hasExternalGoogleOverlap + cache checks above.
+  const freeBusyBusy = ownEventId
+    ? false
+    : await isGoogleSlotBusy({
+      business,
+      startIso: startDate.toISOString(),
+      endIso: endDate.toISOString(),
+      calendarId: confirmCalId,
+      requestId,
+    });
   if (!stillAvailable || googleConflict || freeBusyBusy) {
+    console.error('[booking] confirm.slot_rejected', {
+      requestId,
+      draftId: draft.id,
+      slotStart: startDate.toISOString(),
+      calendarId: confirmCalId,
+      employeeId: confirmEmpId,
+      ownEventId,
+      stillAvailable,
+      googleConflict,
+      freeBusyBusy,
+      excludeEventIds,
+    });
     await cancelOrResetDraftWithCalendar({
       business,
       draftId: draft.id,

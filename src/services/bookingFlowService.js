@@ -1202,13 +1202,19 @@ async function handleConfirmBooking({ business, recipientPhone, draft, requestId
     employeeId: empId,
   });
 
+  const ownEventId = typeof draft.google_event_id === 'string' ? draft.google_event_id.trim() : null;
+  const excludeGoogleEventIds = [
+    pendingHoldCacheEventId(draft.id),
+    ...(ownEventId ? [ownEventId] : []),
+  ];
+
   const stillAvailable = await isSlotAvailable({
     business,
     slotId: confirmSlotId,
     durationMinutes: duration,
     excludeDraftId: draft.id,
     employeeId: empId,
-    excludeGoogleEventIds: [pendingHoldCacheEventId(draft.id)],
+    excludeGoogleEventIds,
   });
   if (!stillAvailable) {
     await cancelOrResetDraftWithCalendar({
