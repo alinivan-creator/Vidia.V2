@@ -1398,10 +1398,27 @@ async function holdRequestedSlot({
   }
 
   const slotId = encodeSlotId(slotStart, business.timezone);
+  const resolvedEmpId = employeeId || draftEmployeeId(draft);
   const { employee, calendarId, calendarMissing } = await resolveStaff(
     business,
-    { ...draft, employee_id: employeeId || draftEmployeeId(draft) },
+    { ...draft, employee_id: resolvedEmpId },
   );
+  console.log('[booking] hold.availability_check', {
+    requestId,
+    businessId: business.id,
+    employee_id: employee?.id ?? null,
+    employee_name: employee?.name ?? null,
+    // Exact calendar used for sync/availability (null = missing).
+    calendar_id: calendarId,
+    employee_google_calendar_id: employee?.google_calendar_id ?? null,
+    business_google_calendar_id: business.google_calendar_id ?? null,
+    calendar_missing: calendarMissing,
+    slot_id: slotId,
+    slot_start: slotStart.toISOString(),
+    slot_end: slotEnd.toISOString(),
+    // Hold path uses calendar_cache (events.list sync), NOT FreeBusy.
+    availability_source: 'calendar_cache',
+  });
   if (calendarMissing) {
     await logError({
       message: 'calendar_not_configured',
@@ -1425,18 +1442,32 @@ async function holdRequestedSlot({
       },
     });
   }
-  await lazySyncCalendar({
+  const syncResult = await lazySyncCalendar({
     business,
     requestId,
+    force: true,
     calendarId,
-    employeeId: employeeId || draftEmployeeId(draft),
+    employeeId: resolvedEmpId,
+  });
+  console.log('[booking] hold.lazy_sync', {
+    requestId,
+    calendar_id: calendarId,
+    employee_id: resolvedEmpId,
+    syncResult,
   });
   const available = await isSlotAvailable({
     business,
     slotId,
     durationMinutes: duration,
     excludeDraftId: draft.id,
-    employeeId: employeeId || draftEmployeeId(draft),
+    employeeId: resolvedEmpId,
+  });
+  console.log('[booking] hold.is_slot_available', {
+    requestId,
+    calendar_id: calendarId,
+    employee_id: resolvedEmpId,
+    slot_id: slotId,
+    available,
   });
   if (!available) {
     const preferredId = employeeId || draftEmployeeId(draft);

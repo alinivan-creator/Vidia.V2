@@ -90,11 +90,12 @@ export async function getBusyIntervalsFromCache({
     .gte('slot_end', timeMin.toISOString())
     .lte('slot_start', timeMax.toISOString());
 
-  // Staff-scoped: that employee + unassigned business holds.
-  // Any-staff (null): all busy rows — otherwise pending/confirmed with employee_id
-  // were invisible and the same wall-clock slot looked free.
+  // Staff-scoped: only that employee's busy rows.
+  // Do NOT include employee_id IS NULL — those are business-calendar sync rows and
+  // falsely block a dedicated staff calendar (false "slot busy" while Google looks free).
+  // Unassigned pending holds are covered by getSoftLockIntervals instead.
   if (employeeId) {
-    query = query.or(`employee_id.eq.${employeeId},employee_id.is.null`);
+    query = query.eq('employee_id', employeeId);
   }
 
   const { data, error } = await query;

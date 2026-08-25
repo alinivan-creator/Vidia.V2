@@ -620,11 +620,24 @@ export async function queryFreeBusyBatch({
   const cacheKey = freeBusyCacheKey(business.id, timeMinIso, timeMaxIso, ids);
   const cached = getCachedFreeBusy(cacheKey);
   if (cached && typeof cached === 'object' && cached !== null && 'calendars' in /** @type {object} */ (cached)) {
+    console.log('[google-calendar] freebusy.cache_hit', {
+      businessId: business.id,
+      requestId,
+      calendarIds: ids,
+      calendars: JSON.stringify(/** @type {{ calendars?: unknown }} */ (cached).calendars ?? {}),
+    });
     return /** @type {{ ok: boolean, calendars: Record<string, { busy: { start: string, end: string }[] }> }} */ (cached);
   }
 
   try {
     const calendar = await getCalendarClient(business, ids[0]);
+    console.log('[google-calendar] freebusy.request', {
+      businessId: business.id,
+      requestId,
+      timeMin: timeMinIso,
+      timeMax: timeMaxIso,
+      calendarIds: ids,
+    });
     const response = await calendar.freebusy.query({
       requestBody: {
         timeMin: timeMinIso,
@@ -650,20 +663,40 @@ export async function queryFreeBusyBatch({
       };
     }
 
-    const payload = { ok: true, calendars };
+    console.log('[google-calendar] freebusy.response', {
+      businessId: business.id,
+      requestId,
+      // Full per-calendar body (busy[] + errors like notFound / forbidden).
+      calendars: JSON.stringify(calendars),
+      httpStatus: response.status ?? 200,
+    });
+
+    const payload = { ok: true, calendars, httpStatus: response.status ?? 200 };
     setCachedFreeBusy(cacheKey, payload);
     return payload;
   } catch (error) {
-    console.error('[google-calendar] freebusy batch failed', error);
+    const httpStatus = googleErrorStatus(error);
+    console.error('[google-calendar] freebusy batch failed', {
+      businessId: business.id,
+      requestId,
+      calendarIds: ids,
+      httpStatus,
+      error: error instanceof Error ? error.message : String(error),
+      body: error?.response?.data ? JSON.stringify(error.response.data) : null,
+    });
     await logError({
       message: 'queryFreeBusyBatch failed',
       source: 'google_calendar',
       businessId: business.id,
       requestId,
       error,
-      details: { calendarIds: ids },
+      details: {
+        calendarIds: ids,
+        httpStatus,
+        responseBody: error?.response?.data ?? null,
+      },
     });
-    return { ok: false, calendars: {} };
+    return { ok: false, calendars: {}, httpStatus };
   }
 }
 
@@ -690,7 +723,19 @@ export async function isGoogleSlotBusy({
 
   const resolvedCalendarId = calendarId || business.google_calendar_id;
   // Spec §10: missing calendar must NOT look like "busy" — caller should fail loud.
-  if (!resolvedCalendarId || !startIso || !endIso) return false;
+  if (!resolvedCalendarId || !startIso || !endIso) {
+    console.log('[google-calendar] isGoogleSlotBusy.skip_missing_calendar', {
+      requestId,
+      calendarId: calendarId ?? null,
+      business_google_calendar_id: business.google_calendar_id ?? null,
+      resolvedCalendarId: resolvedCalendarId ?? null,
+      startIso,
+      endIso,
+      // Explicit: empty calendar_id → NOT treated as busy (returns false).
+      treatedAsBusy: false,
+    });
+    return false;
+  }
 
   const batch = await queryFreeBusyBatch({
     business,
@@ -700,6 +745,12 @@ export async function isGoogleSlotBusy({
     requestId,
   });
   if (!batch.ok) {
+    console.log('[google-calendar] isGoogleSlotBusy.api_failed_fail_closed', {
+      requestId,
+      calendarId: resolvedCalendarId,
+      httpStatus: batch.httpStatus ?? null,
+      treatedAsBusy: true,
+    });
     // Fail closed for confirm safety when we cannot verify a configured calendar.
     return true;
   }
@@ -709,6 +760,8 @@ export async function isGoogleSlotBusy({
       calendarId: resolvedCalendarId,
       errors: entry.errors,
       requestId,
+      // notFound / forbidden → config error, NOT busy
+      treatedAsBusy: false,
     });
     await logError({
       message: 'calendar_not_configured',
@@ -721,7 +774,16 @@ export async function isGoogleSlotBusy({
     return false;
   }
   const busy = entry?.busy || [];
-  return !isIntervalFreeInBusyBlocks(new Date(startIso), new Date(endIso), busy);
+  const isBusy = !isIntervalFreeInBusyBlocks(new Date(startIso), new Date(endIso), busy);
+  console.log('[google-calendar] isGoogleSlotBusy.result', {
+    requestId,
+    calendarId: resolvedCalendarId,
+    startIso,
+    endIso,
+    busyBlocks: busy.length,
+    isBusy,
+  });
+  return isBusy;
 }
 
 /**
