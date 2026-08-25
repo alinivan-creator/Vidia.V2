@@ -459,9 +459,26 @@ export async function removeStaleGoogleEvents({
     .filter((row) => row.google_event_id && !activeEventIds.includes(row.google_event_id))
     .map((row) => row.id);
 
+  // Employee calendars own all events now — orphan null-employee google_sync rows
+  // in this window falsely look "free" when staff-scoped reads ignore them.
+  if (employeeId) {
+    const { data: orphans } = await supabase
+      .from('calendar_cache')
+      .select('id, google_event_id')
+      .eq('business_id', businessId)
+      .eq('source', 'google_sync')
+      .is('employee_id', null)
+      .gte('slot_end', timeMin.toISOString())
+      .lte('slot_start', timeMax.toISOString());
+    for (const row of orphans || []) {
+      if (row?.id) staleIds.push(row.id);
+    }
+  }
+
   if (staleIds.length === 0) return;
 
-  const { error } = await supabase.from('calendar_cache').delete().in('id', staleIds);
+  const unique = [...new Set(staleIds)];
+  const { error } = await supabase.from('calendar_cache').delete().in('id', unique);
 
   if (error) {
     await logError({

@@ -10,7 +10,13 @@ import { listOpenDayWindows, listTimeWindows } from '../utils/bookingGrid.js';
 import { addCalendarDays, formatDateKey, getBookingConfig } from '../utils/datetime.js';
 import { getAvailableSlots } from '../db/cacheService.js';
 import { resolveServiceDurationMinutes } from '../utils/workingHours.js';
-import { getEmployeeById } from '../db/employeeService.js';
+import { getEmployeeById, resolveEmployeeCalendarId } from '../db/employeeService.js';
+import {
+  lazySyncCalendar,
+  queryFreeBusyBatch,
+  isIntervalFreeInBusyBlocks,
+  isBusinessMockMode,
+} from './googleCalendarService.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -132,10 +138,18 @@ export async function buildFlowSlotsForDate({
   if (!duration) {
     return [{ id: 'slot_none', title: 'Nicio oră liberă' }];
   }
-  const scopedEmployeeId = employeeId
-    ? (await getEmployeeById(employeeId, business.id))?.id || null
+  const scopedEmployee = employeeId
+    ? await getEmployeeById(employeeId, business.id)
     : null;
-  const slots = await getAvailableSlots({
+  const scopedEmployeeId = scopedEmployee?.id || null;
+  const calendarId = resolveEmployeeCalendarId(business, scopedEmployee);
+  await lazySyncCalendar({
+    business,
+    force: true,
+    calendarId,
+    employeeId: scopedEmployeeId,
+  });
+  let slots = await getAvailableSlots({
     business,
     durationMinutes: duration,
     limit: 24,
@@ -143,6 +157,19 @@ export async function buildFlowSlotsForDate({
     employeeId: scopedEmployeeId,
     dateKey,
   });
+  if (calendarId && slots.length && !isBusinessMockMode(business)) {
+    const batch = await queryFreeBusyBatch({
+      business,
+      timeMinIso: slots[0].start.toISOString(),
+      timeMaxIso: slots[slots.length - 1].end.toISOString(),
+      calendarIds: [calendarId],
+    });
+    const entry = batch.ok ? batch.calendars[calendarId] : null;
+    if (entry && !entry.errors) {
+      const busy = entry.busy || [];
+      slots = slots.filter((s) => isIntervalFreeInBusyBlocks(s.start, s.end, busy));
+    }
+  }
   const times = listTimeWindows(slots, business.timezone || 'Europe/Bucharest');
   if (!times.length) {
     return [{ id: 'slot_none', title: 'Nicio oră liberă' }];

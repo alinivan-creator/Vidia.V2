@@ -126,6 +126,8 @@ import {
   isMockEventId,
   hasExternalGoogleOverlap,
   isGoogleSlotBusy,
+  queryFreeBusyBatch,
+  isIntervalFreeInBusyBlocks,
 } from './googleCalendarService.js';
 import {
   buildColleagueFallbackOffer,
@@ -864,7 +866,7 @@ async function listSlotsForService({
   });
   // A full open day at 15-min steps can exceed 30 slots — never truncate early.
   const fetchLimit = dateKey ? Math.max(Number(limit) || 0, 64) : Math.max(Number(limit) || 8, 12);
-  const slots = await getAvailableSlots({
+  let slots = await getAvailableSlots({
     business,
     durationMinutes: duration,
     limit: fetchLimit,
@@ -874,6 +876,35 @@ async function listSlotsForService({
     timeWindow: timeWindow || null,
     excludeGoogleEventIds,
   });
+
+  // Live FreeBusy: never offer hours Google marks busy (cache can miss tags).
+  if (calendarId && slots.length && !isBusinessMockMode(business)) {
+    const timeMinIso = slots[0].start.toISOString();
+    const timeMaxIso = slots[slots.length - 1].end.toISOString();
+    const batch = await queryFreeBusyBatch({
+      business,
+      timeMinIso,
+      timeMaxIso,
+      calendarIds: [calendarId],
+      requestId,
+    });
+    const entry = batch.ok ? batch.calendars[calendarId] : null;
+    if (entry && !entry.errors) {
+      const busy = entry.busy || [];
+      const before = slots.length;
+      slots = slots.filter((s) => isIntervalFreeInBusyBlocks(s.start, s.end, busy));
+      if (before !== slots.length) {
+        console.log('[booking] listSlots.freebusy_filtered', {
+          requestId,
+          calendarId,
+          employeeId,
+          before,
+          after: slots.length,
+        });
+      }
+    }
+  }
+
   return { error: null, slots: slots.slice(0, fetchLimit), duration };
 }
 
@@ -1683,6 +1714,48 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
     return executeCallback({ business, recipientPhone, extract, clientId, requestId, textBody: 'consulting_booking_interest' });
   }
 
+  // Unknown specialist must stop the booking flow BEFORE service / date prompts.
+  // "programare la Andrei" must not fall through to "Ce serviciu dorești?".
+  if (extract.employee_name && !extract.employee_id && extract.employee_id !== 'any') {
+    const staff = await listEmployees(business.id, { activeOnly: true });
+    const names = staff.map((e) => e.name).filter(Boolean);
+    const staffOffer = names.length === 1
+      ? bm('errEmployeeOfferOne', lang, { staff: names[0] })
+      : names.length > 1
+        ? bm('errEmployeeOfferMany', lang, { staff: names.join(', ') })
+        : '';
+    await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: CONVERSATION_STEPS.IDLE,
+      context: {
+        draft_id: activeDraft?.id ?? null,
+        intent: 'book',
+        rejected_employee_name: extract.employee_name,
+        available_employees: names,
+      },
+      requestId,
+    });
+    console.log('[booking] refuse_unknown_employee', {
+      requestId,
+      rejected: extract.employee_name,
+      available: names,
+    });
+    return handlerResult({
+      status: 'MISSING_INFO',
+      next_required_step: null,
+      user_message_template_key: 'MISSING_EMPLOYEE',
+      data: {
+        client_message: bm('errEmployeeNotFound', lang, {
+          name: extract.employee_name,
+          staffOffer,
+        }),
+        services: staff.map((e) => ({ id: e.id, name: e.name })),
+        ui_language: lang === 'en' ? 'en' : 'ro',
+      },
+    });
+  }
+
   let service = resolveServiceForBooking(business, {
     extract,
     activeDraft,
@@ -1716,50 +1789,6 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
 
   if (!service) {
     return missingService(business, recipientPhone, draft, requestId, lang, convState);
-  }
-
-  if (extract.employee_name && !extract.employee_id) {
-    const staff = await listEmployeesForService(business.id, service?.id, { activeOnly: true });
-    const staffOffer = staff.length === 1
-      ? bm('errEmployeeOfferOne', lang, { staff: staff[0].name })
-      : staff.length > 1
-        ? bm('errEmployeeOfferMany', lang, { staff: staff.map((e) => e.name).join(', ') })
-        : '';
-    if (staff.length === 1) {
-      await persistPendingOffer({
-        businessId: business.id,
-        rawPhone: recipientPhone,
-        offer: {
-          kind: 'employee',
-          id: staff[0].id,
-          name: staff[0].name,
-          rejected: extract.employee_name,
-        },
-        requestId,
-        step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
-      });
-    } else {
-      await setConversationStep({
-        businessId: business.id,
-        rawPhone: recipientPhone,
-        step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
-        context: { draft_id: draft.id, intent: 'book', service },
-        requestId,
-      });
-    }
-    return handlerResult({
-      status: 'MISSING_INFO',
-      next_required_step: 'CHOOSE_EMPLOYEE',
-      user_message_template_key: 'MISSING_EMPLOYEE',
-      data: {
-        client_message: bm('errEmployeeNotFound', lang, {
-          name: extract.employee_name,
-          staffOffer,
-        }),
-        services: staff.map((e) => ({ id: e.id, name: e.name })),
-        ui_language: lang === 'en' ? 'en' : 'ro',
-      },
-    });
   }
 
   let working = draft;

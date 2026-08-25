@@ -25,16 +25,16 @@ export const BOOKING_MSG = {
     en: 'The booking process could not be started. Please try again.',
   },
   errEmployeeNotFound: {
-    ro: 'Nu am găsit un angajat numit *{name}* la noi. {staffOffer}',
-    en: 'We could not find a specialist named *{name}*. {staffOffer}',
+    ro: 'Nu putem continua cu *{name}* — acest specialist nu este în echipa noastră. {staffOffer}',
+    en: 'We cannot continue with *{name}* — that specialist is not on our team. {staffOffer}',
   },
   errEmployeeOfferOne: {
-    ro: 'Te putem programa la *{staff}* — continuăm?',
-    en: 'We can book you with *{staff}* — continue?',
+    ro: 'Specialist disponibil: *{staff}*. Scrie numele lui ca să continui, sau *programare* ca să reiei.',
+    en: 'Available specialist: *{staff}*. Type their name to continue, or *booking* to start over.',
   },
   errEmployeeOfferMany: {
-    ro: 'Poți alege: {staff}.',
-    en: 'You can choose: {staff}.',
+    ro: 'Specialiști disponibili: {staff}. Scrie numele ca să continui.',
+    en: 'Available specialists: {staff}. Type a name to continue.',
   },
   errEmployeeCalendarMissing: {
     ro: 'Momentan nu putem verifica agenda acestui specialist. Scrie *programare* sau alege alt coleg.',

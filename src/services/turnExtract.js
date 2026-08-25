@@ -1891,5 +1891,24 @@ async function extractTurnIntentImpl({
 
 export async function extractTurnIntent(params) {
   const extract = await extractTurnIntentImpl(params);
-  return annotateModifyExtract(extract, params.textBody);
+  const annotated = annotateModifyExtract(extract, params.textBody);
+
+  // Always re-bind staff from free text — early parser paths / NLU must not
+  // drop "la Andrei" / "cu Mircea" before execute can refuse unknowns.
+  try {
+    const services = getBookingConfig(params.business).services;
+    const employees = await listEmployees(params.business.id, { activeOnly: true });
+    const staff = resolveStaffMentionFromText(params.textBody || '', employees, services);
+    if (staff.employee_id) {
+      annotated.employee_id = staff.employee_id;
+      annotated.employee_name = staff.employee_name;
+    } else if (staff.employee_name) {
+      annotated.employee_id = null;
+      annotated.employee_name = staff.employee_name;
+    }
+  } catch {
+    // Extraction must still return even if employee lookup fails.
+  }
+
+  return annotated;
 }
