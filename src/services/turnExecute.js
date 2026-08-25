@@ -847,10 +847,19 @@ async function listSlotsForService({
   if (!duration) return { error: durationMissingClientMessage(service?.name), slots: [] };
 
   const employee = employeeId ? await getEmployeeById(employeeId, business.id) : null;
+  const calendarId = resolveEmployeeCalendarId(business, employee);
+  if (employeeId && employee && !calendarId && !isBusinessMockMode(business)) {
+    return {
+      error: bm('errEmployeeCalendarMissing', 'ro'),
+      slots: [],
+      duration: catalogDuration(business, service),
+    };
+  }
   await lazySyncCalendar({
     business,
     requestId,
-    calendarId: resolveEmployeeCalendarId(business, employee),
+    force: true,
+    calendarId,
     employeeId,
   });
   // A full open day at 15-min steps can exceed 30 slots — never truncate early.
@@ -889,6 +898,7 @@ async function listBookableDayWindows({
   await lazySyncCalendar({
     business,
     requestId,
+    force: true,
     calendarId: resolveEmployeeCalendarId(business, employee),
     employeeId,
   });

@@ -339,10 +339,13 @@ export async function migrateBusinessCalendarToEmployees(business) {
 
 /**
  * Free-text “la Andrei” / “cu Maria” when the name is not in the catalog.
+ * Never treats catalog service tokens as people ("programare la tuns").
+ *
  * @param {string} text
+ * @param {{ services?: Array<{ name?: string }> }} [opts]
  * @returns {string | null}
  */
-export function extractLikelyEmployeeName(text) {
+export function extractLikelyEmployeeName(text, opts = {}) {
   const n = String(text ?? '')
     .toLowerCase()
     .normalize('NFD')
@@ -350,11 +353,67 @@ export function extractLikelyEmployeeName(text) {
     .replace(/\s+/g, ' ')
     .trim();
   if (!n) return null;
-  const m = n.match(/\b(?:la|cu)\s+(?:domnul|doamna|dna\.?|dl\.?)?\s*([a-zA-Zăâîșț]{2,40})\b/);
-  if (!m?.[1]) return null;
-  const raw = m[1];
-  if (['ora', 'mine', 'tine', 'noi', 'voi', 'ei', 'ele', 'serviciu', 'programare'].includes(raw)) {
-    return null;
+
+  const serviceTokens = new Set();
+  for (const s of opts.services || []) {
+    const name = String(s?.name ?? '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+    for (const tok of name.split(/[^a-z0-9ăâîșț]+/).filter((t) => t.length >= 3)) {
+      serviceTokens.add(tok);
+    }
   }
-  return raw.charAt(0).toUpperCase() + raw.slice(1);
+  // Barber morphology that often follows "la" as a service, not a person.
+  for (const tok of ['tuns', 'tunde', 'tunsoare', 'barba', 'barbierit', 'aranjat', 'spalat', 'vopsit', 'coafat']) {
+    serviceTokens.add(tok);
+  }
+
+  const stop = new Set([
+    'ora', 'mine', 'tine', 'noi', 'voi', 'ei', 'ele', 'serviciu', 'programare',
+    'programari', 'dimineata', 'seara', 'pranz', 'maine', 'azi', 'luni', 'marti',
+    'miercuri', 'joi', 'vineri', 'sambata', 'duminica', 'septembrie', 'octombrie',
+    'noiembrie', 'decembrie', 'ianuarie', 'februarie', 'martie', 'aprilie', 'mai',
+    'iunie', 'iulie', 'august',
+  ]);
+
+  /** Prefer the last "la/cu X" that looks like a person (not a service/day). */
+  const re = /\b(?:la|cu)\s+(?:domnul|doamna|dna\.?|dl\.?)?\s*([a-zA-Zăâîșț]{2,40})\b/g;
+  let match;
+  /** @type {string | null} */
+  let best = null;
+  while ((match = re.exec(n)) !== null) {
+    const raw = match[1];
+    if (!raw || stop.has(raw) || serviceTokens.has(raw)) continue;
+    // Avoid treating service roots embedded in longer words as people.
+    if ([...serviceTokens].some((t) => raw === t || (t.length >= 4 && raw.startsWith(t)))) continue;
+    best = raw.charAt(0).toUpperCase() + raw.slice(1);
+  }
+  return best;
+}
+
+/**
+ * Resolve staff mention from free text against the employee catalog.
+ * Unknown "la Andrei" → { employee_name } without id (caller must ask / stop).
+ *
+ * @param {string} text
+ * @param {Employee[]} employees
+ * @param {Array<{ name?: string }> | null} [services]
+ * @returns {{ employee_id: string | null, employee_name: string | null }}
+ */
+export function resolveStaffMentionFromText(text, employees, services = null) {
+  const mentioned = matchEmployeeMention(text, employees || []);
+  if (mentioned) {
+    return { employee_id: mentioned.id, employee_name: mentioned.name };
+  }
+  const guessed = extractLikelyEmployeeName(text, { services: services || [] });
+  if (guessed) {
+    // Second chance: guess alone might match catalog ("Andrei" typed without "la").
+    const byGuess = matchEmployeeMention(guessed, employees || []);
+    if (byGuess) {
+      return { employee_id: byGuess.id, employee_name: byGuess.name };
+    }
+    return { employee_id: null, employee_name: guessed };
+  }
+  return { employee_id: null, employee_name: null };
 }

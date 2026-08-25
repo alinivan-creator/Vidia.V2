@@ -5,7 +5,7 @@
 
 import { getBookingConfig, localToUtc } from '../utils/datetime.js';
 import { getHoursForDate } from '../utils/workingHours.js';
-import { listEmployees, matchEmployeeMention, extractLikelyEmployeeName } from '../db/employeeService.js';
+import { listEmployees, matchEmployeeMention, extractLikelyEmployeeName, resolveStaffMentionFromText } from '../db/employeeService.js';
 import { CONVERSATION_STEPS, readLastMenu } from '../db/conversationStateService.js';
 import { looksLikeBusinessFactQuestion } from '../utils/businessInfoLookup.js';
 import { resolveAcceptedOffer } from './pendingOfferService.js';
@@ -890,9 +890,23 @@ function applyCatalogMatches(extract, textBody, services, employees, timezone, o
     next.employee_name = mentionedEmp.name;
   } else if (!next.employee_id) {
     // Keep unmatched names so execute can ask transparently (spec §11).
+    // Never invent a person from a service token ("la tuns").
     if (!next.employee_name) {
-      const guessed = extractLikelyEmployeeName(textBody);
+      const guessed = extractLikelyEmployeeName(textBody, { services });
       if (guessed) next.employee_name = guessed;
+    } else {
+      const byName = matchEmployeeMention(String(next.employee_name), employees);
+      if (byName) {
+        next.employee_id = byName.id;
+        next.employee_name = byName.name;
+      } else if (
+        // NLU set employee_name to a catalog service (e.g. "Tuns") — drop it.
+        matchServiceMention(String(next.employee_name), services)
+        && !extractLikelyEmployeeName(`la ${next.employee_name}`, { services })
+      ) {
+        next.employee_name = null;
+      }
+      // else: keep unknown person name → execute returns MISSING_EMPLOYEE
     }
   }
 
@@ -1671,6 +1685,7 @@ async function extractTurnIntentImpl({
     const mod = triageUserIntent(textBody, { businessType: business.business_type, services });
     if (mod.intent !== 'cancel') {
       const named = matchServiceMention(textBody, services);
+      const staff = resolveStaffMentionFromText(textBody, employees, services);
       return emptyExtract({
         action: inModify || mod.intent === 'reschedule' ? 'reschedule' : 'book',
         date_text: explicit.dateKey,
@@ -1678,6 +1693,8 @@ async function extractTurnIntentImpl({
         datetime: explicit.datetime,
         service_id: named?.id ?? null,
         service_name: named?.name ?? null,
+        employee_id: staff.employee_id,
+        employee_name: staff.employee_name,
         confidence: 'high',
         source: 'parser',
       });
@@ -1691,10 +1708,13 @@ async function extractTurnIntentImpl({
   ) {
     const named = matchServiceMention(textBody, services);
     if (named) {
+      const staff = resolveStaffMentionFromText(textBody, employees, services);
       return emptyExtract({
         action: wait === BOOKING_WAIT.SERVICE ? 'select_service' : 'book',
         service_id: named.id,
         service_name: named.name,
+        employee_id: staff.employee_id,
+        employee_name: staff.employee_name,
         confidence: 'high',
         source: 'parser',
       });

@@ -893,7 +893,9 @@ export async function hasExternalGoogleOverlap({
       error,
       details: { calendarId: resolvedCalendarId },
     });
-    return true;
+    // Do not invent "slot busy" on API errors — cache + soft-lock still protect.
+    // Fail-closed here caused Confirm to reject our own valid HOLD as "nu mai e liber".
+    return false;
   }
 }
 

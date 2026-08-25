@@ -13,6 +13,12 @@ describe('spec v2 multi-employee gaps', () => {
     assert.equal(extractLikelyEmployeeName('vreau tuns maine'), null);
   });
 
+  it('extractLikelyEmployeeName does not treat service as person', () => {
+    const services = [{ name: 'Tuns Clasic' }, { name: 'Tuns + Barba' }];
+    assert.equal(extractLikelyEmployeeName('vreau o programare la tuns', { services }), null);
+    assert.equal(extractLikelyEmployeeName('vreau un tuns la Andrei', { services }), 'Andrei');
+  });
+
   it('resolveEmployeeCalendarId uses only employee calendar (no business fallback)', () => {
     const business = { google_calendar_id: 'biz@cal.com' };
     const emp = { id: '1', name: 'Mihai', google_calendar_id: null };
