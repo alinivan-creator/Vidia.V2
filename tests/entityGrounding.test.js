@@ -98,4 +98,53 @@ describe('entity grounding (prompt validation)', () => {
     assert.match(DEFAULT_SYSTEM_PROMPT, /recepționer|cald/i);
     assert.match(DEFAULT_SYSTEM_PROMPT, /agresiv/i);
   });
+
+  it('7. executeTurnBody refuses unknown staff BEFORE booking machine (Darius rupture)', async () => {
+    const fs = await import('node:fs/promises');
+    const src = await fs.readFile(
+      new URL('../src/services/turnExecute.js', import.meta.url),
+      'utf8',
+    );
+    const fnStart = src.indexOf('async function executeTurnBody(params)');
+    assert.ok(fnStart > 0, 'executeTurnBody exists');
+    const body = src.slice(fnStart, fnStart + 2500);
+    const refuseCall = body.indexOf('await refuseUnknownEmployeeGrounding(');
+    const machineCall = body.indexOf('await runBookingMachine(');
+    assert.ok(refuseCall > 0, 'must await refuseUnknownEmployeeGrounding');
+    assert.ok(machineCall > refuseCall, 'employee grounding must run before runBookingMachine');
+  });
+
+  it('8. book + Darius (no service) → MISSING_EMPLOYEE, not MISSING_SERVICE', async () => {
+    const { executeTurn } = await import('../src/services/turnExecute.js');
+    const result = await executeTurn({
+      business: {
+        id: 'biz-darius-grounding',
+        name: 'Barber Test',
+        timezone: 'Europe/Bucharest',
+        booking_settings: {
+          services: [
+            { id: 'svc-tuns', name: 'Tuns Clasic', duration_minutes: 30, price_ron: 50 },
+          ],
+        },
+      },
+      recipientPhone: '+40700000111',
+      extract: {
+        action: 'book',
+        employee_name: 'Darius',
+        employee_id: null,
+        service_id: null,
+        confidence: 'high',
+        source: 'nlu',
+      },
+      convState: {
+        current_step: 'IDLE',
+        context_data: { session_language: 'ro' },
+      },
+      textBody: 'Salut, vreau sa fac si eu o programare la Darius',
+      requestId: 'test-darius-before-machine',
+    });
+    assert.equal(result.user_message_template_key, 'MISSING_EMPLOYEE');
+    assert.notEqual(result.user_message_template_key, 'MISSING_SERVICE');
+    assert.match(result.data?.client_message || '', /Darius/i);
+  });
 });

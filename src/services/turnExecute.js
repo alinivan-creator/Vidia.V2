@@ -35,6 +35,7 @@ import {
   getEmployeeById,
   resolveEmployeeCalendarId,
   listEmployeesForService,
+  resolveStaffMentionFromText,
 } from '../db/employeeService.js';
 import {
   formatSlotLabel,
@@ -466,6 +467,122 @@ function employeeMenu(employees, lang = 'ro') {
       { id: PREFIX.ANY_EMPLOYEE, title: en ? t('firstAvailable', 'en') : t('firstAvailable', 'ro') },
     ],
   };
+}
+
+/**
+ * Grounding §1 — unknown specialist must STOP before state-machine ASK_SERVICE.
+ * Called from executeTurnBody (before runBookingMachine) so it cannot be skipped.
+ *
+ * @returns {Promise<HandlerResult | null>}
+ */
+async function refuseUnknownEmployeeGrounding({
+  business,
+  recipientPhone,
+  extract,
+  textBody = '',
+  activeDraft = null,
+  requestId = null,
+  lang = 'ro',
+}) {
+  // Re-bind from live text — extract may have dropped the name before execute.
+  let employeeName = extract?.employee_name ? String(extract.employee_name).trim() : '';
+  let employeeId = extract?.employee_id || null;
+  if ((!employeeName || employeeId) && textBody) {
+    const services = getBookingConfig(business).services;
+    const staffCatalog = await listEmployees(business.id, { activeOnly: true });
+    const staff = resolveStaffMentionFromText(textBody, staffCatalog, services);
+    if (staff.employee_id) {
+      extract.employee_id = staff.employee_id;
+      extract.employee_name = staff.employee_name;
+      return null;
+    }
+    if (staff.employee_name) {
+      employeeName = staff.employee_name;
+      employeeId = null;
+      extract.employee_name = staff.employee_name;
+      extract.employee_id = null;
+    }
+  }
+
+  if (!employeeName || employeeId || employeeId === 'any') return null;
+
+  const staff = await listEmployees(business.id, { activeOnly: true });
+  const names = staff.map((e) => e.name).filter(Boolean);
+  const staffOffer = names.length === 1
+    ? bm('errEmployeeOfferOne', lang, { staff: names[0] })
+    : names.length > 1
+      ? bm('errEmployeeOfferMany', lang)
+      : '';
+  const menu = staff.length > 1 ? employeeMenu(staff, lang) : null;
+  if (staff.length === 1) {
+    await persistPendingOffer({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      offer: {
+        kind: 'employee',
+        id: staff[0].id,
+        name: staff[0].name,
+        rejected: employeeName,
+      },
+      requestId,
+      step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
+    });
+    await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
+      context: {
+        draft_id: activeDraft?.id ?? null,
+        intent: 'book',
+        rejected_employee_name: employeeName,
+        suggested_employee_id: staff[0].id,
+        available_employees: names,
+        service_id: extract.service_id ?? null,
+        service_name: extract.service_name ?? null,
+      },
+      mergeContext: true,
+      requestId,
+    });
+  } else {
+    await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
+      context: {
+        draft_id: activeDraft?.id ?? null,
+        intent: 'book',
+        rejected_employee_name: employeeName,
+        available_employees: names,
+        last_menu: menu,
+        service_id: extract.service_id ?? null,
+        service_name: extract.service_name ?? null,
+      },
+      mergeContext: true,
+      requestId,
+    });
+  }
+  console.log('[booking] grounding.unknown_employee', {
+    requestId,
+    rejected: employeeName,
+    available: names,
+    source: 'executeTurnBody_before_machine',
+  });
+  return handlerResult({
+    status: 'MISSING_INFO',
+    next_required_step: 'CHOOSE_EMPLOYEE',
+    user_message_template_key: 'MISSING_EMPLOYEE',
+    data: {
+      client_message: bm('errEmployeeNotFound', lang, {
+        name: employeeName,
+        staffOffer,
+      }),
+      services: staff.map((e) => ({ id: e.id, name: e.name })),
+      ui_language: lang === 'en' ? 'en' : 'ro',
+      list_button: lang === 'en' ? 'Team' : 'Echipă',
+      ui: menu ? 'list_picker' : undefined,
+    },
+    menu: menu || undefined,
+  });
 }
 
 function confirmMenu(lang = 'ro') {
@@ -1715,84 +1832,18 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
     return executeCallback({ business, recipientPhone, extract, clientId, requestId, textBody: 'consulting_booking_interest' });
   }
 
-  // Grounding §1: unknown specialist — STOP, offer real staff, wait (never silent Mihai).
-  if (extract.employee_name && !extract.employee_id && extract.employee_id !== 'any') {
-    const staff = await listEmployees(business.id, { activeOnly: true });
-    const names = staff.map((e) => e.name).filter(Boolean);
-    const staffOffer = names.length === 1
-      ? bm('errEmployeeOfferOne', lang, { staff: names[0] })
-      : names.length > 1
-        ? bm('errEmployeeOfferMany', lang)
-        : '';
-    const menu = staff.length > 1 ? employeeMenu(staff, lang) : null;
-    if (staff.length === 1) {
-      await persistPendingOffer({
-        businessId: business.id,
-        rawPhone: recipientPhone,
-        offer: {
-          kind: 'employee',
-          id: staff[0].id,
-          name: staff[0].name,
-          rejected: extract.employee_name,
-        },
-        requestId,
-        step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
-      });
-      await setConversationStep({
-        businessId: business.id,
-        rawPhone: recipientPhone,
-        step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
-        context: {
-          draft_id: activeDraft?.id ?? null,
-          intent: 'book',
-          rejected_employee_name: extract.employee_name,
-          suggested_employee_id: staff[0].id,
-          available_employees: names,
-          service_id: extract.service_id ?? null,
-          service_name: extract.service_name ?? null,
-        },
-        mergeContext: true,
-        requestId,
-      });
-    } else {
-      await setConversationStep({
-        businessId: business.id,
-        rawPhone: recipientPhone,
-        step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
-        context: {
-          draft_id: activeDraft?.id ?? null,
-          intent: 'book',
-          rejected_employee_name: extract.employee_name,
-          available_employees: names,
-          last_menu: menu,
-          service_id: extract.service_id ?? null,
-          service_name: extract.service_name ?? null,
-        },
-        mergeContext: true,
-        requestId,
-      });
-    }
-    console.log('[booking] grounding.unknown_employee', {
+  // Grounding §1 — also kept here for direct executeBook callers.
+  {
+    const refused = await refuseUnknownEmployeeGrounding({
+      business,
+      recipientPhone,
+      extract,
+      textBody: '',
+      activeDraft,
       requestId,
-      rejected: extract.employee_name,
-      available: names,
+      lang,
     });
-    return handlerResult({
-      status: 'MISSING_INFO',
-      next_required_step: 'CHOOSE_EMPLOYEE',
-      user_message_template_key: 'MISSING_EMPLOYEE',
-      data: {
-        client_message: bm('errEmployeeNotFound', lang, {
-          name: extract.employee_name,
-          staffOffer,
-        }),
-        services: staff.map((e) => ({ id: e.id, name: e.name })),
-        ui_language: lang === 'en' ? 'en' : 'ro',
-        list_button: lang === 'en' ? 'Team' : 'Echipă',
-        ui: menu ? 'list_picker' : undefined,
-      },
-      menu: menu || undefined,
-    });
+    if (refused) return refused;
   }
 
   let service = resolveServiceForBooking(business, {
@@ -4797,6 +4848,23 @@ export async function executeTurn(params) {
 
 async function executeTurnBody(params) {
   const extract = hydrateExtract(params.extract, params.convState, params.business?.timezone);
+  const lang = params.uiLang
+    ?? resolveClientLanguage(params.textBody ?? '', null, params.convState?.context_data);
+
+  // MUST run before runBookingMachine — that path returns MISSING_SERVICE and
+  // previously skipped executeBook employee grounding (Darius / Andrei bug).
+  {
+    const refused = await refuseUnknownEmployeeGrounding({
+      business: params.business,
+      recipientPhone: params.recipientPhone,
+      extract,
+      textBody: params.textBody || params.typedText || '',
+      activeDraft: params.activeDraft,
+      requestId: params.requestId,
+      lang,
+    });
+    if (refused) return refused;
+  }
 
   // Never run the new-booking state machine during modify/reschedule — it maps
   // RESCHEDULING→INIT, clears service_id, and asks for the service again while the

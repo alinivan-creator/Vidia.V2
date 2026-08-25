@@ -54,6 +54,8 @@ export async function processTurnPipeline({
     action: extract.action,
     source: extract.source,
     service_id: extract.service_id,
+    employee_id: extract.employee_id,
+    employee_name: extract.employee_name,
     datetime: extract.datetime instanceof Date ? extract.datetime.toISOString() : null,
     date_text: extract.date_text,
     time_text: extract.time_text,
