@@ -1,7 +1,10 @@
 /**
- * Tenant FAQ from Admin `booking_settings.business_info` + `ai_facts`.
- * Universal topic detection; answers are never hardcoded per business.
+ * Tenant FAQ from Admin `booking_settings.business_info` + `ai_facts`,
+ * plus operational tables already used by booking (employees, services).
  */
+
+import { matchEmployeeMention } from '../db/employeeService.js';
+import { matchServiceMention } from './serviceMatch.js';
 
 function normalize(text) {
   return String(text ?? '')
@@ -45,10 +48,55 @@ export function detectFactTopic(text) {
 }
 
 /**
- * Question about a tenant fact (parking / women / children), not a new booking.
+ * "Mihai lucrează la voi?", "aveți pe Stefan?", "does Andrei work here?"
+ * Not a booking request — roster / membership fact.
+ * @param {string} text
+ */
+export function looksLikeStaffRosterQuestion(text) {
+  const n = normalize(text);
+  if (!n) return false;
+  if (/\b(programar|rezervar|maine|azi|ora|la \d{1,2})\b/.test(n)) return false;
+  if (/\b(cine\s+lucreaza|ce\s+angajati|care\s+angajati|who\s+works|your\s+team|echipa\s+voastra)\b/.test(n)) {
+    return true;
+  }
+  if (/\b(lucreaza|lucrati|works?\s+here|work\s+with\s+you|on\s+(?:your\s+)?(?:staff|team)|in\s+(?:your\s+)?team|face\s+parte|din\s+echipa)\b/.test(n)) {
+    return true;
+  }
+  // "Aveți pe Mihai?" / "Do you have Andrei?"
+  if (
+    /\b(aveti|avem|exista|is\s+there|do\s+you\s+have)\b/.test(n)
+    && /[?]/.test(String(text ?? ''))
+    && !/\b(parcare|parking|wifi|card|program|orar|pret|servici|tuns|barba)\b/.test(n)
+    && !/\b(programar|rezervar)\b/.test(n)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * "Aveți Tuns Clasic?", "oferiți tuns + barbă?"
+ * @param {string} text
+ */
+export function looksLikeServiceCatalogQuestion(text) {
+  const n = normalize(text);
+  if (!n) return false;
+  if (/\b(programar|rezervar|maine|azi|ora|la \d{1,2}|vreau|as vrea|doresc)\b/.test(n)) return false;
+  if (!/[?]/.test(String(text ?? ''))
+    && !/\b(aveti|avem|oferiti|faceti|do you\s+offer|have\s+you)\b/.test(n)) {
+    return false;
+  }
+  return /\b(aveti|avem|oferiti|faceti|exista|do you\s+offer|is\s+there)\b/.test(n)
+    && /\b(servici|tuns|barba|coafat|vopsit|masaj|tratament|haircut|beard|service)\b/.test(n);
+}
+
+/**
+ * Question about a tenant fact (parking / women / children / staff roster), not a new booking.
  * @param {string} text
  */
 export function looksLikeBusinessFactQuestion(text) {
+  if (looksLikeStaffRosterQuestion(text)) return true;
+  if (looksLikeServiceCatalogQuestion(text)) return true;
   const topic = detectFactTopic(text);
   const n = normalize(text);
   // Availability / soft booking questions are not amenity FAQ.
@@ -72,10 +120,8 @@ export function looksLikeBusinessFactQuestion(text) {
     return true;
   }
   // Policy / amenity questions Admin may answer via ai_facts — never invent.
-  // Do not steal price/hours FAQ ("ce program aveți?", "care sunt prețurile?").
-  // Do not steal soft availability ("mai pe seară aveți liber?").
   if (
-    /\b(aveti|avem|primiti|acceptati|lucrati|do you|have you|are there)\b/.test(n)
+    /\b(aveti|avem|primiti|acceptati|lucrati|lucreaza|do you|have you|are there)\b/.test(n)
     && /[?]/.test(String(text ?? ''))
     && !/\b(programar|rezervar|maine|azi|luni|marti|miercuri|joi|vineri|ora|la \d|liber|libere|disponibil|disponibile|seara|dimineata|dupa[\s-]*amiaza)\b/.test(n)
     && !/\b(pret|preturi|price|prices|cost|tarif|program|orar|orele|hours|servici|detalii)\b/.test(n)
@@ -131,18 +177,168 @@ function matchAiFactLine(facts, text) {
 }
 
 /**
- * @param {import('../db/businessService.js').Business | { booking_settings?: Record<string, unknown> }} business
- * @param {string} text
- * @returns {{
- *   found: boolean,
- *   topic: string | null,
- *   topicLabelRo: string | null,
- *   topicLabelEn: string | null,
- *   polarity: 'yes' | 'no' | 'fact' | null,
- *   text: string | null,
- * }}
+ * Best-effort person token for roster questions (not catalog services).
+ * @param {string} normalized
+ * @param {Array<{ name?: string }>} services
  */
-export function lookupBusinessInfo(business, text) {
+function extractPersonGuess(normalized, services) {
+  const serviceTokens = new Set();
+  for (const s of services || []) {
+    for (const tok of normalize(s?.name || '').split(/[^a-z0-9]+/).filter((t) => t.length >= 3)) {
+      serviceTokens.add(tok);
+    }
+  }
+  const stop = new Set([
+    'lucreaza', 'lucrati', 'aveti', 'avem', 'exista', 'voi', 'voastra', 'voastre',
+    'la', 'pe', 'cu', 'din', 'echipa', 'echipei', 'angajat', 'angajati', 'coleg',
+    'works', 'here', 'your', 'team', 'staff', 'with', 'have', 'does', 'the',
+    'salon', 'salonul', 'clinica', 'programare', 'serviciu',
+  ]);
+  for (const tok of serviceTokens) stop.add(tok);
+
+  const m = normalized.match(
+    /\b(?:pe|la|cu)?\s*([a-z]{2,40})\s+(?:lucreaza|lucrati|works)|(?:lucreaza|lucrati|works)\s+(?:la\s+voi\s+)?([a-z]{2,40})\b/,
+  );
+  if (m) {
+    const raw = m[1] || m[2];
+    if (raw && !stop.has(raw)) return raw.charAt(0).toUpperCase() + raw.slice(1);
+  }
+  const lead = normalized.match(/^([a-z]{2,40})\s+(?:lucreaza|lucrati|works)\b/);
+  if (lead && !stop.has(lead[1])) {
+    return lead[1].charAt(0).toUpperCase() + lead[1].slice(1);
+  }
+  const pe = normalized.match(/\b(?:aveti|avem|exista)\s+(?:pe\s+)?([a-z]{2,40})\b/);
+  if (pe && !stop.has(pe[1])) {
+    return pe[1].charAt(0).toUpperCase() + pe[1].slice(1);
+  }
+  return null;
+}
+
+/**
+ * Ground staff/service answers on live operational rows (same data booking uses).
+ *
+ * @param {Object} params
+ * @param {string} params.text
+ * @param {Array<{ id?: string, name?: string, active?: boolean, service_ids?: string[] }>} [params.employees]
+ * @param {Array<{ id?: string, name?: string }>} [params.services]
+ */
+export function lookupOperationalInfo({ text, employees = undefined, services = undefined }) {
+  const n = normalize(text);
+  const staffLoaded = Array.isArray(employees);
+  const servicesLoaded = Array.isArray(services);
+  const staffList = staffLoaded ? employees.filter((e) => e?.name) : [];
+  const serviceList = servicesLoaded ? services.filter((s) => s?.name) : [];
+
+  if (staffLoaded
+    && (looksLikeStaffRosterQuestion(text) || /\b(lucreaza|works?\s+here|din\s+echipa|face\s+parte|angajat)\b/.test(n))) {
+    const hit = matchEmployeeMention(text, staffList);
+    if (hit) {
+      const svcNames = serviceList
+        .filter((s) => {
+          const ids = Array.isArray(hit.service_ids) ? hit.service_ids : [];
+          if (!ids.length) return true;
+          return ids.includes(s.id);
+        })
+        .map((s) => s.name)
+        .filter(Boolean)
+        .slice(0, 4);
+      const svcHintRo = svcNames.length ? ` (inclusiv ${svcNames.join(', ')})` : '';
+      const svcHintEn = svcNames.length ? ` (including ${svcNames.join(', ')})` : '';
+      return {
+        found: true,
+        topic: 'staff',
+        topicLabelRo: 'echipă',
+        topicLabelEn: 'team',
+        polarity: /** @type {'yes'} */ ('yes'),
+        text: null,
+        entity_name: hit.name,
+        text_ro: `Da, *${hit.name}* e în echipa noastră și poate fi programat${svcHintRo}.`,
+        text_en: `Yes, *${hit.name}* is on our team and available for bookings${svcHintEn}.`,
+      };
+    }
+
+    if (/\b(lucreaza|works?\s+here|din\s+echipa|face\s+parte|aveti\s+pe|do you have)\b/.test(n)) {
+      const guess = extractPersonGuess(n, serviceList);
+      if (guess) {
+        return {
+          found: true,
+          topic: 'staff',
+          topicLabelRo: 'echipă',
+          topicLabelEn: 'team',
+          polarity: /** @type {'no'} */ ('no'),
+          text: null,
+          entity_name: guess,
+          text_ro: `*${guess}* nu face parte din echipa noastră actuală.`,
+          text_en: `*${guess}* is not on our current team.`,
+        };
+      }
+    }
+
+    if (/\b(cine\s+lucreaza|ce\s+angajati|care\s+angajati|who\s+works|your\s+team|echipa)\b/.test(n)
+      && staffList.length) {
+      const names = staffList.map((e) => e.name).filter(Boolean);
+      return {
+        found: true,
+        topic: 'staff',
+        topicLabelRo: 'echipă',
+        topicLabelEn: 'team',
+        polarity: /** @type {'fact'} */ ('fact'),
+        text: null,
+        entity_name: null,
+        text_ro: `În echipă avem: *${names.join(', ')}*.`,
+        text_en: `Our team: *${names.join(', ')}*.`,
+      };
+    }
+  }
+
+  if (servicesLoaded && (looksLikeServiceCatalogQuestion(text) || (
+    /\b(aveti|avem|oferiti|faceti)\b/.test(n)
+    && /\b(tuns|barba|servici)\b/.test(n)
+    && /[?]/.test(String(text ?? ''))
+  ))) {
+    const svc = matchServiceMention(text, serviceList);
+    if (svc) {
+      return {
+        found: true,
+        topic: 'service_catalog',
+        topicLabelRo: 'servicii',
+        topicLabelEn: 'services',
+        polarity: /** @type {'yes'} */ ('yes'),
+        text: null,
+        entity_name: svc.name,
+        text_ro: `Da, oferim *${svc.name}* — poți face o programare scriind *programare*.`,
+        text_en: `Yes, we offer *${svc.name}* — type *booking* to schedule.`,
+      };
+    }
+  }
+
+  return {
+    found: false,
+    topic: null,
+    topicLabelRo: null,
+    topicLabelEn: null,
+    polarity: null,
+    text: null,
+  };
+}
+
+/**
+ * @param {import('../db/businessService.js').Business | { booking_settings?: Record<string, unknown>, faqs?: unknown }} business
+ * @param {string} text
+ * @param {{ employees?: unknown[], services?: unknown[] }} [operational]
+ */
+export function lookupBusinessInfo(business, text, operational = {}) {
+  const fromOps = lookupOperationalInfo({
+    text,
+    employees: Object.prototype.hasOwnProperty.call(operational, 'employees')
+      ? operational.employees
+      : undefined,
+    services: Object.prototype.hasOwnProperty.call(operational, 'services')
+      ? operational.services
+      : undefined,
+  });
+  if (fromOps.found) return fromOps;
+
   const topic = detectFactTopic(text);
   const spec = topic ? FACT_TOPICS[topic] : null;
   const settings = business?.booking_settings && typeof business.booking_settings === 'object'
@@ -201,10 +397,8 @@ export function lookupBusinessInfo(business, text) {
 }
 
 /**
- * Match a client question to a tenant FAQ row (question + answer tokens).
  * @param {Array<{ question?: string, answer?: string }> | null | undefined} faqs
  * @param {string} text
- * @returns {{ question: string, answer: string } | null}
  */
 export function matchBusinessFaq(faqs, text) {
   const list = Array.isArray(faqs) ? faqs : [];
@@ -243,17 +437,31 @@ export function matchBusinessFaq(faqs, text) {
 }
 
 /**
- * Natural reply from Admin data only — never invents a location or extra amenity.
- * When session language is EN, never return raw Romanian FAQ copy.
  * @param {ReturnType<typeof lookupBusinessInfo>} looked
  * @param {'ro' | 'en'} [lang]
  */
 export function formatBusinessInfoReply(looked, lang = 'ro') {
   if (!looked?.found) return null;
   const en = lang === 'en';
+  if (looked.text_ro || looked.text_en) {
+    return en ? (looked.text_en || looked.text_ro) : (looked.text_ro || looked.text_en);
+  }
   const label = en ? looked.topicLabelEn : looked.topicLabelRo;
   const raw = typeof looked.text === 'string' ? looked.text.trim() : '';
   const rawIsRo = looksMostlyRomanian(raw);
+
+  if (looked.topic === 'staff' && looked.entity_name) {
+    if (looked.polarity === 'yes') {
+      return en
+        ? `Yes, *${looked.entity_name}* is on our team and available for bookings.`
+        : `Da, *${looked.entity_name}* e în echipa noastră și poate fi programat.`;
+    }
+    if (looked.polarity === 'no') {
+      return en
+        ? `*${looked.entity_name}* is not on our current team.`
+        : `*${looked.entity_name}* nu face parte din echipa noastră actuală.`;
+    }
+  }
 
   if (looked.polarity === 'yes') {
     if (en) {
@@ -288,10 +496,8 @@ export function formatBusinessInfoReply(looked, lang = 'ro') {
     return label ? `Din păcate nu oferim ${label}.` : 'Din păcate nu oferim asta.';
   }
 
-  // polarity === 'fact' (FAQ / ai_facts line)
   if (raw) {
     if (en && rawIsRo) {
-      // Structured EN fallback — never leak RO admin copy into an EN session.
       if (looked.topic === 'card' || /card|plăt|plat/i.test(raw)) {
         return 'Yes, you can pay by card.';
       }

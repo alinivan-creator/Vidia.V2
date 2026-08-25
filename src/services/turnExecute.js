@@ -2895,7 +2895,8 @@ async function executeSensitiveQuestion({
   lang = 'ro',
 }) {
   const uiLang = lang === 'en' ? 'en' : 'ro';
-  const looked = lookupBusinessInfo(business, textBody);
+  const ops = await loadOperationalFactContext(business);
+  const looked = lookupBusinessInfo(business, textBody, ops);
   if (looked.found && !extract?.extraction?.sensitive_topic) {
     return executeMissingInfo(business, textBody, lang);
   }
@@ -3999,8 +4000,24 @@ async function executeListAppointments({ business, recipientPhone, activeDraft, 
   });
 }
 
+/**
+ * Load operational rows for grounded FAQ (same sources booking uses).
+ * @param {Business} business
+ */
+async function loadOperationalFactContext(business) {
+  const services = getBookingConfig(business).services || [];
+  let employees = [];
+  try {
+    employees = await listEmployees(business.id, { activeOnly: true });
+  } catch {
+    employees = [];
+  }
+  return { employees, services };
+}
+
 async function executeChat(business, textBody = '', lang = 'ro') {
-  const looked = lookupBusinessInfo(business, textBody);
+  const ops = await loadOperationalFactContext(business);
+  const looked = lookupBusinessInfo(business, textBody, ops);
   if (looked.found) {
     return handlerResult({
       status: 'SUCCESS',
@@ -4107,8 +4124,9 @@ function executeLanguageInfo(business, lang = 'ro') {
   });
 }
 
-function executeMissingInfo(business, textBody = '', lang = 'ro') {
-  const looked = lookupBusinessInfo(business, textBody);
+async function executeMissingInfo(business, textBody = '', lang = 'ro') {
+  const ops = await loadOperationalFactContext(business);
+  const looked = lookupBusinessInfo(business, textBody, ops);
   if (looked.found) {
     return handlerResult({
       status: 'SUCCESS',
