@@ -270,15 +270,16 @@
         <div class="border-t border-vidia-border pt-4">
           <h4 class="text-sm font-semibold mb-1">Google Calendar (Calendar Share)</h4>
           <p class="text-xs text-slate-500 mb-3">
+            <strong>Fallback:</strong> folosit doar dacă un angajat <em>nu</em> are calendar propriu setat mai jos
+            (sau când nu există angajați). Preferă calendar ID pe fiecare angajat.
             Clientul partajează calendarul cu email-ul Service Account Vidia (Make changes to events).
-            Autentificarea e globală din Setări sistem — aici salvezi doar email-ul calendarului partajat.
           </p>
           <label class="flex items-center gap-2 text-sm mb-3">
             <input id="bf-g-mock" type="checkbox" checked class="rounded border-vidia-border text-vidia-red focus:ring-vidia-red" />
             Mock Mode (fără API Google — rezervări locale)
           </label>
           <div>
-            <label class="text-sm font-medium">Google Calendar ID (email calendar)</label>
+            <label class="text-sm font-medium">Google Calendar ID fallback (email calendar business)</label>
             <input id="bf-calendar" class="mt-1 w-full border border-vidia-border rounded-lg px-3 py-2 text-sm" placeholder="salonulmeu@gmail.com" />
           </div>
           <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3">
@@ -334,8 +335,8 @@
             <button type="button" id="bf-add-employee" class="text-xs text-vidia-red hover:underline">+ Adaugă angajat</button>
           </div>
           <p class="text-xs text-slate-500 mb-3">
-            Fiecare angajat poate avea propriul Google Calendar partajat cu Service Account.
-            Widget-urile existente pe același calendar rămân sincronizate (busy slots).
+            Fiecare angajat activ <strong>trebuie</strong> să aibă propriul Google Calendar partajat cu Service Account.
+            Debifează serviciile pe care <em>nu</em> le prestează (implicit: toate). Angajații cu „toate” primesc automat serviciile noi din catalog.
           </p>
           <p id="bf-employees-warning" class="hidden text-xs text-vidia-red mb-3"></p>
           <div class="overflow-x-auto border border-vidia-border rounded-lg">
@@ -343,7 +344,8 @@
               <thead class="bg-vidia-light text-left">
                 <tr>
                   <th class="px-3 py-2 font-medium">Nume</th>
-                  <th class="px-3 py-2 font-medium">Calendar ID (email)</th>
+                  <th class="px-3 py-2 font-medium">Calendar ID (obligatoriu dacă Activ)</th>
+                  <th class="px-3 py-2 font-medium">Servicii</th>
                   <th class="px-3 py-2 font-medium w-20">Activ</th>
                   <th class="px-3 py-2 w-10"></th>
                 </tr>

@@ -195,11 +195,8 @@ export function renderHandlerResult(business, result) {
           ? 'Thank you. For bookings, business hours, or contact details, you may message us at any time.'
           : 'Vă mulțumim. Pentru programări, informații despre program sau contact, ne puteți scrie oricând.');
     case 'MISSING_EMPLOYEE': {
-      const names = (d.services || []).map((e) => e.name).filter(Boolean);
       const intro = d.client_message || t('specialistNotFoundIntro', lang);
-      return names.length
-        ? waJoin(waTitle('Specialist'), `${intro} ${names.join(', ')}.`)
-        : intro;
+      return waJoin(waTitle(en ? 'Specialist' : 'Specialist'), intro);
     }
     case 'MISSING_SERVICE':
       if (en) {

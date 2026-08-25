@@ -689,6 +689,7 @@ export async function isGoogleSlotBusy({
   if (isBusinessMockMode(business)) return false;
 
   const resolvedCalendarId = calendarId || business.google_calendar_id;
+  // Spec §10: missing calendar must NOT look like "busy" — caller should fail loud.
   if (!resolvedCalendarId || !startIso || !endIso) return false;
 
   const batch = await queryFreeBusyBatch({
@@ -699,10 +700,27 @@ export async function isGoogleSlotBusy({
     requestId,
   });
   if (!batch.ok) {
-    // Fail closed for confirm safety when we cannot verify.
+    // Fail closed for confirm safety when we cannot verify a configured calendar.
     return true;
   }
-  const busy = batch.calendars[resolvedCalendarId]?.busy || [];
+  const entry = batch.calendars[resolvedCalendarId];
+  if (entry?.errors) {
+    console.error('[google-calendar] freebusy calendar errors', {
+      calendarId: resolvedCalendarId,
+      errors: entry.errors,
+      requestId,
+    });
+    await logError({
+      message: 'calendar_not_configured',
+      source: 'google_calendar',
+      businessId: business.id,
+      requestId,
+      details: { calendarId: resolvedCalendarId, errors: entry.errors },
+    });
+    // Not "busy" — inaccessible calendar is a config error.
+    return false;
+  }
+  const busy = entry?.busy || [];
   return !isIntervalFreeInBusyBlocks(new Date(startIso), new Date(endIso), busy);
 }
 

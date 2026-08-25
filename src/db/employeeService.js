@@ -203,6 +203,14 @@ export async function upsertEmployeeAdmin(input) {
     metadata: baseMeta,
   };
 
+  if (payload.active && !payload.google_calendar_id) {
+    return {
+      employee: null,
+      error:
+        'Acest angajat nu are calendar Google conectat — dezactivează-l sau adaugă un calendar înainte de a-l activa.',
+    };
+  }
+
   if (input.id) {
     const { data, error } = await safeQuery(
       'employees',
@@ -246,12 +254,37 @@ export async function deleteEmployeeAdmin(businessId, employeeId) {
 }
 
 /**
- * Calendar ID for bookings: employee calendar if set, else business fallback.
+ * Calendar ID for bookings: employee calendar if set, else optional business fallback.
  * @param {import('./businessService.js').Business} business
  * @param {Employee | null | undefined} employee
+ * @param {{ allowBusinessFallback?: boolean }} [opts]
  * @returns {string | null}
  */
-export function resolveEmployeeCalendarId(business, employee) {
+export function resolveEmployeeCalendarId(business, employee, opts = {}) {
+  const allowFallback = opts.allowBusinessFallback !== false;
   if (employee?.google_calendar_id) return employee.google_calendar_id;
-  return business.google_calendar_id ?? null;
+  if (allowFallback) return business.google_calendar_id ?? null;
+  return null;
+}
+
+/**
+ * Free-text “la Andrei” / “cu Maria” when the name is not in the catalog.
+ * @param {string} text
+ * @returns {string | null}
+ */
+export function extractLikelyEmployeeName(text) {
+  const n = String(text ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!n) return null;
+  const m = n.match(/\b(?:la|cu)\s+(?:domnul|doamna|dna\.?|dl\.?)?\s*([a-zA-Zăâîșț]{2,40})\b/);
+  if (!m?.[1]) return null;
+  const raw = m[1];
+  if (['ora', 'mine', 'tine', 'noi', 'voi', 'ei', 'ele', 'serviciu', 'programare'].includes(raw)) {
+    return null;
+  }
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
 }

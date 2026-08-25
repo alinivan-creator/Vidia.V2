@@ -5,7 +5,7 @@
 
 import { getBookingConfig, localToUtc } from '../utils/datetime.js';
 import { getHoursForDate } from '../utils/workingHours.js';
-import { listEmployees, matchEmployeeMention } from '../db/employeeService.js';
+import { listEmployees, matchEmployeeMention, extractLikelyEmployeeName } from '../db/employeeService.js';
 import { CONVERSATION_STEPS, readLastMenu } from '../db/conversationStateService.js';
 import { looksLikeBusinessFactQuestion } from '../utils/businessInfoLookup.js';
 import { resolveAcceptedOffer } from './pendingOfferService.js';
@@ -888,8 +888,12 @@ function applyCatalogMatches(extract, textBody, services, employees, timezone, o
   if (mentionedEmp && !next.employee_id) {
     next.employee_id = mentionedEmp.id;
     next.employee_name = mentionedEmp.name;
-  } else if (next.employee_name && !next.employee_id) {
-    next.employee_name = null;
+  } else if (!next.employee_id) {
+    // Keep unmatched names so execute can ask transparently (spec §11).
+    if (!next.employee_name) {
+      const guessed = extractLikelyEmployeeName(textBody);
+      if (guessed) next.employee_name = guessed;
+    }
   }
 
   applyParsedDateTime(next, textBody, timezone, opts);

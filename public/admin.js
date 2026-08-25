@@ -518,23 +518,47 @@ $('#bf-add-service')?.addEventListener('click', () => {
   const current = collectServicesFromTable();
   current.push({ id: `svc-${Date.now()}`, name: '', price_ron: 50, duration_minutes: 30 });
   renderServicesRows(current);
+  // Keep employee service checkboxes in sync with catalog.
+  if ($('#bf-employees-body')?.querySelectorAll('tr').length) {
+    renderEmployeesRows(collectEmployeesFromTable());
+  }
 });
 
-/** @type {Array<{ id?: string; name: string; google_calendar_id?: string | null; active?: boolean }>} */
+/** @type {Array<{ id?: string; name: string; google_calendar_id?: string | null; active?: boolean; service_ids?: string[] }>} */
 let modalEmployees = [];
+
+function employeeServiceIds(emp, catalog) {
+  const ids = Array.isArray(emp?.service_ids) ? emp.service_ids.map(String) : [];
+  if (!ids.length) return catalog.map((s) => s.id); // empty = all checked
+  return ids;
+}
 
 function renderEmployeesRows(employees) {
   modalEmployees = (employees || []).map((e) => ({ ...e }));
   const body = $('#bf-employees-body');
   if (!body) return;
+  const catalog = collectServicesFromTable();
   body.innerHTML = '';
   modalEmployees.forEach((e, idx) => {
     const tr = document.createElement('tr');
-    tr.className = 'border-t border-vidia-border';
+    tr.className = 'border-t border-vidia-border align-top';
     tr.dataset.id = e.id || '';
+    const selected = new Set(employeeServiceIds(e, catalog));
+    const allSelected = catalog.length > 0 && catalog.every((s) => selected.has(s.id));
+    const serviceChecks = catalog.length
+      ? catalog.map((s) => `
+          <label class="flex items-center gap-1 text-[11px] whitespace-nowrap mr-2 mb-1">
+            <input type="checkbox" data-service-id="${esc(s.id)}" ${selected.has(s.id) ? 'checked' : ''} />
+            <span>${esc(s.name || s.id)}</span>
+          </label>`).join('')
+      : '<span class="text-[11px] text-slate-400">Adaugă mai întâi servicii în catalog.</span>';
     tr.innerHTML = `
       <td class="px-2 py-1"><input data-field="name" value="${esc(e.name || '')}" class="w-full border border-vidia-border rounded px-2 py-1 text-sm" /></td>
       <td class="px-2 py-1"><input data-field="calendar" value="${esc(e.google_calendar_id || '')}" class="w-full border border-vidia-border rounded px-2 py-1 text-sm" placeholder="email@gmail.com" /></td>
+      <td class="px-2 py-1">
+        <div class="flex flex-wrap max-w-xs" data-field="services">${serviceChecks}</div>
+        <p class="text-[10px] text-slate-400 mt-1">${allSelected || !catalog.length ? 'Toate bifate = toate serviciile (inclusiv cele noi).' : 'Listă explicită — serviciile noi din catalog NU se adaugă automat.'}</p>
+      </td>
       <td class="px-2 py-1 text-center"><input data-field="active" type="checkbox" ${e.active !== false ? 'checked' : ''} /></td>
       <td class="px-2 py-1 text-center"><button type="button" data-remove-emp="${idx}" class="text-vidia-red text-xs">✕</button></td>
     `;
@@ -552,18 +576,31 @@ function renderEmployeesRows(employees) {
 }
 
 function collectEmployeesFromTable() {
-  return [...($('#bf-employees-body')?.querySelectorAll('tr') || [])].map((tr, idx) => ({
-    id: tr.dataset.id || undefined,
-    name: tr.querySelector('[data-field="name"]')?.value?.trim() || `Angajat ${idx + 1}`,
-    google_calendar_id: tr.querySelector('[data-field="calendar"]')?.value?.trim() || null,
-    active: Boolean(tr.querySelector('[data-field="active"]')?.checked),
-    sort_order: idx,
-  }));
+  const catalog = collectServicesFromTable();
+  return [...($('#bf-employees-body')?.querySelectorAll('tr') || [])].map((tr, idx) => {
+    const checked = [...tr.querySelectorAll('[data-service-id]:checked')].map((el) => el.getAttribute('data-service-id'));
+    const allOn = catalog.length > 0 && checked.length === catalog.length;
+    return {
+      id: tr.dataset.id || undefined,
+      name: tr.querySelector('[data-field="name"]')?.value?.trim() || `Angajat ${idx + 1}`,
+      google_calendar_id: tr.querySelector('[data-field="calendar"]')?.value?.trim() || null,
+      active: Boolean(tr.querySelector('[data-field="active"]')?.checked),
+      // Spec §9: all checked → [] (means all services); partial → explicit ids
+      service_ids: allOn || !catalog.length ? [] : checked.filter(Boolean),
+      sort_order: idx,
+    };
+  });
 }
 
 $('#bf-add-employee')?.addEventListener('click', () => {
   const current = collectEmployeesFromTable();
-  current.push({ name: '', google_calendar_id: null, active: true, sort_order: current.length });
+  current.push({
+    name: '',
+    google_calendar_id: null,
+    active: true,
+    service_ids: [],
+    sort_order: current.length,
+  });
   renderEmployeesRows(current);
 });
 
@@ -691,6 +728,11 @@ async function persistEmployees(businessId) {
   const rows = collectEmployeesFromTable();
   for (const row of rows) {
     if (!row.name) continue;
+    if (row.active && !row.google_calendar_id) {
+      throw new Error(
+        `Angajatul „${row.name}” e activ fără Calendar ID. Adaugă calendarul Google sau debifează Activ.`,
+      );
+    }
     await api(`/businesses/${businessId}/employees`, {
       method: 'POST',
       body: JSON.stringify({ ...row, business_id: businessId }),

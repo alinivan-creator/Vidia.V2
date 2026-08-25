@@ -82,6 +82,7 @@ import {
 import { resolveClientLanguage } from '../utils/clientLanguage.js';
 import { t, tf } from '../utils/uiI18n.js';
 import { bm, businessLabel } from '../utils/bookingI18n.js';
+import { logError } from '../db/loggerService.js';
 import {
   runWithServiceDisplay,
   svcDisplay,
@@ -113,7 +114,7 @@ import {
   cancelOrResetDraftWithCalendar,
   purgeDuplicatePendingHoldsForPhone,
 } from './pendingExpiryService.js';
-import { clearPendingOffer } from './pendingOfferService.js';
+import { clearPendingOffer, persistPendingOffer } from './pendingOfferService.js';
 import { BOOKING_PREFIXES, MOD_PREFIX } from './flowIds.js';
 import {
   lazySyncCalendar,
@@ -744,13 +745,15 @@ async function askWhichAppointment({
   });
 }
 
-async function resolveStaff(business, draftOrAppt) {
+async function resolveStaff(business, draftOrAppt, opts = {}) {
   const empId = draftEmployeeId(draftOrAppt);
   const employee = empId ? await getEmployeeById(empId, business.id) : null;
+  const allowBusinessFallback = opts.allowBusinessFallback !== false && !employee;
   return {
     employeeId: empId,
     employee,
-    calendarId: resolveEmployeeCalendarId(business, employee),
+    calendarId: resolveEmployeeCalendarId(business, employee, { allowBusinessFallback }),
+    calendarMissing: Boolean(employee && !employee.google_calendar_id && !isBusinessMockMode(business)),
   };
 }
 
@@ -1395,11 +1398,37 @@ async function holdRequestedSlot({
   }
 
   const slotId = encodeSlotId(slotStart, business.timezone);
-  const { employee } = await resolveStaff(business, { ...draft, employee_id: employeeId || draftEmployeeId(draft) });
+  const { employee, calendarId, calendarMissing } = await resolveStaff(
+    business,
+    { ...draft, employee_id: employeeId || draftEmployeeId(draft) },
+  );
+  if (calendarMissing) {
+    await logError({
+      message: 'calendar_not_configured',
+      source: 'booking',
+      severity: 'error',
+      businessId: business.id,
+      requestId,
+      details: {
+        employee_id: employee?.id,
+        employee_name: employee?.name,
+        reason: 'active employee without google_calendar_id',
+      },
+    });
+    return handlerResult({
+      status: 'ERROR',
+      user_message_template_key: 'ERROR_GENERIC',
+      data: {
+        client_message: bm('errEmployeeCalendarMissing', uiLang),
+        ui_language: uiLang,
+        error_code: 'calendar_not_configured',
+      },
+    });
+  }
   await lazySyncCalendar({
     business,
     requestId,
-    calendarId: resolveEmployeeCalendarId(business, employee),
+    calendarId,
     employeeId: employeeId || draftEmployeeId(draft),
   });
   const available = await isSlotAvailable({
@@ -1651,14 +1680,34 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
   }
 
   if (extract.employee_name && !extract.employee_id) {
-    const staff = await listEmployees(business.id, { activeOnly: true });
-    await setConversationStep({
-      businessId: business.id,
-      rawPhone: recipientPhone,
-      step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
-      context: { draft_id: draft.id, intent: 'book', service },
-      requestId,
-    });
+    const staff = await listEmployeesForService(business.id, service?.id, { activeOnly: true });
+    const staffOffer = staff.length === 1
+      ? bm('errEmployeeOfferOne', lang, { staff: staff[0].name })
+      : staff.length > 1
+        ? bm('errEmployeeOfferMany', lang, { staff: staff.map((e) => e.name).join(', ') })
+        : '';
+    if (staff.length === 1) {
+      await persistPendingOffer({
+        businessId: business.id,
+        rawPhone: recipientPhone,
+        offer: {
+          kind: 'employee',
+          id: staff[0].id,
+          name: staff[0].name,
+          rejected: extract.employee_name,
+        },
+        requestId,
+        step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
+      });
+    } else {
+      await setConversationStep({
+        businessId: business.id,
+        rawPhone: recipientPhone,
+        step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
+        context: { draft_id: draft.id, intent: 'book', service },
+        requestId,
+      });
+    }
     return handlerResult({
       status: 'MISSING_INFO',
       next_required_step: 'CHOOSE_EMPLOYEE',
@@ -1666,9 +1715,10 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
       data: {
         client_message: bm('errEmployeeNotFound', lang, {
           name: extract.employee_name,
-          staff: staff.map((e) => e.name).join(', '),
+          staffOffer,
         }),
         services: staff.map((e) => ({ id: e.id, name: e.name })),
+        ui_language: lang === 'en' ? 'en' : 'ro',
       },
     });
   }
@@ -1866,7 +1916,31 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
 
   // Final lock check before Google write — force-sync + live Google overlap
   // (manual events added after hold must block confirm).
-  const { employeeId: confirmEmpId, employee: confirmEmp, calendarId: confirmCalId } = await resolveStaff(business, draft);
+  const {
+    employeeId: confirmEmpId,
+    employee: confirmEmp,
+    calendarId: confirmCalId,
+    calendarMissing: confirmCalMissing,
+  } = await resolveStaff(business, draft);
+  if (confirmCalMissing) {
+    await logError({
+      message: 'calendar_not_configured',
+      source: 'booking',
+      severity: 'error',
+      businessId: business.id,
+      requestId,
+      details: { employee_id: confirmEmpId, stage: 'confirm' },
+    });
+    return handlerResult({
+      status: 'ERROR',
+      user_message_template_key: 'ERROR_GENERIC',
+      data: {
+        client_message: bm('errEmployeeCalendarMissing', lang === 'en' ? 'en' : 'ro'),
+        ui_language: lang === 'en' ? 'en' : 'ro',
+        error_code: 'calendar_not_configured',
+      },
+    });
+  }
   await lazySyncCalendar({
     business,
     requestId,

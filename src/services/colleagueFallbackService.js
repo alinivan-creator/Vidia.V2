@@ -178,7 +178,7 @@ export async function buildColleagueFallbackOffer({
   const calendarItems = compatible
     .map((emp) => ({
       employee: emp,
-      calendarId: resolveEmployeeCalendarId(business, emp),
+      calendarId: resolveEmployeeCalendarId(business, emp, { allowBusinessFallback: false }),
     }))
     .filter((row) => row.calendarId);
 
