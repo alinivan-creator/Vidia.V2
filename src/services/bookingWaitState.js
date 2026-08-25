@@ -10,6 +10,7 @@ import { coerceHourToOpenHours, parseRomanianDateTimeParts } from '../utils/roDa
 
 export const BOOKING_WAIT = {
   SERVICE: 'waiting_for_service',
+  EMPLOYEE: 'waiting_for_employee',
   DATE: 'waiting_for_date',
   TIME: 'waiting_for_time',
   DATE_TIME: 'waiting_for_date_time',
@@ -70,10 +71,15 @@ export function getBookingWait(convState) {
     return BOOKING_WAIT.DATE_TIME;
   }
   if (
+    step === CONVERSATION_STEPS.CHOOSING_EMPLOYEE
+    || step === BOOKING_WAIT.EMPLOYEE
+  ) {
+    return BOOKING_WAIT.EMPLOYEE;
+  }
+  if (
     step === CONVERSATION_STEPS.WAITING_FOR_SERVICE
     || step === BOOKING_WAIT.SERVICE
     || step === CONVERSATION_STEPS.CHOOSING_SERVICE
-    || step === CONVERSATION_STEPS.CHOOSING_EMPLOYEE
   ) {
     return BOOKING_WAIT.SERVICE;
   }

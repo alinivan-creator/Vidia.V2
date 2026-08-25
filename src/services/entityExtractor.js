@@ -146,6 +146,9 @@ export async function extractEntities({
     const timezone = business.timezone || 'Europe/Bucharest';
   const clock = buildSystemClock(timezone);
   const ctxData = convState?.context_data || {};
+  const pendingAction = ctxData.pending_action && typeof ctxData.pending_action === 'object'
+    ? ctxData.pending_action
+    : null;
   const session = {
     clock,
     current_state: convState?.current_step || 'IDLE',
@@ -153,6 +156,7 @@ export async function extractEntities({
     draft_booking: draftSnapshot(activeDraft),
     pending_date: typeof ctxData.pending_date_text === 'string' ? ctxData.pending_date_text : null,
     pending_time: typeof ctxData.pending_time_text === 'string' ? ctxData.pending_time_text : null,
+    pending_action: pendingAction,
     recent_turns: lastTurns(convState, 3),
   };
 
@@ -165,10 +169,24 @@ export async function extractEntities({
     requestId,
     buildExtraSystem: (ctx) => {
       const base = buildBookingIntentSystemPrompt(ctx);
+      const pendingLines = pendingAction?.kind
+        ? [
+            `PENDING_ACTION activ: ${pendingAction.kind}.`,
+            pendingAction.prompt ? `Întrebarea anterioară / așteptare: ${pendingAction.prompt}` : null,
+            pendingAction.options?.length
+              ? `Opțiuni valide: ${pendingAction.options.join(', ')}.`
+              : null,
+            pendingAction.offered?.name
+              ? `Ofertă curentă: ${pendingAction.offered.name} (confirmare da / alt nume din opțiuni).`
+              : null,
+            'Interpretează mesajul ÎN PRIMUL RÂND ca răspuns la PENDING_ACTION. Doar dacă e clar neconex, tratează-l ca intenție nouă.',
+          ].filter(Boolean)
+        : [];
       return [
         base,
         '',
         `Context sesiune (doar informativ): step=${session.current_state}, booking_wait=${session.booking_wait || 'null'}.`,
+        ...pendingLines,
         `CEAS SISTEM (${clock.timezone}): ${clock.human}.`,
       ].join('\n');
     },

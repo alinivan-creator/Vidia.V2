@@ -370,8 +370,15 @@ export function extractLikelyEmployeeName(text, opts = {}) {
   }
 
   const stop = new Set([
-    'ora', 'mine', 'tine', 'noi', 'voi', 'ei', 'ele', 'serviciu', 'programare',
-    'programari', 'dimineata', 'seara', 'pranz', 'maine', 'azi', 'luni', 'marti',
+    // Pronouns / address forms — never treat as people ("la dvs", "la mine").
+    'ora', 'mine', 'tine', 'noi', 'voi', 'ei', 'ele', 'dumneavoastra', 'dvs',
+    'dumneavoastră', 'dvoastra', 'dv', 'me', 'you', 'us', 'them',
+    // Structural place / booking words — "parcare la salon", "programare la clinica".
+    'salon', 'salonul', 'saloane', 'clinica', 'clinică', 'cabinet', 'cabinetul',
+    'locatie', 'locatia', 'adresa', 'sediu', 'sediul', 'barbershop', 'barber',
+    'shop', 'magazin', 'firma', 'compania',
+    'serviciu', 'programare', 'programari', 'rezervare', 'rezervari',
+    'dimineata', 'seara', 'pranz', 'maine', 'azi', 'luni', 'marti',
     'miercuri', 'joi', 'vineri', 'sambata', 'duminica', 'septembrie', 'octombrie',
     'noiembrie', 'decembrie', 'ianuarie', 'februarie', 'martie', 'aprilie', 'mai',
     'iunie', 'iulie', 'august',

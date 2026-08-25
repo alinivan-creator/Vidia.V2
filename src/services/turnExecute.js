@@ -38,6 +38,10 @@ import {
   resolveStaffMentionFromText,
 } from '../db/employeeService.js';
 import {
+  isBookingGroundedAction,
+  PENDING_ACTIONS,
+} from './pendingActionService.js';
+import {
   formatSlotLabel,
   encodeSlotId,
   decodeSlotId,
@@ -539,6 +543,14 @@ async function refuseUnknownEmployeeGrounding({
         available_employees: names,
         service_id: extract.service_id ?? null,
         service_name: extract.service_name ?? null,
+        pending_action: {
+          kind: PENDING_ACTIONS.EMPLOYEE_CONFIRM,
+          offered: { id: staff[0].id, name: staff[0].name },
+          rejected: employeeName,
+          options: names,
+          prompt: 'Confirmă specialistul sugerat (da) sau alege alt nume din echipă.',
+          at: new Date().toISOString(),
+        },
       },
       mergeContext: true,
       requestId,
@@ -556,6 +568,13 @@ async function refuseUnknownEmployeeGrounding({
         last_menu: menu,
         service_id: extract.service_id ?? null,
         service_name: extract.service_name ?? null,
+        pending_action: {
+          kind: PENDING_ACTIONS.EMPLOYEE_SELECT,
+          rejected: employeeName,
+          options: names,
+          prompt: 'Alege un specialist din echipă.',
+          at: new Date().toISOString(),
+        },
       },
       mergeContext: true,
       requestId,
@@ -4412,6 +4431,7 @@ async function dispatchExecute({
       businessId: business.id,
       rawPhone: recipientPhone,
       requestId,
+      extraContext: { pending_action: null },
     });
     return executeBook({
       business,
@@ -4853,7 +4873,8 @@ async function executeTurnBody(params) {
 
   // MUST run before runBookingMachine — that path returns MISSING_SERVICE and
   // previously skipped executeBook employee grounding (Darius / Andrei bug).
-  {
+  // Only for booking-grounded actions — never hijack FAQ / thanks / reschedule.
+  if (isBookingGroundedAction(extract.action)) {
     const refused = await refuseUnknownEmployeeGrounding({
       business: params.business,
       recipientPhone: params.recipientPhone,

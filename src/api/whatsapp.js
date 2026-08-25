@@ -91,32 +91,46 @@ whatsappRouter.post('/', async (req, res) => {
     try {
       await processTwilioWebhook(req.body, requestId);
     } catch (error) {
-      console.error('Eroare detalii:', error);
-      debugLog('WEBHOOK FATAL', String(error));
-      await logError({
-        message: 'Unhandled Twilio WhatsApp webhook error',
-        source: 'webhook',
-        severity: 'critical',
-        requestId,
-        error,
-        details: { body: sanitizeTwilioBody(req.body) },
-      });
-      try {
-        const fromClean = toE164(String(req.body?.From ?? ''));
-        const toClean = toE164(String(req.body?.To ?? ''));
-        const { getCachedBusinessForWhatsAppTo } = await import('../db/businessService.js');
-        const cached = getCachedBusinessForWhatsAppTo(toClean);
-        if (cached && fromClean) {
-          await sendTechnicalFallbackMessage({
-            business: cached,
-            recipientPhone: toMetaPhone(fromClean),
-            requestId,
-          });
-        }
-      } catch (fallbackError) {
-        console.error('Eroare detalii:', fallbackError);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const errStack = error instanceof Error ? error.stack : null;
+    console.error('[webhook] Unhandled Twilio WhatsApp webhook error', {
+      requestId,
+      message: errMsg,
+      stack: errStack,
+      inboundPreview: String(req.body?.Body ?? '').slice(0, 200),
+    });
+    debugLog('WEBHOOK FATAL', String(error));
+    await logError({
+      message: 'Unhandled Twilio WhatsApp webhook error',
+      source: 'webhook',
+      severity: 'critical',
+      requestId,
+      error,
+      details: {
+        body: sanitizeTwilioBody(req.body),
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+        errorMessage: errMsg,
+        errorStack: errStack,
+        inboundText: String(req.body?.Body ?? '').slice(0, 500),
+        alert: true,
+      },
+    });
+    try {
+      const fromClean = toE164(String(req.body?.From ?? ''));
+      const toClean = toE164(String(req.body?.To ?? ''));
+      const { getCachedBusinessForWhatsAppTo } = await import('../db/businessService.js');
+      const cached = getCachedBusinessForWhatsAppTo(toClean);
+      if (cached && fromClean) {
+        await sendTechnicalFallbackMessage({
+          business: cached,
+          recipientPhone: toMetaPhone(fromClean),
+          requestId,
+        });
       }
+    } catch (fallbackError) {
+      console.error('[webhook] Failed to send technical fallback', fallbackError);
     }
+  }
   })();
 
   const raced = await Promise.race([
@@ -215,6 +229,8 @@ async function processTwilioWebhook(body, requestId) {
   let business = null;
   const recipientPhone = toMetaPhone(fromClean);
   const phoneE164 = fromClean;
+  /** @type {import('../db/conversationStateService.js').ConversationState | null} */
+  let convStateForLog = null;
 
   try {
     const matched = await getBusinessByWhatsAppToNumber(toClean, { includeInactive: true });
@@ -300,6 +316,7 @@ async function processTwilioWebhook(body, requestId) {
     }
     let convState = swept.conv;
     let activeDraft = swept.draft;
+    convStateForLog = convState;
     const expiry = { expired: swept.expired, lastIntent: swept.lastIntent };
     const sessionTtl = getSessionTtlMinutes(business);
     const sessionExpired = Boolean(swept.idleExpired)
@@ -385,7 +402,17 @@ async function processTwilioWebhook(body, requestId) {
       pendingExpired: expiry.expired,
     });
   } catch (error) {
-    console.error('Eroare detalii:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const errStack = error instanceof Error ? error.stack : null;
+    console.error('[webhook] Failed to handle Twilio WhatsApp message', {
+      requestId,
+      businessId: business?.id ?? null,
+      message: errMsg,
+      stack: errStack,
+      inboundPreview: textBody.slice(0, 200),
+      step: convStateForLog?.current_step ?? null,
+      pendingAction: convStateForLog?.context_data?.pending_action?.kind ?? null,
+    });
     await logError({
       message: 'Failed to handle Twilio WhatsApp message',
       source: 'webhook',
@@ -401,8 +428,11 @@ async function processTwilioWebhook(body, requestId) {
         bodyPreview: textBody.slice(0, 200),
         inboundText: String(body?.Body ?? '').slice(0, 500),
         messageSid: body?.MessageSid,
+        conversationStep: convStateForLog?.current_step ?? null,
+        pendingAction: convStateForLog?.context_data?.pending_action ?? null,
         errorName: error instanceof Error ? error.name : 'UnknownError',
-        errorMessage: error instanceof Error ? error.message : String(error),
+        errorMessage: errMsg,
+        errorStack: errStack,
         alert: true,
       },
     });

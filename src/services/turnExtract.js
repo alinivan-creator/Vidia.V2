@@ -9,6 +9,10 @@ import { listEmployees, matchEmployeeMention, extractLikelyEmployeeName, resolve
 import { CONVERSATION_STEPS, readLastMenu } from '../db/conversationStateService.js';
 import { looksLikeBusinessFactQuestion } from '../utils/businessInfoLookup.js';
 import { resolveAcceptedOffer } from './pendingOfferService.js';
+import {
+  interpretPendingActionReply,
+  shouldSkipStaffRebind,
+} from './pendingActionService.js';
 import { resolveNumberedChoice, resolveInteractiveChoice } from './whatsappService.js';
 import { isEntryMenuChoiceId, resolveEntryMenuChoiceId } from '../utils/entryMenu.js';
 import { GRID_PREFIX, isGridNavChoiceId } from '../utils/bookingGrid.js';
@@ -1249,6 +1253,26 @@ async function extractTurnIntentImpl({
   if (!tappedId && isLanguageCapabilityQuestion(rawTyped || textBody)) {
     return emptyExtract({ action: 'language_info', confidence: 'high', source: 'keyword' });
   }
+
+  // Pending-action first: reply is interpreted against what we asked last
+  // (e.g. "da / alt nume" → "La Stefan") before service-wait / NLU.
+  if (!tappedId) {
+    const pendingReply = interpretPendingActionReply({
+      textBody,
+      convState,
+      employees,
+      services,
+    });
+    if (pendingReply) {
+      return emptyExtract(pendingReply);
+    }
+  }
+
+  // Business FAQ (parcare / wifi / …) before aggressive entity / booking paths.
+  if (!tappedId && looksLikeBusinessFactQuestion(textBody)) {
+    return emptyExtract({ action: 'missing_info', confidence: 'high', source: 'keyword' });
+  }
+
   const earlyModify = !tappedId ? detectModificationIntent(textBody) : null;
   if (earlyModify === 'cancel') {
     const dropHoldOnly = isPendingHold && !refersToSavedAppointments(textBody) && !looksLikeCancelAll(textBody);
@@ -1893,8 +1917,14 @@ export async function extractTurnIntent(params) {
   const extract = await extractTurnIntentImpl(params);
   const annotated = annotateModifyExtract(extract, params.textBody);
 
-  // Always re-bind staff from free text — early parser paths / NLU must not
-  // drop "la Andrei" / "cu Mircea" before execute can refuse unknowns.
+  // Re-bind staff from free text for booking flows only.
+  // Never attach "la salon" / "la dvs" guesses onto FAQ / thanks / menu.
+  if (shouldSkipStaffRebind(annotated.action)) {
+    annotated.employee_id = null;
+    annotated.employee_name = null;
+    return annotated;
+  }
+
   try {
     const services = getBookingConfig(params.business).services;
     const employees = await listEmployees(params.business.id, { activeOnly: true });
