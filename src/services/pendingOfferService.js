@@ -175,9 +175,7 @@ export function resolveAcceptedOffer({ convState, employees, services = [] }) {
     employee = employees.find((e) => e.id === suggestedId) || null;
   }
   if (!employee) employee = fromAssistant.employee;
-  if (!employee && convState?.current_step === CONVERSATION_STEPS.CHOOSING_EMPLOYEE && employees.length) {
-    employee = employees[0];
-  }
+  // Never silently pick employees[0] — unknown-name flow must wait for an explicit choice.
 
   /** @type {{ id: string, name: string } | null} */
   let service = null;

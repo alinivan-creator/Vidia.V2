@@ -46,6 +46,7 @@ import {
   formatDateKey,
   formatTime,
   localToUtc,
+  addCalendarDays,
 } from '../utils/datetime.js';
 import { formatRomanianDate, formatLocalizedDate } from '../lib/ai/responseFormatter.js';
 import {
@@ -1714,36 +1715,71 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
     return executeCallback({ business, recipientPhone, extract, clientId, requestId, textBody: 'consulting_booking_interest' });
   }
 
-  // Unknown specialist must stop the booking flow BEFORE service / date prompts.
-  // "programare la Andrei" must not fall through to "Ce serviciu dorești?".
+  // Grounding §1: unknown specialist — STOP, offer real staff, wait (never silent Mihai).
   if (extract.employee_name && !extract.employee_id && extract.employee_id !== 'any') {
     const staff = await listEmployees(business.id, { activeOnly: true });
     const names = staff.map((e) => e.name).filter(Boolean);
     const staffOffer = names.length === 1
       ? bm('errEmployeeOfferOne', lang, { staff: names[0] })
       : names.length > 1
-        ? bm('errEmployeeOfferMany', lang, { staff: names.join(', ') })
+        ? bm('errEmployeeOfferMany', lang)
         : '';
-    await setConversationStep({
-      businessId: business.id,
-      rawPhone: recipientPhone,
-      step: CONVERSATION_STEPS.IDLE,
-      context: {
-        draft_id: activeDraft?.id ?? null,
-        intent: 'book',
-        rejected_employee_name: extract.employee_name,
-        available_employees: names,
-      },
-      requestId,
-    });
-    console.log('[booking] refuse_unknown_employee', {
+    const menu = staff.length > 1 ? employeeMenu(staff, lang) : null;
+    if (staff.length === 1) {
+      await persistPendingOffer({
+        businessId: business.id,
+        rawPhone: recipientPhone,
+        offer: {
+          kind: 'employee',
+          id: staff[0].id,
+          name: staff[0].name,
+          rejected: extract.employee_name,
+        },
+        requestId,
+        step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
+      });
+      await setConversationStep({
+        businessId: business.id,
+        rawPhone: recipientPhone,
+        step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
+        context: {
+          draft_id: activeDraft?.id ?? null,
+          intent: 'book',
+          rejected_employee_name: extract.employee_name,
+          suggested_employee_id: staff[0].id,
+          available_employees: names,
+          service_id: extract.service_id ?? null,
+          service_name: extract.service_name ?? null,
+        },
+        mergeContext: true,
+        requestId,
+      });
+    } else {
+      await setConversationStep({
+        businessId: business.id,
+        rawPhone: recipientPhone,
+        step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
+        context: {
+          draft_id: activeDraft?.id ?? null,
+          intent: 'book',
+          rejected_employee_name: extract.employee_name,
+          available_employees: names,
+          last_menu: menu,
+          service_id: extract.service_id ?? null,
+          service_name: extract.service_name ?? null,
+        },
+        mergeContext: true,
+        requestId,
+      });
+    }
+    console.log('[booking] grounding.unknown_employee', {
       requestId,
       rejected: extract.employee_name,
       available: names,
     });
     return handlerResult({
       status: 'MISSING_INFO',
-      next_required_step: null,
+      next_required_step: 'CHOOSE_EMPLOYEE',
       user_message_template_key: 'MISSING_EMPLOYEE',
       data: {
         client_message: bm('errEmployeeNotFound', lang, {
@@ -1752,7 +1788,10 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
         }),
         services: staff.map((e) => ({ id: e.id, name: e.name })),
         ui_language: lang === 'en' ? 'en' : 'ro',
+        list_button: lang === 'en' ? 'Team' : 'Echipă',
+        ui: menu ? 'list_picker' : undefined,
       },
+      menu: menu || undefined,
     });
   }
 
@@ -1847,6 +1886,27 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
     slotStart = extract.datetime;
   } else if (extract.date_text && extract.time_text) {
     slotStart = localToUtc(extract.date_text, extract.time_text, business.timezone);
+  }
+
+  // Grounding §3: date beyond booking horizon — stop before hold/FreeBusy.
+  const dateKeyForHorizon = slotStart
+    ? formatDateKey(slotStart, business.timezone)
+    : (extract.date_text && /^\d{4}-\d{2}-\d{2}$/.test(extract.date_text) ? extract.date_text : null);
+  if (dateKeyForHorizon) {
+    const horizonDays = Math.max(1, Number(getBookingConfig(business).bookingHorizonDays) || 14);
+    const todayKey = formatDateKey(new Date(), business.timezone);
+    const maxKey = addCalendarDays(todayKey, horizonDays);
+    if (dateKeyForHorizon > maxKey) {
+      return askDateGridResult({
+        business,
+        recipientPhone,
+        draft: working,
+        service,
+        requestId,
+        lang,
+        notice: bm('errDateBeyondHorizon', lang, { days: String(horizonDays) }),
+      });
+    }
   }
 
   if (slotStart) {
@@ -4439,7 +4499,10 @@ async function dispatchExecute({
       });
     }
     const menu = serviceMenu(business, lang);
-    const clientMessage = t('unknownServiceNotInList', uiLang);
+    const asked = String(extract.unknown_service_name || extract.service_name || '').trim();
+    const clientMessage = asked
+      ? bm('errServiceNotInCatalog', lang, { name: asked })
+      : t('unknownServiceNotInList', uiLang);
     await setConversationStep({
       businessId: business.id,
       rawPhone: recipientPhone,

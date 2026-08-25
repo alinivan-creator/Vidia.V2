@@ -146,9 +146,9 @@ export function outOfHoursNotice(business, date, lang = 'ro') {
   const window = `${info.dayHours.open}–${info.dayHours.close}`;
 
   if (lang === 'en') {
-    return `Our hours ${dayName ? `on *${dayName}*` : 'for that day'} are *${window}*. Please pick a time inside that window.`;
+    return `*${dayName || 'That day'}* at that time is outside our hours (*${window}*). Shall we pick another time?`;
   }
-  return `Programul nostru pentru *${dayName || 'această zi'}* este *${window}*. Te rog să alegi o oră din acest interval.`;
+  return `Ora cerută ${dayName ? `(*${dayName}*)` : ''} e în afara programului nostru (*${window}*). Alegem altă oră?`;
 }
 
 /**

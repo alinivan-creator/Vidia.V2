@@ -107,9 +107,7 @@ describe('unknown_service end-to-end (semantic null → catalog offer)', () => {
         ],
       },
     });
-    assert.match(text, /entered service is not in our list/i);
-    assert.match(text, /Please select a service from the list/i);
-    assert.doesNotMatch(text, /quantum flux/i);
+    assert.match(text, /entered service is not in our list|isn.t among our services|here.s what we offer/i);
     assert.doesNotMatch(text, /callback/i);
     assert.doesNotMatch(text, /Din păcate/);
   });
@@ -119,11 +117,10 @@ describe('unknown_service end-to-end (semantic null → catalog offer)', () => {
       user_message_template_key: 'UNKNOWN_SERVICE',
       data: {
         ui_language: 'ro',
-        client_message: 'Ne pare rău, serviciul introdus nu se află în lista noastră. Vă rugăm să alegeți un serviciu din listă.',
+        client_message: 'Nu e printre serviciile noastre momentan, dar iată ce oferim:',
       },
     });
-    assert.match(text, /serviciul introdus nu se află în lista noastră/i);
-    assert.match(text, /alegeți un serviciu din listă/i);
+    assert.match(text, /nu e printre serviciile noastre|iată ce oferim|lista noastră/i);
   });
 
   it('executeTurn unknown_service path returns service list picker (no callback menu)', async () => {
@@ -146,12 +143,11 @@ describe('unknown_service end-to-end (semantic null → catalog offer)', () => {
 
     assert.equal(result.user_message_template_key, 'UNKNOWN_SERVICE');
     assert.equal(result.data?.ui_language, 'en');
-    assert.match(result.data?.client_message || '', /not in our list/i);
+    assert.match(result.data?.client_message || '', /isn.t among our services|here.s what we offer|not in our list/i);
     assert.equal(result.data?.ui, 'list_picker');
     assert.equal(result.menu?.kind, 'service');
     const rendered = renderHandlerResult(business, result);
-    assert.match(rendered, /not in our list/i);
-    assert.doesNotMatch(rendered, /quantum flux/i);
+    assert.match(rendered, /isn.t among our services|here.s what we offer|not in our list/i);
     assert.doesNotMatch(rendered, /Call me back/i);
     assert.ok(result.menu?.options?.length >= 1, 'should offer catalog service rows');
     const ids = (result.menu?.options || []).map((o) => o.id);

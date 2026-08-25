@@ -25,16 +25,28 @@ export const BOOKING_MSG = {
     en: 'The booking process could not be started. Please try again.',
   },
   errEmployeeNotFound: {
-    ro: 'Nu putem continua cu *{name}* — acest specialist nu este în echipa noastră. {staffOffer}',
-    en: 'We cannot continue with *{name}* — that specialist is not on our team. {staffOffer}',
+    ro: '*{name}* nu face parte din echipa noastră actuală. {staffOffer}',
+    en: '*{name}* is not on our current team. {staffOffer}',
   },
   errEmployeeOfferOne: {
-    ro: 'Specialist disponibil: *{staff}*. Scrie numele lui ca să continui, sau *programare* ca să reiei.',
-    en: 'Available specialist: *{staff}*. Type their name to continue, or *booking* to start over.',
+    ro: 'Pot să continui programarea cu *{staff}*? Scrie *da* ca să mergem mai departe, sau alt nume din echipă.',
+    en: 'Shall I continue with *{staff}*? Type *yes* to continue, or another team member’s name.',
   },
   errEmployeeOfferMany: {
-    ro: 'Specialiști disponibili: {staff}. Scrie numele ca să continui.',
-    en: 'Available specialists: {staff}. Type a name to continue.',
+    ro: 'Poți continua alegând unul dintre colegii noștri din listă:',
+    en: 'You can continue by choosing one of our colleagues from the list:',
+  },
+  errServiceNotInCatalog: {
+    ro: '*{name}* nu e printre serviciile noastre momentan, dar iată ce oferim:',
+    en: '*{name}* isn’t among our services right now, but here’s what we offer:',
+  },
+  errDateBeyondHorizon: {
+    ro: 'Facem programări doar în următoarele *{days}* zile — alege te rog o dată mai apropiată.',
+    en: 'We only take bookings within the next *{days}* days — please pick a closer date.',
+  },
+  errTimeOutsideHours: {
+    ro: '*{when}* e în afara programului nostru (*{open}–{close}*). Alegem altă oră?',
+    en: '*{when}* is outside our hours (*{open}–{close}*). Shall we pick another time?',
   },
   errEmployeeCalendarMissing: {
     ro: 'Momentan nu putem verifica agenda acestui specialist. Scrie *programare* sau alege alt coleg.',
