@@ -474,6 +474,162 @@ function employeeMenu(employees, lang = 'ro') {
 }
 
 /**
+ * Active staff who can take bookings for this service (must have a Google calendar,
+ * unless the tenant is in mock mode). Missing calendar ≠ FreeBusy-busy — they are
+ * simply not bookable until Admin connects a calendar.
+ *
+ * @param {Business} business
+ * @param {string | null | undefined} serviceId
+ */
+async function listBookableEmployeesForService(business, serviceId) {
+  const forService = await listEmployeesForService(business.id, serviceId, { activeOnly: true });
+  if (isBusinessMockMode(business)) return forService;
+  return forService.filter((e) => Boolean(resolveEmployeeCalendarId(business, e)));
+}
+
+/**
+ * Ask „la cine doriți?” when ≥2 bookable staff offer the service.
+ * @returns {Promise<HandlerResult>}
+ */
+async function askEmployeeChoiceResult({
+  business,
+  recipientPhone,
+  draft,
+  service,
+  employees,
+  requestId,
+  lang = 'ro',
+  clientMessage = null,
+}) {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
+  const names = employees.map((e) => e.name).filter(Boolean);
+  const menu = employeeMenu(employees, uiLang);
+  await setConversationStep({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
+    context: {
+      draft_id: draft?.id ?? null,
+      intent: 'book',
+      service,
+      service_id: service?.id ?? null,
+      service_name: service?.name ?? null,
+      available_employees: names,
+      last_menu: menu,
+      pending_action: {
+        kind: PENDING_ACTIONS.EMPLOYEE_SELECT,
+        options: names,
+        prompt: bm('askEmployeeWho', uiLang, { service: service?.name || 'serviciu' }),
+        at: new Date().toISOString(),
+      },
+    },
+    mergeContext: true,
+    requestId,
+  });
+  return handlerResult({
+    status: 'MISSING_INFO',
+    next_required_step: 'CHOOSE_EMPLOYEE',
+    user_message_template_key: 'MISSING_EMPLOYEE',
+    data: {
+      client_message: clientMessage
+        || bm('askEmployeeWho', uiLang, { service: displaySvc(service, null, uiLang) || service?.name || '' }),
+      services: employees.map((e) => ({ id: e.id, name: e.name })),
+      ui_language: uiLang,
+      list_button: uiLang === 'en' ? 'Team' : 'Echipă',
+      ui: 'list_picker',
+    },
+    menu,
+  });
+}
+
+/**
+ * Preferred staff has no calendar — never silent-fallback; offer a bookable colleague.
+ * @returns {Promise<HandlerResult | null>}
+ */
+async function refusePreferredWithoutCalendar({
+  business,
+  recipientPhone,
+  draft,
+  service,
+  preferred,
+  requestId,
+  lang = 'ro',
+}) {
+  if (!preferred || isBusinessMockMode(business)) return null;
+  if (resolveEmployeeCalendarId(business, preferred)) return null;
+
+  const bookable = await listBookableEmployeesForService(business, service?.id);
+  const colleague = bookable.find((e) => e.id !== preferred.id) || bookable[0] || null;
+  const uiLang = lang === 'en' ? 'en' : 'ro';
+
+  if (colleague) {
+    await persistPendingOffer({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      offer: {
+        kind: 'employee',
+        id: colleague.id,
+        name: colleague.name,
+        rejected: preferred.name,
+      },
+      requestId,
+      step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
+    });
+    await setConversationStep({
+      businessId: business.id,
+      rawPhone: recipientPhone,
+      step: CONVERSATION_STEPS.CHOOSING_EMPLOYEE,
+      context: {
+        draft_id: draft?.id ?? null,
+        intent: 'book',
+        service,
+        rejected_employee_name: preferred.name,
+        suggested_employee_id: colleague.id,
+        available_employees: bookable.map((e) => e.name),
+        pending_action: {
+          kind: PENDING_ACTIONS.EMPLOYEE_CONFIRM,
+          offered: { id: colleague.id, name: colleague.name },
+          rejected: preferred.name,
+          options: bookable.map((e) => e.name),
+          prompt: bm('errEmployeeCalendarMissingOffer', uiLang, {
+            name: preferred.name,
+            staff: colleague.name,
+          }),
+          at: new Date().toISOString(),
+        },
+      },
+      mergeContext: true,
+      requestId,
+    });
+    return handlerResult({
+      status: 'MISSING_INFO',
+      next_required_step: 'CHOOSE_EMPLOYEE',
+      user_message_template_key: 'MISSING_EMPLOYEE',
+      data: {
+        client_message: bm('errEmployeeCalendarMissingOffer', uiLang, {
+          name: preferred.name,
+          staff: colleague.name,
+        }),
+        ui_language: uiLang,
+        list_button: uiLang === 'en' ? 'Team' : 'Echipă',
+        ui: bookable.length > 1 ? 'list_picker' : undefined,
+      },
+      menu: bookable.length > 1 ? employeeMenu(bookable, uiLang) : undefined,
+    });
+  }
+
+  return handlerResult({
+    status: 'ERROR',
+    user_message_template_key: 'ERROR_GENERIC',
+    data: {
+      client_message: bm('errEmployeeCalendarMissing', uiLang),
+      ui_language: uiLang,
+      error_code: 'calendar_not_configured',
+    },
+  });
+}
+
+/**
  * Grounding §1 — unknown specialist must STOP before state-machine ASK_SERVICE.
  * Called from executeTurnBody (before runBookingMachine) so it cannot be skipped.
  *
@@ -1608,6 +1764,16 @@ async function holdRequestedSlot({
         reason: 'active employee without google_calendar_id',
       },
     });
+    const offered = await refusePreferredWithoutCalendar({
+      business,
+      recipientPhone,
+      draft,
+      service,
+      preferred: employee,
+      requestId,
+      lang: uiLang,
+    });
+    if (offered) return offered;
     return handlerResult({
       status: 'ERROR',
       user_message_template_key: 'ERROR_GENERIC',
@@ -1927,23 +2093,66 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
       },
       requestId,
     }) || working;
+
+    // Preferred named but no Google calendar — never silent-fallback.
+    const preferred = await getEmployeeById(extract.employee_id, business.id);
+    const calendarGap = await refusePreferredWithoutCalendar({
+      business,
+      recipientPhone,
+      draft: working,
+      service,
+      preferred,
+      requestId,
+      lang,
+    });
+    if (calendarGap) return calendarGap;
   }
 
-  // Spec §7: single active employee for this service → auto-assign (no empty colleague list).
-  if (!extract.employee_id && !draftEmployeeId(working)) {
-    const forService = await listEmployeesForService(business.id, service.id, { activeOnly: true });
-    if (forService.length === 1) {
+  // Multi-staff: ask „la cine?” when ≥2 bookable calendars; auto-assign only if one.
+  // Bookable = active + offers service + has google_calendar_id (not FreeBusy failure).
+  if (
+    extract.employee_id !== 'any'
+    && !extract.employee_id
+    && !draftEmployeeId(working)
+  ) {
+    const bookable = await listBookableEmployeesForService(business, service.id);
+    if (bookable.length > 1) {
+      return askEmployeeChoiceResult({
+        business,
+        recipientPhone,
+        draft: working,
+        service,
+        employees: bookable,
+        requestId,
+        lang,
+      });
+    }
+    if (bookable.length === 1) {
       working = await setDraftEmployee({
         draftId: working.id,
         businessId: business.id,
-        employeeId: forService[0].id,
+        employeeId: bookable[0].id,
         context: {
           ...working.conversation_context,
-          employee_id: forService[0].id,
-          employee_name: forService[0].name,
+          employee_id: bookable[0].id,
+          employee_name: bookable[0].name,
         },
         requestId,
       }) || working;
+    } else if (!isBusinessMockMode(business)) {
+      // Staff exist for the service but none have a calendar — stop with a clear error.
+      const forService = await listEmployeesForService(business.id, service.id, { activeOnly: true });
+      if (forService.length > 0) {
+        return handlerResult({
+          status: 'ERROR',
+          user_message_template_key: 'ERROR_GENERIC',
+          data: {
+            client_message: bm('errEmployeeCalendarMissing', lang === 'en' ? 'en' : 'ro'),
+            ui_language: lang === 'en' ? 'en' : 'ro',
+            error_code: 'calendar_not_configured',
+          },
+        });
+      }
     }
   }
 

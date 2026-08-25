@@ -52,6 +52,18 @@ export const BOOKING_MSG = {
     ro: 'Momentan nu putem verifica agenda acestui specialist. Scrie *programare* sau alege alt coleg.',
     en: 'We cannot check this specialist’s calendar right now. Type *booking* or pick another colleague.',
   },
+  askEmployeeWho: {
+    ro: 'La cine doriți programarea pentru *{service}*? Alegeți din listă sau scrieți numele.',
+    en: 'Who would you like for *{service}*? Pick from the list or type the name.',
+  },
+  errEmployeeCalendarMissingOffer: {
+    ro: 'Momentan nu pot verifica agenda lui *{name}* (calendar neconectat). Pot continua cu *{staff}*?',
+    en: 'I can’t check *{name}*’s schedule right now (calendar not connected). Shall I continue with *{staff}*?',
+  },
+  errEmployeeNoSlotsOffer: {
+    ro: '*{name}* nu are loc liber la momentul cerut. Pot să te programez cu *{staff}*?',
+    en: '*{name}* has no opening at the requested time. Shall I book you with *{staff}*?',
+  },
   errHoldExpired: {
     ro: 'Perioada de rezervare a expirat, iar intervalul a fost eliberat.',
     en: 'The reservation period has expired and the time slot has been released.',
