@@ -52,7 +52,7 @@ googleWebhookRouter.post('/calendar', async (req, res) => {
         `[vidia-v2][google-webhook] Lazy sync triggered for ${business.slug} (${resourceState})`,
       );
 
-      const result = await lazySyncCalendar({ business, requestId });
+      const result = await lazySyncCalendar({ business, requestId, force: true });
 
       if (result.skipped) {
         console.log(`[vidia-v2][google-webhook] Cache fresh — skipped sync for ${business.slug}`);

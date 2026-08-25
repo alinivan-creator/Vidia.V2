@@ -23,6 +23,7 @@ import {
   listEmployees,
   upsertEmployeeAdmin,
   deleteEmployeeAdmin,
+  migrateBusinessCalendarToEmployees,
 } from '../db/employeeService.js';
 import {
   listFaqsForBusiness,
@@ -239,6 +240,12 @@ adminRouter.patch('/businesses/:id/callbacks/:callbackId', async (req, res) => {
 // --- Employees (multi-calendar) ---
 adminRouter.get('/businesses/:id/employees', async (req, res) => {
   const available = await isTableAvailable('employees');
+  if (available) {
+    const business = await getBusinessById(req.params.id);
+    if (business?.google_calendar_id) {
+      await migrateBusinessCalendarToEmployees(business);
+    }
+  }
   const employees = available ? await listEmployees(req.params.id, { activeOnly: false }) : [];
   res.json({
     employees,

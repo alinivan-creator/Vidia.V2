@@ -748,11 +748,10 @@ async function askWhichAppointment({
 async function resolveStaff(business, draftOrAppt, opts = {}) {
   const empId = draftEmployeeId(draftOrAppt);
   const employee = empId ? await getEmployeeById(empId, business.id) : null;
-  const allowBusinessFallback = opts.allowBusinessFallback !== false && !employee;
   return {
     employeeId: empId,
     employee,
-    calendarId: resolveEmployeeCalendarId(business, employee, { allowBusinessFallback }),
+    calendarId: resolveEmployeeCalendarId(business, employee),
     calendarMissing: Boolean(employee && !employee.google_calendar_id && !isBusinessMockMode(business)),
   };
 }
@@ -1411,7 +1410,6 @@ async function holdRequestedSlot({
     // Exact calendar used for sync/availability (null = missing).
     calendar_id: calendarId,
     employee_google_calendar_id: employee?.google_calendar_id ?? null,
-    business_google_calendar_id: business.google_calendar_id ?? null,
     calendar_missing: calendarMissing,
     slot_id: slotId,
     slot_start: slotStart.toISOString(),

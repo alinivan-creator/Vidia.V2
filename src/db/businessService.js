@@ -58,7 +58,8 @@ const BUSINESS_COLUMNS = '*';
 
 /**
  * Fills Twilio fields from DB columns or booking_settings bridges.
- * Google Calendar uses Calendar Share: only google_calendar_id + mock_mode on the business.
+ * Google Calendar uses Calendar Share on each employee (`employees.google_calendar_id`).
+ * `businesses.google_calendar_id` is deprecated.
  * @param {Record<string, unknown> | null} row
  * @returns {Business | null}
  */

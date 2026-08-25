@@ -726,6 +726,13 @@ async function loadEmployeesForBusiness(businessId) {
 async function persistEmployees(businessId) {
   if (!businessId) return;
   const rows = collectEmployeesFromTable();
+  const mockMode = Boolean($('#bf-g-mock')?.checked);
+  const activeWithCal = rows.filter((r) => r.name && r.active && r.google_calendar_id);
+  if (!mockMode && !activeWithCal.length) {
+    throw new Error(
+      'Adaugă cel puțin un angajat activ cu Calendar ID Google (ex. Mihai). Calendarele nu mai sunt pe afacere.',
+    );
+  }
   for (const row of rows) {
     if (!row.name) continue;
     if (row.active && !row.google_calendar_id) {
@@ -902,7 +909,6 @@ function openBusinessModal(id = null, opts = {}) {
     $('#bf-token').value = '';
     $('#bf-twilio-sid').value = b.twilio_account_sid || '';
     $('#bf-twilio-token').value = '';
-    $('#bf-calendar').value = b.google_calendar_id || '';
     $('#bf-g-mock').checked = b.google_calendar_mock_mode !== false;
     $('#bf-prompt').value = b.ai_system_prompt || '';
     ensureAiModelOption(b.ai_model || 'gpt-4o-mini');
@@ -1307,7 +1313,6 @@ $('#business-form').addEventListener('submit', async (e) => {
     timezone: $('#bf-timezone').value || 'Europe/Bucharest',
     welcome_message: ($('#bf-welcome').value || '').trim() || undefined,
     whatsapp_phone_number_id: $('#bf-phone-id').value || null,
-    google_calendar_id: $('#bf-calendar').value || null,
     google_calendar_mock_mode: $('#bf-g-mock').checked,
     twilio_account_sid: $('#bf-twilio-sid').value || null,
     ai_system_prompt: ($('#bf-prompt').value || '').trim(),

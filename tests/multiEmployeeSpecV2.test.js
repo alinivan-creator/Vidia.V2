@@ -13,11 +13,14 @@ describe('spec v2 multi-employee gaps', () => {
     assert.equal(extractLikelyEmployeeName('vreau tuns maine'), null);
   });
 
-  it('resolveEmployeeCalendarId does not fall back when disabled', () => {
+  it('resolveEmployeeCalendarId uses only employee calendar (no business fallback)', () => {
     const business = { google_calendar_id: 'biz@cal.com' };
     const emp = { id: '1', name: 'Mihai', google_calendar_id: null };
-    assert.equal(resolveEmployeeCalendarId(business, emp), 'biz@cal.com');
-    assert.equal(resolveEmployeeCalendarId(business, emp, { allowBusinessFallback: false }), null);
+    assert.equal(resolveEmployeeCalendarId(business, emp), null);
+    assert.equal(
+      resolveEmployeeCalendarId(business, { ...emp, google_calendar_id: 'mihai@cal.com' }),
+      'mihai@cal.com',
+    );
   });
 
   it('empty service_ids still means all services; explicit list filters', () => {

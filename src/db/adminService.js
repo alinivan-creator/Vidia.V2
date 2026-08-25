@@ -261,10 +261,7 @@ export async function upsertBusinessAdmin(input) {
       input.whatsapp_access_token !== undefined
         ? input.whatsapp_access_token
         : (existingRow?.whatsapp_access_token ?? null),
-    google_calendar_id:
-      input.google_calendar_id != null && String(input.google_calendar_id).trim()
-        ? String(input.google_calendar_id).trim()
-        : (id ? (existingRow?.google_calendar_id ?? null) : null),
+    google_calendar_id: null, // calendars live on employees only
     ai_system_prompt:
       input.ai_system_prompt != null
         ? String(input.ai_system_prompt)
@@ -371,6 +368,24 @@ export async function upsertBusinessAdmin(input) {
   invalidateBusinessCacheForWhatsAppTo(waNumber);
 
   const businessId = /** @type {string} */ (data.id);
+
+  // One-shot: move legacy business calendar onto staff (Mihai / sole employee).
+  const legacyCal =
+    (typeof existingRow?.google_calendar_id === 'string' && existingRow.google_calendar_id.trim())
+    || (typeof input.google_calendar_id === 'string' && input.google_calendar_id.trim())
+    || '';
+  if (legacyCal) {
+    try {
+      const { migrateBusinessCalendarToEmployees } = await import('./employeeService.js');
+      await migrateBusinessCalendarToEmployees({
+        id: businessId,
+        google_calendar_id: legacyCal,
+      });
+    } catch (migErr) {
+      console.warn('[admin] calendar→employee migration:', migErr);
+    }
+  }
+
   let savedServices = null;
 
   if (incomingServices) {

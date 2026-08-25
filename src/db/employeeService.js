@@ -254,17 +254,87 @@ export async function deleteEmployeeAdmin(businessId, employeeId) {
 }
 
 /**
- * Calendar ID for bookings: employee calendar if set, else optional business fallback.
- * @param {import('./businessService.js').Business} business
+ * Calendar ID for bookings — employee calendar only (no business fallback).
+ * @param {import('./businessService.js').Business} [_business]
  * @param {Employee | null | undefined} employee
- * @param {{ allowBusinessFallback?: boolean }} [opts]
+ * @param {{ allowBusinessFallback?: boolean }} [_opts] — ignored; kept for call-site compat
  * @returns {string | null}
  */
-export function resolveEmployeeCalendarId(business, employee, opts = {}) {
-  const allowFallback = opts.allowBusinessFallback !== false;
-  if (employee?.google_calendar_id) return employee.google_calendar_id;
-  if (allowFallback) return business.google_calendar_id ?? null;
-  return null;
+export function resolveEmployeeCalendarId(_business, employee, _opts = {}) {
+  return employee?.google_calendar_id ? String(employee.google_calendar_id).trim() || null : null;
+}
+
+/**
+ * Move legacy businesses.google_calendar_id onto staff (prefer Mihai / sole employee).
+ * Clears the business column. Idempotent.
+ *
+ * @param {import('./businessService.js').Business} business
+ * @returns {Promise<{ migrated: boolean; employeeId?: string | null; created?: boolean; reason?: string }>}
+ */
+export async function migrateBusinessCalendarToEmployees(business) {
+  const bizCal = typeof business?.google_calendar_id === 'string'
+    ? business.google_calendar_id.trim()
+    : '';
+  if (!bizCal || !business?.id) {
+    return { migrated: false, reason: 'no_business_calendar' };
+  }
+
+  if (!(await isTableAvailable('employees'))) {
+    return { migrated: false, reason: 'employees_table_missing' };
+  }
+
+  const employees = await listEmployees(business.id, { activeOnly: false });
+  let employeeId = null;
+  let created = false;
+
+  if (!employees.length) {
+    const { employee, error } = await upsertEmployeeAdmin(business.id, {
+      name: 'Mihai',
+      google_calendar_id: bizCal,
+      active: true,
+      sort_order: 0,
+      service_ids: [],
+    });
+    if (error || !employee) {
+      return { migrated: false, reason: error || 'create_mihai_failed' };
+    }
+    employeeId = employee.id;
+    created = true;
+  } else {
+    const mihai = employees.find((e) => String(e.name || '').trim().toLowerCase() === 'mihai');
+    const withoutCal = employees.find((e) => !e.google_calendar_id);
+    const target = mihai || (employees.length === 1 ? employees[0] : withoutCal) || employees[0];
+    employeeId = target.id;
+    if (!target.google_calendar_id) {
+      const { error } = await upsertEmployeeAdmin(business.id, {
+        id: target.id,
+        name: target.name,
+        google_calendar_id: bizCal,
+        active: target.active,
+        sort_order: target.sort_order,
+        service_ids: target.service_ids ?? [],
+        metadata: target.metadata,
+      });
+      if (error) {
+        return { migrated: false, reason: error, employeeId };
+      }
+    }
+  }
+
+  const { supabase } = await import('../config/supabase.js');
+  await supabase
+    .from('businesses')
+    .update({ google_calendar_id: null })
+    .eq('id', business.id);
+
+  console.log('[employees] migrated business calendar → employee', {
+    businessId: business.id,
+    employeeId,
+    created,
+    calendarId: bizCal,
+  });
+
+  return { migrated: true, employeeId, created };
 }
 
 /**

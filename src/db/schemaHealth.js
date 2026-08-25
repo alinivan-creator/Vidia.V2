@@ -261,7 +261,7 @@ export async function reportCalendarConfigMissing({
     businessId,
     details: {
       alertKind: 'calendar_config',
-      hint: 'Setează google_calendar_id pe afacere sau pe angajat (Admin → Angajați).',
+      hint: 'Setează google_calendar_id pe fiecare angajat activ (Admin → Angajați & calendare).',
       op,
       employeeId,
     },

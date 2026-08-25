@@ -6,7 +6,7 @@
 
 import { getAvailableSlots, isSlotAvailable } from '../db/cacheService.js';
 import { getActiveDraftBooking } from '../db/draftBookingService.js';
-import { listEmployees, matchEmployeeMention } from '../db/employeeService.js';
+import { listEmployees, matchEmployeeMention, resolveEmployeeCalendarId } from '../db/employeeService.js';
 import {
   formatBusinessHoursText,
   formatSlotLabel,
@@ -330,11 +330,19 @@ export async function executeAgentTool(name, args, ctx) {
         const employees = await listEmployees(business.id, { activeOnly: true });
         const employee = matchEmployeeMention(String(args.employee_name ?? ''), employees);
         const empId = employee?.id || draft?.employee_id || null;
+        const calendarId = resolveEmployeeCalendarId(business, employee)
+          || (empId
+            ? resolveEmployeeCalendarId(
+              business,
+              employees.find((e) => e.id === empId) || null,
+            )
+            : null);
 
         await lazySyncCalendar({
           business,
           requestId,
           employeeId: empId,
+          calendarId,
         });
 
         const slotId = encodeSlotId(start, business.timezone);
@@ -383,8 +391,13 @@ export async function executeAgentTool(name, args, ctx) {
         const employees = await listEmployees(business.id, { activeOnly: true });
         const employee = matchEmployeeMention(String(args.employee_name ?? ''), employees);
         const empId = employee?.id || draft?.employee_id || null;
-
-        await lazySyncCalendar({ business, requestId, employeeId: empId });
+        const empRow = employee || employees.find((e) => e.id === empId) || null;
+        await lazySyncCalendar({
+          business,
+          requestId,
+          employeeId: empId,
+          calendarId: resolveEmployeeCalendarId(business, empRow),
+        });
         const slots = await getAvailableSlots({
           business,
           durationMinutes: duration,

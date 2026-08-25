@@ -10,6 +10,7 @@ import {
 import { upsertBusyEvents, removeStaleGoogleEvents } from '../db/cacheService.js';
 import { logError } from '../db/loggerService.js';
 import { reportCalendarConfigMissing } from '../db/schemaHealth.js';
+import { listEmployees } from '../db/employeeService.js';
 import { assertWithinWorkingHours, hasConfiguredOpenDay } from '../utils/workingHours.js';
 import {
   freeBusyCacheKey,
@@ -61,7 +62,7 @@ export async function findCalendarEventIdForBooking({
 }) {
   if (isBusinessMockMode(business) || !startIso || !endIso) return null;
 
-  const resolvedCalendarId = calendarId || business.google_calendar_id;
+  const resolvedCalendarId = calendarId || null;
   if (!resolvedCalendarId) return null;
 
   try {
@@ -156,13 +157,12 @@ export async function resolveCalendarEventId({
 }
 
 /**
- * @param {Business} business
- * @param {string | null} [overrideCalendarId]
+ * @param {string | null | undefined} calendarId
  */
-function assertBusinessCalendarId(business, overrideCalendarId = null) {
-  if (!overrideCalendarId && !business.google_calendar_id) {
+function assertCalendarId(calendarId) {
+  if (!calendarId || !String(calendarId).trim()) {
     throw new Error(
-      'Eroare: Afacerea / angajatul nu are configurat google_calendar_id (email calendar partajat).',
+      'Eroare: Lipsește google_calendar_id pe angajat (Admin → Angajați & calendare).',
     );
   }
 }
@@ -223,12 +223,12 @@ async function getServiceAccountAuth(options = {}) {
 }
 
 /**
- * Auth client only — calendar ID is chosen per call (business or employee).
+ * Auth client only — calendar ID is chosen per call (employee calendar).
  * @param {Business} business
  * @param {string | null} [calendarId]
  */
 async function getCalendarClient(business, calendarId = null) {
-  assertBusinessCalendarId(business, calendarId);
+  if (calendarId) assertCalendarId(calendarId);
   const auth = await getServiceAccountAuth();
   return google.calendar({ version: 'v3', auth });
 }
@@ -254,7 +254,6 @@ async function getAccessToken(business, requestId = null, options = {}) {
   }
 
   try {
-    assertBusinessCalendarId(business);
     const auth = await getServiceAccountAuth({ forceRefresh: options.forceRefresh });
     const token = await auth.getAccessToken();
     return token?.token ?? null;
@@ -305,7 +304,7 @@ export async function syncEventsToCache({
     return { synced: 0, mocked: true };
   }
 
-  const resolvedCalendarId = calendarId || business.google_calendar_id;
+  const resolvedCalendarId = calendarId || null;
   if (!resolvedCalendarId) {
     return { synced: 0, error: 'missing_calendar_id' };
   }
@@ -403,6 +402,22 @@ export async function lazySyncCalendar({
     return { skipped: true, reason: 'admin_hours_closed' };
   }
 
+  // No explicit calendar → sync every active employee calendar.
+  if (!calendarId && !employeeId) {
+    return syncAllEmployeeCalendars({ business, requestId, force });
+  }
+
+  let resolvedCalendarId = calendarId;
+  let resolvedEmployeeId = employeeId;
+  if (!resolvedCalendarId && employeeId) {
+    const employees = await listEmployees(business.id, { activeOnly: false });
+    const emp = employees.find((e) => e.id === employeeId);
+    resolvedCalendarId = emp?.google_calendar_id || null;
+  }
+  if (!resolvedCalendarId) {
+    return { skipped: true, reason: 'missing_employee_calendar' };
+  }
+
   const horizonDays = Number(business.booking_settings?.booking_horizon_days ?? 7);
   const timeMin = new Date();
   const timeMax = new Date(Date.now() + horizonDays * 24 * 60 * 60 * 1000);
@@ -415,8 +430,8 @@ export async function lazySyncCalendar({
       .order('synced_at', { ascending: false })
       .limit(1);
 
-    if (employeeId) {
-      latestQuery = latestQuery.eq('employee_id', employeeId);
+    if (resolvedEmployeeId) {
+      latestQuery = latestQuery.eq('employee_id', resolvedEmployeeId);
     } else {
       latestQuery = latestQuery.is('employee_id', null);
     }
@@ -435,10 +450,39 @@ export async function lazySyncCalendar({
     business,
     timeMin,
     timeMax,
-    calendarId,
-    employeeId,
+    calendarId: resolvedCalendarId,
+    employeeId: resolvedEmployeeId,
     requestId,
   });
+}
+
+/**
+ * Sync Google events for every active employee who has a calendar.
+ * @param {Object} params
+ * @param {Business} params.business
+ * @param {string | null} [params.requestId]
+ * @param {boolean} [params.force]
+ */
+export async function syncAllEmployeeCalendars({ business, requestId = null, force = false }) {
+  const employees = await listEmployees(business.id, { activeOnly: true });
+  let synced = 0;
+  let skipped = 0;
+  for (const emp of employees) {
+    if (!emp.google_calendar_id) continue;
+    const result = await lazySyncCalendar({
+      business,
+      requestId,
+      force,
+      calendarId: emp.google_calendar_id,
+      employeeId: emp.id,
+    });
+    if (result?.skipped) skipped += 1;
+    else synced += Number(result?.synced ?? 0);
+  }
+  if (!employees.some((e) => e.google_calendar_id)) {
+    return { synced: 0, skipped: true, reason: 'no_employee_calendars' };
+  }
+  return { synced, skipped: skipped > 0 && synced === 0, reason: synced ? undefined : 'all_fresh' };
 }
 
 /**
@@ -468,7 +512,7 @@ export async function createCalendarEvent({
     };
   }
 
-  const resolvedCalendarId = calendarId || business.google_calendar_id;
+  const resolvedCalendarId = calendarId || null;
 
   if (isBusinessMockMode(business)) {
     const mockId = `mock_evt_${Date.now()}`;
@@ -721,13 +765,12 @@ export async function isGoogleSlotBusy({
 }) {
   if (isBusinessMockMode(business)) return false;
 
-  const resolvedCalendarId = calendarId || business.google_calendar_id;
+  const resolvedCalendarId = calendarId || null;
   // Spec §10: missing calendar must NOT look like "busy" — caller should fail loud.
   if (!resolvedCalendarId || !startIso || !endIso) {
     console.log('[google-calendar] isGoogleSlotBusy.skip_missing_calendar', {
       requestId,
       calendarId: calendarId ?? null,
-      business_google_calendar_id: business.google_calendar_id ?? null,
       resolvedCalendarId: resolvedCalendarId ?? null,
       startIso,
       endIso,
@@ -808,7 +851,7 @@ export async function hasExternalGoogleOverlap({
 }) {
   if (isBusinessMockMode(business)) return false;
 
-  const resolvedCalendarId = calendarId || business.google_calendar_id;
+  const resolvedCalendarId = calendarId || null;
   if (!resolvedCalendarId || !startIso || !endIso) return false;
 
   const exclude = new Set(
@@ -876,7 +919,7 @@ export async function updateCalendarEvent({
     }
   }
 
-  const resolvedCalendarId = calendarId || business.google_calendar_id;
+  const resolvedCalendarId = calendarId || null;
 
   const syncLocalCache = async () => {
     if (!startIso || !endIso) return;
@@ -973,7 +1016,7 @@ export async function deleteCalendarEvent({
     };
   }
 
-  const resolvedCalendarId = calendarId || business.google_calendar_id;
+  const resolvedCalendarId = calendarId || null;
 
   try {
     const calendar = await getCalendarClient(business, resolvedCalendarId);
@@ -1020,7 +1063,8 @@ export async function deleteCalendarEvent({
 }
 
 /**
- * Registers Google Calendar push notifications (webhook) for a business calendar.
+ * Registers Google Calendar push notifications for the first active employee calendar.
+ * (One channel stored on the business row — typical for single-staff tenants.)
  */
 export async function registerCalendarWatch({ business, requestId = null }) {
   if (!googleEnv.webhookBaseUrl) {
@@ -1034,12 +1078,25 @@ export async function registerCalendarWatch({ business, requestId = null }) {
     return { ok: false };
   }
 
+  const employees = await listEmployees(business.id, { activeOnly: true });
+  const primary = employees.find((e) => e.google_calendar_id);
+  if (!primary?.google_calendar_id) {
+    await logError({
+      message: 'registerCalendarWatch: no employee calendar configured',
+      source: 'google_calendar',
+      severity: 'warning',
+      businessId: business.id,
+      requestId,
+    });
+    return { ok: false };
+  }
+
   const channelId = crypto.randomUUID();
   const webhookUrl = `${googleEnv.webhookBaseUrl.replace(/\/$/, '')}/webhook/google/calendar`;
+  const calendarId = primary.google_calendar_id;
 
   try {
-    const calendar = await getCalendarClient(business);
-    const calendarId = /** @type {string} */ (business.google_calendar_id);
+    const calendar = await getCalendarClient(business, calendarId);
 
     const response = await calendar.events.watch({
       calendarId,
@@ -1061,7 +1118,7 @@ export async function registerCalendarWatch({ business, requestId = null }) {
       })
       .eq('id', business.id);
 
-    return { ok: true, channelId, resourceId: response.data.resourceId };
+    return { ok: true, channelId, resourceId: response.data.resourceId, calendarId, employeeId: primary.id };
   } catch (error) {
     console.error('Eroare detalii:', error);
     await logError({
@@ -1072,6 +1129,7 @@ export async function registerCalendarWatch({ business, requestId = null }) {
       requestId,
       httpStatus: googleErrorStatus(error),
       error,
+      details: { calendarId, employeeId: primary.id },
     });
     return { ok: false };
   }
