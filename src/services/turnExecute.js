@@ -34,6 +34,7 @@ import {
   listEmployees,
   getEmployeeById,
   resolveEmployeeCalendarId,
+  listEmployeesForService,
 } from '../db/employeeService.js';
 import {
   formatSlotLabel,
@@ -123,7 +124,11 @@ import {
   isBusinessMockMode,
   isMockEventId,
   hasExternalGoogleOverlap,
+  isGoogleSlotBusy,
 } from './googleCalendarService.js';
+import {
+  buildColleagueFallbackOffer,
+} from './colleagueFallbackService.js';
 import { handlerResult } from './handlerResult.js';
 import {
   BOOKING_WAIT,
@@ -900,7 +905,7 @@ async function listBookableDayWindows({
   return checks.filter(Boolean);
 }
 
-async function missingService(business, recipientPhone, draft, requestId, lang = 'ro') {
+async function missingService(business, recipientPhone, draft, requestId, lang = 'ro', convState = null) {
   const uiLang = lang === 'en' ? 'en' : 'ro';
   const services = getBookingConfig(business).services;
   if (!services.length) {
@@ -911,6 +916,7 @@ async function missingService(business, recipientPhone, draft, requestId, lang =
     });
   }
   const menu = serviceMenu(business, lang);
+  const withGreeting = !convState?.context_data?.service_ask_greeted;
   await setConversationStep({
     businessId: business.id,
     rawPhone: recipientPhone,
@@ -920,6 +926,7 @@ async function missingService(business, recipientPhone, draft, requestId, lang =
       intent: 'book',
       booking_wait: BOOKING_WAIT.SERVICE,
       last_menu: menu,
+      service_ask_greeted: true,
     },
     requestId,
   });
@@ -938,6 +945,7 @@ async function missingService(business, recipientPhone, draft, requestId, lang =
       list_button: t('listServices', uiLang),
       ui: 'list_picker',
       ui_language: uiLang,
+      with_service_greeting: withGreeting,
     },
     menu,
     machine_action: MACHINE_ACTIONS.ACTION_ASK_SERVICE,
@@ -1402,6 +1410,59 @@ async function holdRequestedSlot({
     employeeId: employeeId || draftEmployeeId(draft),
   });
   if (!available) {
+    const preferredId = employeeId || draftEmployeeId(draft);
+    if (preferredId) {
+      const fallback = await buildColleagueFallbackOffer({
+        business,
+        service,
+        preferredEmployeeId: preferredId,
+        requestedStart: slotStart,
+        requestedEnd: slotEnd,
+        draftId: draft?.id ?? null,
+        requestId,
+        lang: uiLang,
+      });
+      if (fallback?.options?.length && fallback.text) {
+        const menuOptions = fallback.options.map((o) => ({ id: o.id, title: o.title }));
+        await setConversationStep({
+          businessId: business.id,
+          rawPhone: recipientPhone,
+          step: CONVERSATION_STEPS.WAITING_FOR_TIME,
+          context: {
+            draft_id: draft?.id,
+            intent: 'book',
+            service,
+            booking_wait: BOOKING_WAIT.TIME,
+            preferred_employee_id: preferredId,
+            colleague_fallback: true,
+            last_menu: {
+              kind: 'staff_slot',
+              options: menuOptions,
+            },
+            pending_date_text: formatDateKey(slotStart, business.timezone),
+          },
+          requestId,
+        });
+        return handlerResult({
+          status: 'MISSING_INFO',
+          next_required_step: 'CHOOSE_SLOT',
+          user_message_template_key: 'COLLEAGUE_FALLBACK',
+          data: {
+            client_message: fallback.text,
+            service_name: displaySvc(service),
+            preferred_employee: fallback.preferred?.name,
+            colleague_employee: fallback.colleague?.name ?? null,
+            ui: 'list_picker',
+            list_button: uiLang === 'en' ? 'Options' : 'Opțiuni',
+            ui_language: uiLang,
+          },
+          menu: {
+            kind: 'staff_slot',
+            options: menuOptions,
+          },
+        });
+      }
+    }
     return missingSlotsResult({
       business,
       recipientPhone,
@@ -1586,7 +1647,7 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
   }
 
   if (!service) {
-    return missingService(business, recipientPhone, draft, requestId, lang);
+    return missingService(business, recipientPhone, draft, requestId, lang, convState);
   }
 
   if (extract.employee_name && !extract.employee_id) {
@@ -1639,6 +1700,24 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
       },
       requestId,
     }) || working;
+  }
+
+  // Spec §7: single active employee for this service → auto-assign (no empty colleague list).
+  if (!extract.employee_id && !draftEmployeeId(working)) {
+    const forService = await listEmployeesForService(business.id, service.id, { activeOnly: true });
+    if (forService.length === 1) {
+      working = await setDraftEmployee({
+        draftId: working.id,
+        businessId: business.id,
+        employeeId: forService[0].id,
+        context: {
+          ...working.conversation_context,
+          employee_id: forService[0].id,
+          employee_name: forService[0].name,
+        },
+        requestId,
+      }) || working;
+    }
   }
 
   // Slot list id encodes the absolute instant. Never recombine a stale pending_date
@@ -1819,7 +1898,15 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
     excludeEventIds: ownEventId ? [ownEventId] : [],
     requestId,
   });
-  if (!stillAvailable || googleConflict) {
+  // Spec race check: live FreeBusy on the chosen calendar immediately before write.
+  const freeBusyBusy = await isGoogleSlotBusy({
+    business,
+    startIso: startDate.toISOString(),
+    endIso: endDate.toISOString(),
+    calendarId: confirmCalId,
+    requestId,
+  });
+  if (!stillAvailable || googleConflict || freeBusyBusy) {
     await cancelOrResetDraftWithCalendar({
       business,
       draftId: draft.id,
@@ -1867,6 +1954,13 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
     (employee ? `Angajat: ${employee.name}\n` : '') +
     `Draft: ${draft.id}`;
 
+  const privateProps = {
+    client_phone: String(phoneE164 || ''),
+    service_id: String(service.id || ''),
+    ...(employeeId ? { employee_id: String(employeeId) } : {}),
+    draft_id: String(draft.id),
+  };
+
   /** @type {{ ok: boolean, eventId: string | null, htmlLink: string | null, mocked?: boolean, reason?: string, error?: string }} */
   let result;
   if (ownEventId && !isMockEventId(ownEventId)) {
@@ -1880,6 +1974,7 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
         description,
         start: { dateTime: startDate.toISOString(), timeZone: business.timezone },
         end: { dateTime: endDate.toISOString(), timeZone: business.timezone },
+        extendedProperties: { private: privateProps },
       },
     });
     if (patched.ok) {
@@ -1897,6 +1992,7 @@ async function executeConfirm({ business, recipientPhone, activeDraft, requestId
         description,
         startIso: startDate.toISOString(),
         endIso: endDate.toISOString(),
+        extendedProperties: { private: privateProps },
       },
       requestId,
     });
@@ -2072,7 +2168,7 @@ async function executeReviseDraft({
     const working = reset || draft;
 
     if (!service?.id && !service?.name) {
-      return missingService(business, recipientPhone, working, requestId, lang);
+      return missingService(business, recipientPhone, working, requestId, lang, convState);
     }
 
     if (dateKey) {
@@ -2137,7 +2233,7 @@ async function executeReviseDraft({
   }
 
   if (!service?.id && !service?.name) {
-    return missingService(business, recipientPhone, browsing, requestId, lang);
+    return missingService(business, recipientPhone, browsing, requestId, lang, convState);
   }
 
   const withService = await setSelectedService({
@@ -2484,6 +2580,64 @@ async function askConfirmCancelAll({ business, recipientPhone, appointments, req
         { id: MOD_PREFIX.ABORT, title: uiLang === 'en' ? 'Never mind' : 'Renunță' },
       ],
     },
+  });
+}
+
+async function askRescheduleConfirm({
+  business,
+  recipientPhone,
+  appointment,
+  slotStart,
+  requestId,
+  lang = 'ro',
+}) {
+  const uiLang = lang === 'en' ? 'en' : 'ro';
+  const serviceName = appointment?.selected_service && typeof appointment.selected_service === 'object'
+    ? (/** @type {{ name?: string }} */ (appointment.selected_service).name || (uiLang === 'en' ? 'appointment' : 'programare'))
+    : (uiLang === 'en' ? 'appointment' : 'programare');
+  const oldLabel = appointment?.selected_slot_start
+    ? formatSlotLabel(new Date(appointment.selected_slot_start), business.timezone)
+    : '—';
+  const newLabel = formatSlotLabel(slotStart, business.timezone);
+  const clientMessage = uiLang === 'en'
+    ? `Got it — move *${serviceName}* from ${oldLabel} to ${newLabel}?\n\n1️⃣ Yes, move it\n2️⃣ No, something else`
+    : `Am înțeles — vrei să muți programarea de *${serviceName}* din ${oldLabel} pe ${newLabel}?\n\n1️⃣ Da, mută programarea\n2️⃣ Nu, am vrut altceva`;
+
+  const menu = {
+    kind: 'confirm_reschedule',
+    options: [
+      { id: 'confirm_reschedule_yes', title: t('rescheduleConfirmYes', uiLang) },
+      { id: 'confirm_reschedule_no', title: t('rescheduleConfirmNo', uiLang) },
+    ],
+  };
+  const { employeeId } = await resolveStaff(business, appointment);
+  await setConversationStep({
+    businessId: business.id,
+    rawPhone: recipientPhone,
+    step: CONVERSATION_STEPS.RESCHEDULING,
+    context: {
+      intent: 'reschedule',
+      appointment_id: appointment.id,
+      google_event_id: appointment.google_event_id,
+      employee_id: employeeId,
+      slot_start: appointment.selected_slot_start,
+      slot_end: appointment.selected_slot_end,
+      pending_reschedule_slot: slotStart.toISOString(),
+      last_menu: menu,
+    },
+    requestId,
+  });
+  return handlerResult({
+    status: 'MISSING_INFO',
+    next_required_step: 'CONFIRM',
+    user_message_template_key: 'ASK_RESCHEDULE_CONFIRM',
+    data: {
+      client_message: clientMessage,
+      ui_language: uiLang,
+      ui: 'list_picker',
+      list_button: uiLang === 'en' ? 'Confirm' : 'Confirmă',
+    },
+    menu,
   });
 }
 
@@ -2887,13 +3041,25 @@ async function executeReschedule({
     const tapped = extract.datetime
       || (extract.slot_id ? decodeSlotId(extract.slot_id, business.timezone) : null);
     if (tapped) {
-      return applyReschedule({
+      // Interactive slot pick is already an explicit choice — apply directly.
+      if (extract.slot_id && extract.source === 'menu') {
+        return applyReschedule({
+          business,
+          recipientPhone,
+          appointment,
+          slotStart: tapped,
+          convState,
+          requestId,
+        });
+      }
+      // Free-text new time — confirm before calendar write.
+      return askRescheduleConfirm({
         business,
         recipientPhone,
         appointment,
         slotStart: tapped,
-        convState,
         requestId,
+        lang,
       });
     }
   }
@@ -2907,24 +3073,24 @@ async function executeReschedule({
 
   if (resolved.reason === 'slot_hint') {
     if (newDateHint && newTimeHint) {
-      return applyReschedule({
+      return askRescheduleConfirm({
         business,
         recipientPhone,
         appointment,
         slotStart: localToUtc(newDateHint, newTimeHint, business.timezone),
-        convState,
         requestId,
+        lang,
       });
     }
     if (newTimeHint && appointment?.selected_slot_start) {
       const apptDate = formatDateKey(new Date(appointment.selected_slot_start), business.timezone);
-      return applyReschedule({
+      return askRescheduleConfirm({
         business,
         recipientPhone,
         appointment,
         slotStart: localToUtc(apptDate, newTimeHint, business.timezone),
-        convState,
         requestId,
+        lang,
       });
     }
     if (newDateHint && !newTimeHint) {
@@ -2958,13 +3124,13 @@ async function executeReschedule({
   });
 
   if (slotStep.kind === 'apply') {
-    return applyReschedule({
+    return askRescheduleConfirm({
       business,
       recipientPhone,
       appointment,
       slotStart: localToUtc(slotStep.date, slotStep.time, business.timezone),
-      convState,
       requestId,
+      lang,
     });
   }
 
@@ -3369,7 +3535,7 @@ function executeStaleChoice({ business, recipientPhone, convState, extract = nul
     if (btn?.action === 'show_contact') return executeContact(business, lang);
     if (btn?.action === 'show_info') return executeHoursAndServices(business, lang);
     if (btn?.action === 'start_booking') {
-      return missingService(business, recipientPhone, null, null, lang);
+      return missingService(business, recipientPhone, null, null, lang, convState);
     }
   }
   const lang = resolveClientLanguage('', null, convState?.context_data);
@@ -3697,6 +3863,29 @@ async function dispatchExecute({
       requestId,
       clientId,
       activeDraft: draft,
+    });
+  }
+
+  if (action === 'confirm_reschedule'
+    || (action === 'confirm' && convState.context_data?.pending_reschedule_slot)) {
+    const pendingIso = convState.context_data?.pending_reschedule_slot;
+    const apptId = convState.context_data?.appointment_id;
+    const slotStart = pendingIso ? new Date(pendingIso) : null;
+    const appointment = apptId ? await getDraftBookingById(apptId, business.id) : null;
+    if (!appointment || !slotStart || Number.isNaN(slotStart.getTime())) {
+      return handlerResult({
+        status: 'ERROR',
+        user_message_template_key: 'ERROR_NO_APPOINTMENT',
+        data: { client_message: t('noApptReschedule', lang), ui_language: lang },
+      });
+    }
+    return applyReschedule({
+      business,
+      recipientPhone,
+      appointment,
+      slotStart,
+      convState,
+      requestId,
     });
   }
 
@@ -4300,6 +4489,7 @@ async function runBookingMachine(params) {
   if (reduced.action === MACHINE_ACTIONS.ACTION_ASK_SERVICE) {
     const services = getBookingConfig(business).services;
     const menu = serviceMenu(business, lang);
+    const withGreeting = !convState?.context_data?.service_ask_greeted;
     return handlerResult({
       status: 'MISSING_INFO',
       next_required_step: 'CHOOSE_SERVICE',
@@ -4315,6 +4505,7 @@ async function runBookingMachine(params) {
         list_button: t('listServices', lang),
         ui: 'list_picker',
         ui_language: lang,
+        with_service_greeting: withGreeting,
       },
       menu,
       machine_action: MACHINE_ACTIONS.ACTION_ASK_SERVICE,

@@ -215,26 +215,33 @@ export function matchServiceMention(text, services) {
 /**
  * @param {{ name?: string, id?: string, duration_minutes?: number }[]} services
  * @param {'ro' | 'en'} [lang]
+ * @param {{ withGreeting?: boolean }} [opts]
  */
-export function formatServiceAskMessage(services, lang = 'ro') {
+export function formatServiceAskMessage(services, lang = 'ro', opts = {}) {
   const list = (Array.isArray(services) ? services : []).filter((s) => s?.name);
   const first = list[0];
   const example = lang === 'en' && first
     ? svcDisplay(first.name, first.id, 'en')
     : (first?.name || (lang === 'en' ? 'service' : 'programare'));
+  const greeting = opts.withGreeting
+    ? (lang === 'en' ? 'Hi! 👋' : 'Salut! 👋')
+    : null;
+  const title = lang === 'en' ? 'Which service would you like?' : 'Ce serviciu dorești?';
   if (lang === 'en') {
     return waJoin(
-      waTitle('Which service would you like?'),
+      greeting,
+      waTitle(title),
       '',
-      'Tap *Services* and pick from the list (duration and price on each option).',
-      `Or type the name — e.g. *${example}*.`,
+      'Tap *Services* and pick from the list (duration and price on each option), or type the name — e.g. *'
+        + `${example}*.`,
     );
   }
   return waJoin(
-    waTitle('Ce serviciu dorești?'),
+    greeting,
+    waTitle(title),
     '',
-    'Apasă *Servicii* și alege din listă (durată și preț apar la fiecare opțiune).',
-    `Poți și scrie numele — ex: *${example}*.`,
+    'Apasă *Servicii* și alege din listă (durată și preț apar la fiecare opțiune), sau scrie direct numele — ex: *'
+      + `${example}*.`,
   );
 }
 

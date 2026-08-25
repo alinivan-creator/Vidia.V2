@@ -59,6 +59,7 @@ import {
   turnActionForBookingIntent,
 } from './bookingIntentMapper.js';
 import { isInFlightBookingContext } from './inFlightBookingSession.js';
+import { decodeStaffSlotChoiceId } from './colleagueFallbackService.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -238,6 +239,40 @@ function extractFromChoiceId(choiceId, base, business) {
       confidence: 'high',
       source: 'menu',
     });
+  }
+  if (choiceId === 'confirm_reschedule_yes') {
+    return emptyExtract({
+      ...base,
+      action: 'confirm_reschedule',
+      choice_id: choiceId,
+      confidence: 'high',
+      source: 'menu',
+    });
+  }
+  if (choiceId === 'confirm_reschedule_no') {
+    return emptyExtract({
+      ...base,
+      action: 'abort',
+      choice_id: choiceId,
+      confidence: 'high',
+      source: 'menu',
+    });
+  }
+  if (choiceId.startsWith(PREFIX.STAFF_SLOT) || choiceId.startsWith('staffslot_')) {
+    const decoded = decodeStaffSlotChoiceId(choiceId.startsWith(PREFIX.STAFF_SLOT)
+      ? choiceId
+      : `${PREFIX.STAFF_SLOT}${choiceId.slice('staffslot_'.length)}`);
+    if (decoded) {
+      return emptyExtract({
+        ...base,
+        action: 'book',
+        employee_id: decoded.employeeId,
+        slot_id: decoded.slotId,
+        choice_id: choiceId,
+        confidence: 'high',
+        source: 'menu',
+      });
+    }
   }
   if (choiceId.startsWith('slot_')) {
     return emptyExtract({

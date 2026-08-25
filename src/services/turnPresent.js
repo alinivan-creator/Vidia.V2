@@ -203,9 +203,23 @@ export function renderHandlerResult(business, result) {
     }
     case 'MISSING_SERVICE':
       if (en) {
-        return formatServiceAskMessage(d.services || [], 'en');
+        return formatServiceAskMessage(d.services || [], 'en', {
+          withGreeting: d.with_service_greeting === true,
+        });
       }
-      return formatServiceAskMessage(d.services || [], 'ro');
+      return formatServiceAskMessage(d.services || [], 'ro', {
+        withGreeting: d.with_service_greeting === true,
+      });
+    case 'COLLEAGUE_FALLBACK':
+      return (typeof d.client_message === 'string' && d.client_message.trim())
+        || (en
+          ? 'That specialist is busy at the requested time. Please pick another option.'
+          : 'Specialistul ales nu are loc la ora cerută. Vă rugăm alegeți o altă opțiune.');
+    case 'ASK_RESCHEDULE_CONFIRM':
+      return (typeof d.client_message === 'string' && d.client_message.trim())
+        || (en
+          ? 'Please confirm the new time for your appointment.'
+          : 'Confirmă noua oră pentru programare.');
     case 'ASK_DATE':
       if (en && !(typeof d.client_message === 'string' && d.client_message.trim())) {
         return waJoin(
@@ -336,13 +350,13 @@ export function renderHandlerResult(business, result) {
         return unknownInfoClientMessage();
       }
       return lang === 'en'
-        ? waJoin(waTitle(`Hours — ${business.name}`), '', d.hours_text)
-        : waJoin(waTitle(`Program — ${business.name}`), '', d.hours_text);
+        ? waJoin(waTitle(`Hours — ${business.name}`), '', d.hours_text, '', t('hoursBookingInvite', 'en'))
+        : waJoin(waTitle(`Program — ${business.name}`), '', d.hours_text, '', t('hoursBookingInvite', 'ro'));
     case 'HOURS_AND_SERVICES': {
       const hoursBlock = d.hours_configured && d.hours_text
         ? (lang === 'en'
-          ? waJoin(waTitle(`Hours — ${business.name}`), '', d.hours_text)
-          : waJoin(waTitle(`Program — ${business.name}`), '', d.hours_text))
+          ? waJoin(waTitle(`Hours — ${business.name}`), '', d.hours_text, '', t('hoursBookingInvite', 'en'))
+          : waJoin(waTitle(`Program — ${business.name}`), '', d.hours_text, '', t('hoursBookingInvite', 'ro')))
         : '';
       const services = d.services || [];
       const serviceBlocks = [waTitle(en ? 'Services' : 'Servicii'), ''];
@@ -679,6 +693,8 @@ export async function presentTurn({
     'MISSING_SERVICE',
     'MISSING_APPOINTMENT',
     'UNKNOWN_SERVICE',
+    'COLLEAGUE_FALLBACK',
+    'ASK_RESCHEDULE_CONFIRM',
     'STALE_CHOICE',
     'MENU',
   ]);

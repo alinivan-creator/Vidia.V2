@@ -256,7 +256,7 @@ export async function sendServicePicker({ business, recipientPhone, draft, reque
     bodyText: waJoin(
       waTitle('Ce serviciu dorești?'),
       '',
-      'Apasă *Servicii* și alege din listă. Poți și scrie numele.',
+      'Apasă *Servicii* și alege din listă (durată și preț apar la fiecare opțiune), sau scrie direct numele.',
     ),
     buttonText: 'Servicii',
     sections: [{
@@ -368,12 +368,13 @@ export async function sendSlotPicker({ business, recipientPhone, draft, requestI
  * First active employee who has at least one free slot (live calendar sync).
  * @returns {Promise<import('../db/employeeService.js').Employee | null>}
  */
-async function findFirstAvailableEmployee({ business, durationMinutes, draftId, requestId }) {
+async function findFirstAvailableEmployee({ business, durationMinutes, draftId, requestId, serviceId = null }) {
   const duration = Number(durationMinutes);
   if (!Number.isFinite(duration) || duration <= 0) return null;
   if (!hasConfiguredOpenDay(business)) return null;
 
-  const employees = await listEmployees(business.id, { activeOnly: true });
+  const { listEmployeesForService } = await import('../db/employeeService.js');
+  const employees = await listEmployeesForService(business.id, serviceId, { activeOnly: true });
   for (const emp of employees) {
     const calendarId = resolveEmployeeCalendarId(business, emp);
     if (!calendarId && !isBusinessMockMode(business)) continue;
@@ -409,7 +410,8 @@ async function continueAfterServiceSelected({
   hintText = '',
   requestId = null,
 }) {
-  const employees = await listEmployees(business.id, { activeOnly: true });
+  const { listEmployeesForService } = await import('../db/employeeService.js');
+  const employees = await listEmployeesForService(business.id, service?.id, { activeOnly: true });
 
   // No staff configured → classic business calendar
   if (!employees.length) {
@@ -457,6 +459,7 @@ async function continueAfterServiceSelected({
       durationMinutes: catalogDuration(business, service),
       draftId: draft.id,
       requestId,
+      serviceId: service?.id ?? null,
     });
   }
 
@@ -983,6 +986,7 @@ export async function handleBookingInteractiveReply({
         durationMinutes: catalogDuration(business, service),
         draftId: draft.id,
         requestId,
+        serviceId: service?.id ?? null,
       });
       if (!employee) {
         const all = await listEmployees(business.id, { activeOnly: true });

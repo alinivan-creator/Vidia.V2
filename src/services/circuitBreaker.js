@@ -77,4 +77,5 @@ export async function withCircuit(name, fn, timeoutMs = 10000) {
 }
 
 export const TECHNICAL_FALLBACK_MESSAGE =
-  'Sistemul întâmpină o scurtă problemă tehnică momentan. Revenim noi în cel mai scurt timp!';
+  'Ne pare rău, am avut o mică problemă tehnică. 🙏\n'
+  + 'Poți încerca din nou în câteva minute, sau scrie *programare* ca să pornim de la capăt.';

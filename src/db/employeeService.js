@@ -9,9 +9,58 @@ import { isTableAvailable } from './schemaHealth.js';
  * @property {string | null} google_calendar_id
  * @property {boolean} active
  * @property {number} sort_order
+ * @property {string[]} [service_ids]
+ * @property {Record<string, unknown>} [metadata]
  */
 
-const COLUMNS = 'id, business_id, name, google_calendar_id, active, sort_order';
+// Keep select list migration-safe: service association lives in metadata.service_ids
+// (and optionally column service_ids after 022_employee_service_ids.sql).
+const COLUMNS = 'id, business_id, name, google_calendar_id, active, sort_order, metadata';
+
+/**
+ * Normalize service_ids from DB (jsonb array / null).
+ * @param {unknown} raw
+ * @returns {string[]}
+ */
+export function normalizeServiceIds(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((id) => String(id ?? '').trim()).filter(Boolean);
+}
+
+/**
+ * Empty service_ids = employee can perform every catalog service (legacy tenants).
+ * @param {Employee} employee
+ * @param {string | null | undefined} serviceId
+ */
+export function employeeOffersService(employee, serviceId) {
+  if (!serviceId) return true;
+  const ids = normalizeServiceIds(employee.service_ids);
+  if (!ids.length) return true;
+  return ids.includes(String(serviceId));
+}
+
+/**
+ * @param {Record<string, unknown> | null | undefined} row
+ * @returns {Employee | null}
+ */
+function mapEmployeeRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const metadata = row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+    ? /** @type {Record<string, unknown>} */ (row.metadata)
+    : {};
+  const fromColumn = normalizeServiceIds(row.service_ids);
+  const fromMeta = normalizeServiceIds(metadata.service_ids);
+  return {
+    id: String(row.id),
+    business_id: String(row.business_id),
+    name: String(row.name),
+    google_calendar_id: row.google_calendar_id != null ? String(row.google_calendar_id) : null,
+    active: row.active !== false,
+    sort_order: Number(row.sort_order) || 0,
+    service_ids: fromColumn.length ? fromColumn : fromMeta,
+    metadata,
+  };
+}
 
 /**
  * @param {string} businessId
@@ -34,7 +83,22 @@ export async function listEmployees(businessId, opts = {}) {
     },
     { fallback: [], businessId, op: 'listEmployees', critical: true },
   );
-  return /** @type {Employee[]} */ (data ?? []);
+  return (Array.isArray(data) ? data : [])
+    .map((row) => mapEmployeeRow(/** @type {Record<string, unknown>} */ (row)))
+    .filter(Boolean);
+}
+
+/**
+ * Active employees who offer a given service (empty service_ids = all services).
+ * @param {string} businessId
+ * @param {string | null | undefined} serviceId
+ * @param {{ activeOnly?: boolean }} [opts]
+ * @returns {Promise<Employee[]>}
+ */
+export async function listEmployeesForService(businessId, serviceId, opts = {}) {
+  const all = await listEmployees(businessId, opts);
+  if (!serviceId) return all;
+  return all.filter((emp) => employeeOffersService(emp, serviceId));
 }
 
 /**
@@ -55,7 +119,7 @@ export async function getEmployeeById(employeeId, businessId) {
         .maybeSingle(),
     { fallback: null, businessId, op: 'getEmployeeById' },
   );
-  return /** @type {Employee | null} */ (data);
+  return mapEmployeeRow(/** @type {Record<string, unknown> | null} */ (data));
 }
 
 /**
@@ -115,6 +179,19 @@ export async function upsertEmployeeAdmin(input) {
     return { employee: null, error: 'business_id și name sunt obligatorii' };
   }
 
+  const serviceIds = normalizeServiceIds(
+    input.service_ids
+    ?? (typeof input.servicii === 'string'
+      ? String(input.servicii).split(/[,;\s]+/)
+      : input.servicii),
+  );
+  const baseMeta = input.metadata && typeof input.metadata === 'object' && !Array.isArray(input.metadata)
+    ? { ...input.metadata }
+    : {};
+  if (serviceIds.length || input.service_ids != null || input.servicii != null) {
+    baseMeta.service_ids = serviceIds;
+  }
+
   const payload = {
     business_id: businessId,
     name,
@@ -123,6 +200,7 @@ export async function upsertEmployeeAdmin(input) {
       : null,
     active: input.active !== false && input.active !== 'false',
     sort_order: Number(input.sort_order ?? 0) || 0,
+    metadata: baseMeta,
   };
 
   if (input.id) {
@@ -138,7 +216,7 @@ export async function upsertEmployeeAdmin(input) {
       { fallback: null, businessId, op: 'upsertEmployeeAdmin:update' },
     );
     if (error) return { employee: null, error: error.message || 'Actualizare eșuată' };
-    return { employee: /** @type {Employee} */ (data), error: null };
+    return { employee: mapEmployeeRow(/** @type {Record<string, unknown>} */ (data)), error: null };
   }
 
   const { data, error } = await safeQuery(
@@ -147,7 +225,7 @@ export async function upsertEmployeeAdmin(input) {
     { fallback: null, businessId, op: 'upsertEmployeeAdmin:insert' },
   );
   if (error) return { employee: null, error: error.message || 'Inserare eșuată' };
-  return { employee: /** @type {Employee} */ (data), error: null };
+  return { employee: mapEmployeeRow(/** @type {Record<string, unknown>} */ (data)), error: null };
 }
 
 /**

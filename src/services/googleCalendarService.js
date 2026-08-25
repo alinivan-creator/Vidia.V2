@@ -11,6 +11,12 @@ import { upsertBusyEvents, removeStaleGoogleEvents } from '../db/cacheService.js
 import { logError } from '../db/loggerService.js';
 import { reportCalendarConfigMissing } from '../db/schemaHealth.js';
 import { assertWithinWorkingHours, hasConfiguredOpenDay } from '../utils/workingHours.js';
+import {
+  freeBusyCacheKey,
+  getCachedFreeBusy,
+  setCachedFreeBusy,
+  invalidateFreeBusyCacheForBusiness,
+} from './freeBusyCache.js';
 
 /** @typedef {import('../db/businessService.js').Business} Business */
 
@@ -439,7 +445,7 @@ export async function lazySyncCalendar({
  * Creates an event on the business or employee shared calendar via Service Account.
  * @param {Object} params
  * @param {import('../db/businessService.js').Business} params.business
- * @param {{ summary: string; description?: string; startIso: string; endIso: string }} params.event
+ * @param {{ summary: string; description?: string; startIso: string; endIso: string; extendedProperties?: { private?: Record<string, string> } }} params.event
  * @param {string | null} [params.calendarId]
  * @param {string | null} [params.employeeId]
  * @param {string | null} [params.requestId]
@@ -484,6 +490,7 @@ export async function createCalendarEvent({
       console.error('Eroare detalii:', error);
     }
 
+    invalidateFreeBusyCacheForBusiness(business.id);
     console.log('[google-calendar] Mock event created:', mockId);
     return { ok: true, eventId: mockId, htmlLink: null, mocked: true };
   }
@@ -500,14 +507,22 @@ export async function createCalendarEvent({
   try {
     const calendar = await getCalendarClient(business, resolvedCalendarId);
 
+    /** @type {Record<string, unknown>} */
+    const requestBody = {
+      summary: event.summary,
+      description: event.description ?? '',
+      start: { dateTime: event.startIso, timeZone: business.timezone },
+      end: { dateTime: event.endIso, timeZone: business.timezone },
+    };
+    if (event.extendedProperties?.private && typeof event.extendedProperties.private === 'object') {
+      requestBody.extendedProperties = {
+        private: event.extendedProperties.private,
+      };
+    }
+
     const response = await calendar.events.insert({
       calendarId: resolvedCalendarId,
-      requestBody: {
-        summary: event.summary,
-        description: event.description ?? '',
-        start: { dateTime: event.startIso, timeZone: business.timezone },
-        end: { dateTime: event.endIso, timeZone: business.timezone },
-      },
+      requestBody,
     });
 
     const eventId = response.data.id;
@@ -529,6 +544,8 @@ export async function createCalendarEvent({
       requestId,
     });
 
+    invalidateFreeBusyCacheForBusiness(business.id);
+
     return {
       ok: true,
       eventId,
@@ -549,6 +566,104 @@ export async function createCalendarEvent({
       details: { calendarId: resolvedCalendarId, employeeId },
     });
     return { ok: false, eventId: null, htmlLink: null, error: message };
+  }
+}
+
+/**
+ * @param {{ start?: string, end?: string }[]} busy
+ * @param {Date} start
+ * @param {Date} end
+ */
+export function isIntervalFreeInBusyBlocks(start, end, busy) {
+  const s = start.getTime();
+  const e = end.getTime();
+  if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) return false;
+  for (const block of busy || []) {
+    const bs = Date.parse(String(block?.start || ''));
+    const be = Date.parse(String(block?.end || ''));
+    if (!Number.isFinite(bs) || !Number.isFinite(be)) continue;
+    if (s < be && e > bs) return false;
+  }
+  return true;
+}
+
+/**
+ * Batch FreeBusy for N calendars (one Google request). Cached 2–5 min per tenant window.
+ *
+ * @param {Object} params
+ * @param {Business} params.business
+ * @param {string} params.timeMinIso
+ * @param {string} params.timeMaxIso
+ * @param {string[]} params.calendarIds
+ * @param {string | null} [params.requestId]
+ * @returns {Promise<{ ok: boolean, calendars: Record<string, { busy: { start: string, end: string }[], errors?: unknown }> }>}
+ */
+export async function queryFreeBusyBatch({
+  business,
+  timeMinIso,
+  timeMaxIso,
+  calendarIds,
+  requestId = null,
+}) {
+  const ids = [...new Set((calendarIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length || !timeMinIso || !timeMaxIso) {
+    return { ok: true, calendars: {} };
+  }
+
+  if (isBusinessMockMode(business)) {
+    /** @type {Record<string, { busy: { start: string, end: string }[] }>} */
+    const calendars = {};
+    for (const id of ids) calendars[id] = { busy: [] };
+    return { ok: true, calendars };
+  }
+
+  const cacheKey = freeBusyCacheKey(business.id, timeMinIso, timeMaxIso, ids);
+  const cached = getCachedFreeBusy(cacheKey);
+  if (cached && typeof cached === 'object' && cached !== null && 'calendars' in /** @type {object} */ (cached)) {
+    return /** @type {{ ok: boolean, calendars: Record<string, { busy: { start: string, end: string }[] }> }} */ (cached);
+  }
+
+  try {
+    const calendar = await getCalendarClient(business, ids[0]);
+    const response = await calendar.freebusy.query({
+      requestBody: {
+        timeMin: timeMinIso,
+        timeMax: timeMaxIso,
+        items: ids.map((id) => ({ id })),
+      },
+    });
+
+    /** @type {Record<string, { busy: { start: string, end: string }[], errors?: unknown }>} */
+    const calendars = {};
+    const raw = response.data?.calendars || {};
+    for (const id of ids) {
+      const entry = raw[id] || {};
+      const busy = Array.isArray(entry.busy)
+        ? entry.busy.map((b) => ({
+          start: String(b.start || ''),
+          end: String(b.end || ''),
+        }))
+        : [];
+      calendars[id] = {
+        busy,
+        ...(entry.errors ? { errors: entry.errors } : {}),
+      };
+    }
+
+    const payload = { ok: true, calendars };
+    setCachedFreeBusy(cacheKey, payload);
+    return payload;
+  } catch (error) {
+    console.error('[google-calendar] freebusy batch failed', error);
+    await logError({
+      message: 'queryFreeBusyBatch failed',
+      source: 'google_calendar',
+      businessId: business.id,
+      requestId,
+      error,
+      details: { calendarIds: ids },
+    });
+    return { ok: false, calendars: {} };
   }
 }
 
@@ -576,30 +691,19 @@ export async function isGoogleSlotBusy({
   const resolvedCalendarId = calendarId || business.google_calendar_id;
   if (!resolvedCalendarId || !startIso || !endIso) return false;
 
-  try {
-    const calendar = await getCalendarClient(business, resolvedCalendarId);
-    const response = await calendar.freebusy.query({
-      requestBody: {
-        timeMin: startIso,
-        timeMax: endIso,
-        items: [{ id: resolvedCalendarId }],
-      },
-    });
-    const busy = response.data?.calendars?.[resolvedCalendarId]?.busy;
-    return Array.isArray(busy) && busy.length > 0;
-  } catch (error) {
-    console.error('[google-calendar] freebusy query failed', error);
-    await logError({
-      message: 'isGoogleSlotBusy freebusy failed',
-      source: 'google_calendar',
-      businessId: business.id,
-      requestId,
-      error,
-      details: { calendarId: resolvedCalendarId },
-    });
+  const batch = await queryFreeBusyBatch({
+    business,
+    timeMinIso: startIso,
+    timeMaxIso: endIso,
+    calendarIds: [resolvedCalendarId],
+    requestId,
+  });
+  if (!batch.ok) {
     // Fail closed for confirm safety when we cannot verify.
     return true;
   }
+  const busy = batch.calendars[resolvedCalendarId]?.busy || [];
+  return !isIntervalFreeInBusyBlocks(new Date(startIso), new Date(endIso), busy);
 }
 
 /**
@@ -718,6 +822,7 @@ export async function updateCalendarEvent({
     } catch (error) {
       console.error('Eroare detalii:', error);
     }
+    invalidateFreeBusyCacheForBusiness(business.id);
     return { ok: true, mocked: true };
   }
 
@@ -739,6 +844,7 @@ export async function updateCalendarEvent({
     });
 
     await syncLocalCache();
+    invalidateFreeBusyCacheForBusiness(business.id);
     return { ok: true, mocked: false };
   } catch (error) {
     console.error('Eroare detalii:', error);

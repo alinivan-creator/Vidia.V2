@@ -9,6 +9,8 @@ export const BOOKING_PREFIXES = {
   RESUME_NO: 'resume_other_slots',
   RESCHEDULE: 'reschedule_booking',
   ANY_EMPLOYEE: 'emp_any',
+  /** Preferred/colleague alternate: staffslot_<uuid>_<YYYYMMDD>_<HHMM> */
+  STAFF_SLOT: 'staffslot_',
   CLARIFY_DATE: 'clarify_date',
   CLARIFY_TIME: 'clarify_time',
 };

@@ -335,7 +335,7 @@ export function buildBookingConfirmationMessage({
     );
 
   const parts = [
-    waTitle(t('bookedTitle', uiLang)),
+    waTitle(t('bookedTitle', uiLang), '✅'),
     '',
     waField(t('labelClient', uiLang), clientName || null),
     waField(t('labelService', uiLang), serviceName),
