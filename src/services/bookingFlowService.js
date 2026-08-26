@@ -575,7 +575,7 @@ export async function sendEmployeePicker({
     id: `${PREFIX.EMPLOYEE}${e.id}`,
     title: e.name.slice(0, 24),
   }));
-  options.push({ id: PREFIX.ANY_EMPLOYEE, title: 'Primul disponibil' });
+  options.unshift({ id: PREFIX.ANY_EMPLOYEE, title: 'Oricine disponibil' });
 
   await rememberMenuOptions(business.id, recipientPhone, options, 'employee');
 

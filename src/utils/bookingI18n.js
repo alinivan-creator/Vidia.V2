@@ -180,6 +180,10 @@ export const BOOKING_MSG = {
     ro: 'Nu există intervale disponibile pentru *{service}*{date}.',
     en: 'There are no available time slots for *{service}*{date}.',
   },
+  employeeNoSlotsOnDay: {
+    ro: '*{staff}* nu are locuri libere pe *{date}* pentru *{service}*. Vă rugăm alegeți o altă zi pentru *{staff}*:',
+    en: '*{staff}* has no free slots on *{date}* for *{service}*. Please choose another day for *{staff}*:',
+  },
   closedDayNotice: {
     ro: 'În data de *{date}* locația este *ÎNCHISĂ*. Vă rugăm alegeți o zi deschisă din listă:',
     en: 'On *{date}* we are *CLOSED*. Please choose an open day from the list:',

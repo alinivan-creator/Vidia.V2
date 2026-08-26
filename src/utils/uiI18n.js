@@ -160,6 +160,7 @@ const UI = {
   contactHours: { ro: 'Program', en: 'Hours' },
   contactFooter: { ro: 'Vă stăm la dispoziție.', en: 'We are at your service.' },
   firstAvailable: { ro: 'Primul disponibil', en: 'First available' },
+  anyAvailable: { ro: 'Oricine disponibil', en: 'Anyone available' },
   hoursClosed: { ro: 'închis', en: 'closed' },
   languageInfoEn: {
     ro: 'Da — putem continua în engleză. Scrie *English* ca să comutăm.',

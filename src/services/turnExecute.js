@@ -176,9 +176,16 @@ function displaySvc(serviceOrName, serviceId = null, lang = null) {
 
 function draftEmployeeId(draft) {
   if (!draft) return null;
+  if (draftEmployeeAny(draft)) return null;
   if (draft.employee_id) return draft.employee_id;
   const ctxEmp = draft.conversation_context?.employee_id;
   return typeof ctxEmp === 'string' ? ctxEmp : null;
+}
+
+/** Client chose „Oricine disponibil” — aggregate availability across eligible staff. */
+function draftEmployeeAny(draft) {
+  if (!draft) return false;
+  return draft.conversation_context?.employee_any === true;
 }
 
 function catalogDuration(business, service) {
@@ -186,6 +193,15 @@ function catalogDuration(business, service) {
 }
 
 export function isFreshMenuStart(extract) {
+  // Mid-flow specialist / slot taps are not a cold start — must keep service context.
+  if (
+    extract?.action === 'select_employee'
+    || extract?.action === 'select_slot'
+    || extract?.action === 'accept_offer'
+    || extract?.employee_id
+  ) {
+    return false;
+  }
   return extract?.source === 'menu'
     && !extract.date_text
     && !extract.time_text
@@ -240,12 +256,39 @@ export function bookingEphemeralContextNulls() {
   };
 }
 
+/**
+ * Date already chosen earlier in the booking (day grid / free text) — recover after
+ * Specialist pick so we never loop Zi → Specialist → Zi.
+ * @param {object | null | undefined} convState
+ * @param {object | null | undefined} extract
+ */
+export function resolvePendingDateText(convState, extract = null) {
+  if (extract?.date_text && /^\d{4}-\d{2}-\d{2}$/.test(extract.date_text)) {
+    return extract.date_text;
+  }
+  const ctx = convState?.context_data || {};
+  if (typeof ctx.pending_date_text === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(ctx.pending_date_text)) {
+    return ctx.pending_date_text;
+  }
+  const draftDate = ctx.draft_booking && typeof ctx.draft_booking === 'object'
+    ? /** @type {{ date?: unknown }} */ (ctx.draft_booking).date
+    : null;
+  if (typeof draftDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(draftDate)) {
+    return draftDate;
+  }
+  return null;
+}
+
 export function hydrateExtract(extract, convState, timezone) {
   const ctx = convState?.context_data || {};
   const next = { ...extract };
   const sessionState = mapSessionState(convState?.current_step);
   const keepService = sessionKeepsChosenService(sessionState);
-  const allowPendingWhen = sessionAllowsPendingWhen(sessionState);
+  // Service → Specialist → Date: selecting a specialist must NOT revive a premature day.
+  // Same-turn free-text ("azi la Mihai") already has date_text on the extract.
+  const selectingSpecialist = extract?.action === 'select_employee'
+    || convState?.current_step === CONVERSATION_STEPS.CHOOSING_EMPLOYEE;
+  const allowPendingWhen = sessionAllowsPendingWhen(sessionState) && !selectingSpecialist;
 
   if (isCleanSlateBooking(extract)) {
     next.date_text = null;
@@ -298,6 +341,30 @@ export function hydrateExtract(extract, convState, timezone) {
     return next;
   }
 
+  // Specialist menu pick: keep service, drop any premature day so we show FreeBusy days next.
+  if (selectingSpecialist) {
+    if (!next.service_id && typeof ctx.pending_service_id === 'string') {
+      next.service_id = ctx.pending_service_id;
+    } else if (!next.service_id && typeof ctx.service_id === 'string') {
+      next.service_id = ctx.service_id;
+    }
+    if (!next.service_name && typeof ctx.service_name === 'string') {
+      next.service_name = ctx.service_name;
+    }
+    if (!next.employee_id && typeof ctx.pending_employee_id === 'string') {
+      next.employee_id = ctx.pending_employee_id;
+    }
+    // Do not inherit pending_date_text / pending_time — Specialist → Date order.
+    if (!extract.date_text) {
+      next.date_text = null;
+      next.time_text = null;
+      next.time_window = null;
+      next.datetime = null;
+      next.slot_id = null;
+    }
+    return next;
+  }
+
   const turnHasDate = Boolean(extract.date_text);
   const turnHasTime = Boolean(extract.time_text);
   const turnHasWindow = Boolean(extract.time_window);
@@ -318,9 +385,10 @@ export function hydrateExtract(extract, convState, timezone) {
     return next;
   }
 
-  // Only mid-flight waits inherit pending day/time — never IDLE leftovers.
-  if (allowPendingWhen && !turnHasDate && typeof ctx.pending_date_text === 'string' && ctx.pending_date_text) {
-    next.date_text = ctx.pending_date_text;
+  // Only mid-flight waits inherit pending day/time — never IDLE leftovers / specialist step.
+  if (allowPendingWhen && !turnHasDate) {
+    const pendingDate = resolvePendingDateText(convState, null);
+    if (pendingDate) next.date_text = pendingDate;
   }
   if (allowPendingWhen && !turnHasTime && typeof ctx.pending_time_text === 'string' && ctx.pending_time_text) {
     const dateChanged = turnHasDate && typeof ctx.pending_date_text === 'string' && extract.date_text !== ctx.pending_date_text;
@@ -467,8 +535,8 @@ function employeeMenu(employees, lang = 'ro') {
   return {
     kind: 'employee',
     options: [
+      { id: PREFIX.ANY_EMPLOYEE, title: en ? t('anyAvailable', 'en') : t('anyAvailable', 'ro') },
       ...employees.slice(0, 9).map((e) => ({ id: `${PREFIX.EMPLOYEE}${e.id}`, title: e.name })),
-      { id: PREFIX.ANY_EMPLOYEE, title: en ? t('firstAvailable', 'en') : t('firstAvailable', 'ro') },
     ],
   };
 }
@@ -504,6 +572,10 @@ async function askEmployeeChoiceResult({
   const uiLang = lang === 'en' ? 'en' : 'ro';
   const names = employees.map((e) => e.name).filter(Boolean);
   const menu = employeeMenu(employees, uiLang);
+  const existing = await getOrCreateConversationState(business.id, recipientPhone);
+  const prevDraft = existing.context_data?.draft_booking && typeof existing.context_data.draft_booking === 'object'
+    ? /** @type {Record<string, unknown>} */ (existing.context_data.draft_booking)
+    : {};
   await setConversationStep({
     businessId: business.id,
     rawPhone: recipientPhone,
@@ -516,6 +588,21 @@ async function askEmployeeChoiceResult({
       service_name: service?.name ?? null,
       available_employees: names,
       last_menu: menu,
+      booking_wait: BOOKING_WAIT.EMPLOYEE,
+      // Service → Specialist → Date: drop any premature day so days are generated
+      // only after specialist (FreeBusy-scoped).
+      pending_date_text: null,
+      pending_time_text: null,
+      pending_datetime: null,
+      pending_slot_id: null,
+      pending_time_window: null,
+      draft_booking: {
+        ...prevDraft,
+        service_id: service?.id ?? prevDraft.service_id ?? null,
+        service_name: service?.name ?? prevDraft.service_name ?? null,
+        date: null,
+        time: null,
+      },
       pending_action: {
         kind: PENDING_ACTIONS.EMPLOYEE_SELECT,
         options: names,
@@ -540,6 +627,86 @@ async function askEmployeeChoiceResult({
     },
     menu,
   });
+}
+
+/**
+ * Service → Specialist → Date: never show day/time grids before staff is resolved.
+ * @returns {Promise<HandlerResult | null>} non-null = stop (ask employee / error)
+ */
+async function ensureEmployeeForBooking({
+  business,
+  recipientPhone,
+  draft,
+  service,
+  extract,
+  requestId,
+  lang = 'ro',
+}) {
+  if (!service?.id || !draft?.id) return null;
+
+  if (extract.employee_id === 'any' || draftEmployeeAny(draft)) {
+    if (extract.employee_id === 'any' && !draftEmployeeAny(draft)) {
+      await setDraftEmployee({
+        draftId: draft.id,
+        businessId: business.id,
+        employeeId: null,
+        context: {
+          ...(draft.conversation_context || {}),
+          employee_any: true,
+          employee_id: null,
+          employee_name: null,
+        },
+        requestId,
+      });
+    }
+    return null;
+  }
+
+  if (extract.employee_id && extract.employee_id !== 'any') return null;
+  if (draftEmployeeId(draft)) return null;
+
+  const bookable = await listBookableEmployeesForService(business, service.id);
+  if (bookable.length > 1) {
+    return askEmployeeChoiceResult({
+      business,
+      recipientPhone,
+      draft,
+      service,
+      employees: bookable,
+      requestId,
+      lang,
+    });
+  }
+  if (bookable.length === 1) {
+    await setDraftEmployee({
+      draftId: draft.id,
+      businessId: business.id,
+      employeeId: bookable[0].id,
+      context: {
+        ...(draft.conversation_context || {}),
+        employee_id: bookable[0].id,
+        employee_name: bookable[0].name,
+        employee_any: false,
+      },
+      requestId,
+    });
+    return null;
+  }
+  if (!isBusinessMockMode(business)) {
+    const forService = await listEmployeesForService(business.id, service.id, { activeOnly: true });
+    if (forService.length > 0) {
+      return handlerResult({
+        status: 'ERROR',
+        user_message_template_key: 'ERROR_GENERIC',
+        data: {
+          client_message: bm('errEmployeeCalendarMissing', lang === 'en' ? 'en' : 'ro'),
+          ui_language: lang === 'en' ? 'en' : 'ro',
+          error_code: 'calendar_not_configured',
+        },
+      });
+    }
+  }
+  return null;
 }
 
 /**
@@ -1210,6 +1377,8 @@ async function listBookableDayWindows({
   service,
   draftId = null,
   employeeId = null,
+  anyEmployee = false,
+  bookableEmployees = null,
   requestId = null,
   lang = 'ro',
 }) {
@@ -1217,6 +1386,54 @@ async function listBookableDayWindows({
   if (!openDays.length) return [];
   const duration = catalogDuration(business, service);
   if (!duration) return openDays;
+
+  const staffPool = anyEmployee && bookableEmployees?.length
+    ? bookableEmployees
+    : null;
+
+  if (staffPool) {
+    await Promise.all(staffPool.map(async (emp) => {
+      await lazySyncCalendar({
+        business,
+        requestId,
+        force: true,
+        calendarId: resolveEmployeeCalendarId(business, emp),
+        employeeId: emp.id,
+      });
+    }));
+
+    const checks = await Promise.all(openDays.map(async (day) => {
+      for (const emp of staffPool) {
+        const slots = await getAvailableSlots({
+          business,
+          durationMinutes: duration,
+          limit: 1,
+          excludeDraftId: draftId,
+          employeeId: emp.id,
+          dateKey: day.dateKey,
+        });
+        if (!slots.length) continue;
+        const calendarId = resolveEmployeeCalendarId(business, emp);
+        if (calendarId && !isBusinessMockMode(business)) {
+          const batch = await queryFreeBusyBatch({
+            business,
+            timeMinIso: slots[0].start.toISOString(),
+            timeMaxIso: slots[0].end.toISOString(),
+            calendarIds: [calendarId],
+            requestId,
+          });
+          const entry = batch.ok ? batch.calendars[calendarId] : null;
+          if (entry && !entry.errors) {
+            const busy = entry.busy || [];
+            if (!isIntervalFreeInBusyBlocks(slots[0].start, slots[0].end, busy)) continue;
+          }
+        }
+        return day;
+      }
+      return null;
+    }));
+    return checks.filter(Boolean);
+  }
 
   const employee = employeeId ? await getEmployeeById(employeeId, business.id) : null;
   await lazySyncCalendar({
@@ -1303,6 +1520,23 @@ async function askDateGridResult({
 }) {
   const uiLang = lang === 'en' ? 'en' : 'ro';
   const intent = extraContext.intent || 'book';
+
+  // Defense in depth: never show „Zile disponibile” before specialist is chosen.
+  if (intent !== 'reschedule' && service?.id && draft && !draftEmployeeAny(draft) && !draftEmployeeId(draft)) {
+    const employeeGate = await ensureEmployeeForBooking({
+      business,
+      recipientPhone,
+      draft,
+      service,
+      extract: {},
+      requestId,
+      lang: uiLang,
+    });
+    if (employeeGate) return employeeGate;
+    const refreshed = draft?.id ? await getDraftBookingById(draft.id, business.id) : null;
+    if (refreshed) draft = refreshed;
+  }
+
   // Richer Meta Flow UI when the tenant has published a WhatsApp Flow.
   // A notice must stay visible, so keep the text grid in that case.
   if (flowsEnabled(business) && page === 0 && !clientMessage && !notice && intent !== 'reschedule') {
@@ -1345,7 +1579,11 @@ async function askDateGridResult({
     business,
     service,
     draftId: draft?.id,
-    employeeId: draftEmployeeId(draft),
+    employeeId: draftEmployeeAny(draft) ? null : draftEmployeeId(draft),
+    anyEmployee: draftEmployeeAny(draft),
+    bookableEmployees: draftEmployeeAny(draft)
+      ? await listBookableEmployeesForService(business, service?.id)
+      : null,
     requestId,
     lang: uiLang,
   });
@@ -1519,6 +1757,23 @@ async function missingSlotsResult({
   });
   if (!listed.slots.length) {
     const dateSuffix = datePretty ? (uiLang === 'en' ? ` on *${datePretty}*` : ` pe *${datePretty}*`) : '';
+    let emptyNotice = bodyNotice;
+    if (!emptyNotice && employeeId && datePretty) {
+      const staff = await getEmployeeById(employeeId, business.id);
+      if (staff?.name) {
+        emptyNotice = bm('employeeNoSlotsOnDay', uiLang, {
+          staff: staff.name,
+          date: datePretty,
+          service: displaySvc(service, null, uiLang) || (uiLang === 'en' ? 'service' : 'serviciu'),
+        });
+      }
+    }
+    if (!emptyNotice) {
+      emptyNotice = tf('noFreeTimesForService', uiLang, {
+        service: displaySvc(service, null, uiLang) || (uiLang === 'en' ? 'service' : 'serviciu'),
+        date: dateSuffix,
+      });
+    }
     return askDateGridResult({
       business,
       recipientPhone,
@@ -1530,18 +1785,7 @@ async function missingSlotsResult({
         ? CONVERSATION_STEPS.RESCHEDULING
         : CONVERSATION_STEPS.WAITING_FOR_DATE,
       extraContext: extraContext.intent === 'reschedule' ? extraContext : {},
-      notice: bodyNotice,
-      clientMessage:
-        tf('noFreeTimesForService', uiLang, {
-          service: displaySvc(service, null, uiLang) || (uiLang === 'en' ? 'service' : 'serviciu'),
-          date: dateSuffix,
-        })
-        + formatDayGridMessage(
-          listOpenDayWindows(business, { lang: uiLang }),
-          business.timezone,
-          displaySvc(service, null, uiLang),
-          uiLang,
-        ),
+      notice: emptyNotice,
     });
   }
   return handlerResult({
@@ -2081,7 +2325,20 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
     }) || draft;
   }
 
-  if (extract.employee_id && extract.employee_id !== 'any') {
+  if (extract.employee_id === 'any') {
+    working = await setDraftEmployee({
+      draftId: working.id,
+      businessId: business.id,
+      employeeId: null,
+      context: {
+        ...working.conversation_context,
+        employee_any: true,
+        employee_id: null,
+        employee_name: null,
+      },
+      requestId,
+    }) || working;
+  } else if (extract.employee_id && extract.employee_id !== 'any') {
     working = await setDraftEmployee({
       draftId: working.id,
       businessId: business.id,
@@ -2090,6 +2347,7 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
         ...working.conversation_context,
         employee_id: extract.employee_id,
         employee_name: extract.employee_name,
+        employee_any: false,
       },
       requestId,
     }) || working;
@@ -2109,50 +2367,20 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
   }
 
   // Multi-staff: ask „la cine?” when ≥2 bookable calendars; auto-assign only if one.
-  // Bookable = active + offers service + has google_calendar_id (not FreeBusy failure).
-  if (
-    extract.employee_id !== 'any'
-    && !extract.employee_id
-    && !draftEmployeeId(working)
-  ) {
-    const bookable = await listBookableEmployeesForService(business, service.id);
-    if (bookable.length > 1) {
-      return askEmployeeChoiceResult({
-        business,
-        recipientPhone,
-        draft: working,
-        service,
-        employees: bookable,
-        requestId,
-        lang,
-      });
-    }
-    if (bookable.length === 1) {
-      working = await setDraftEmployee({
-        draftId: working.id,
-        businessId: business.id,
-        employeeId: bookable[0].id,
-        context: {
-          ...working.conversation_context,
-          employee_id: bookable[0].id,
-          employee_name: bookable[0].name,
-        },
-        requestId,
-      }) || working;
-    } else if (!isBusinessMockMode(business)) {
-      // Staff exist for the service but none have a calendar — stop with a clear error.
-      const forService = await listEmployeesForService(business.id, service.id, { activeOnly: true });
-      if (forService.length > 0) {
-        return handlerResult({
-          status: 'ERROR',
-          user_message_template_key: 'ERROR_GENERIC',
-          data: {
-            client_message: bm('errEmployeeCalendarMissing', lang === 'en' ? 'en' : 'ro'),
-            ui_language: lang === 'en' ? 'en' : 'ro',
-            error_code: 'calendar_not_configured',
-          },
-        });
-      }
+  {
+    const employeeGate = await ensureEmployeeForBooking({
+      business,
+      recipientPhone,
+      draft: working,
+      service,
+      extract,
+      requestId,
+      lang,
+    });
+    if (employeeGate) return employeeGate;
+    if (working?.id) {
+      const refreshed = await getDraftBookingById(working.id, business.id);
+      if (refreshed) working = refreshed;
     }
   }
 
@@ -2248,7 +2476,9 @@ async function executeBook({ business, recipientPhone, extract, clientId, reques
     recipientPhone,
     draft: working,
     service,
-    employeeId: draftEmployeeId(working),
+    employeeId: extract.employee_id === 'any'
+      ? null
+      : (extract.employee_id || draftEmployeeId(working)),
     dateKey: extract.date_text,
     timeWindow: extract.time_window || null,
     requestId,
@@ -5078,6 +5308,49 @@ async function runBookingMachine(params) {
     });
   }
 
+  const fullSlotReady = reduced.action === MACHINE_ACTIONS.ACTION_CHECK_SLOT
+    || (reduced.draft.date && reduced.draft.time && extract.datetime);
+
+  if (fullSlotReady) {
+    return null;
+  }
+
+  const needsEmployeeBeforeSchedule = reduced.action === MACHINE_ACTIONS.ACTION_ASK_DATE_TIME
+    || reduced.action === MACHINE_ACTIONS.ACTION_ASK_DATE
+    || reduced.action === MACHINE_ACTIONS.ACTION_ASK_TIME;
+
+  if (needsEmployeeBeforeSchedule && reduced.draft.service_id) {
+    const service = {
+      id: reduced.draft.service_id,
+      name: reduced.draft.service_name || 'Serviciu',
+      duration_minutes: reduced.draft.duration || 30,
+    };
+    let draftForEmp = activeDraft;
+    if (!draftForEmp?.id) {
+      draftForEmp = await ensureDraft({
+        business,
+        recipientPhone,
+        clientId: params.clientId ?? null,
+        requestId,
+        activeDraft,
+        convState,
+      });
+    }
+    if (draftForEmp) {
+      const employeeGate = await ensureEmployeeForBooking({
+        business,
+        recipientPhone,
+        draft: draftForEmp,
+        service,
+        extract,
+        requestId,
+        lang,
+      });
+      if (employeeGate) return employeeGate;
+      draftForEmp = await getDraftBookingById(draftForEmp.id, business.id) || draftForEmp;
+    }
+  }
+
   if (reduced.action === MACHINE_ACTIONS.ACTION_ASK_DATE_TIME
     || reduced.action === MACHINE_ACTIONS.ACTION_ASK_DATE) {
     const service = reduced.draft.service_id
@@ -5087,16 +5360,31 @@ async function runBookingMachine(params) {
         duration_minutes: reduced.draft.duration || 30,
       }
       : null;
+    let draftForGrid = activeDraft;
+    if (!draftForGrid?.id) {
+      draftForGrid = await ensureDraft({
+        business,
+        recipientPhone,
+        clientId: params.clientId ?? null,
+        requestId,
+        activeDraft,
+        convState,
+      });
+    }
     return askDateGridResult({
       business,
       recipientPhone,
-      draft: activeDraft,
+      draft: draftForGrid,
       service,
       requestId,
+      lang,
     });
   }
 
   if (reduced.action === MACHINE_ACTIONS.ACTION_ASK_TIME && reduced.draft.date) {
+    if (reduced.draft.time && extract.datetime) {
+      return null;
+    }
     const service = reduced.draft.service_id
       ? {
         id: reduced.draft.service_id,
@@ -5104,12 +5392,23 @@ async function runBookingMachine(params) {
         duration_minutes: reduced.draft.duration || 30,
       }
       : null;
+    let draftForSlots = activeDraft;
+    if (!draftForSlots?.id) {
+      draftForSlots = await ensureDraft({
+        business,
+        recipientPhone,
+        clientId: params.clientId ?? null,
+        requestId,
+        activeDraft,
+        convState,
+      });
+    }
     return missingSlotsResult({
       business,
       recipientPhone,
-      draft: activeDraft,
+      draft: draftForSlots,
       service,
-      employeeId: draftEmployeeId(activeDraft),
+      employeeId: draftEmployeeAny(draftForSlots) ? null : draftEmployeeId(draftForSlots),
       dateKey: reduced.draft.date,
       requestId,
       reasonKey: 'ASK_TIME',

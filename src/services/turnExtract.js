@@ -552,6 +552,16 @@ export function resolveDeterministicInbound({
       },
     });
   }
+  if (
+    wait === BOOKING_WAIT.EMPLOYEE
+    && (numeric.kind === 'date' || numeric.kind === 'time' || numeric.kind === 'datetime')
+  ) {
+    return emptyExtract({
+      action: 'reprompt_employee',
+      confidence: 'high',
+      source: 'state',
+    });
+  }
   if (numeric.kind === 'date' || numeric.kind === 'time' || numeric.kind === 'datetime') {
     // Hours FAQ with a day word ("program mâine") must not become a booking draft.
     if (looksLikeOpeningHoursQuestion(textBody)) {
@@ -1659,6 +1669,35 @@ async function extractTurnIntentImpl({
       confidence: 'high',
       source: 'keyword',
     });
+  }
+
+  const inModifyEarly = step === CONVERSATION_STEPS.RESCHEDULING
+    || step === CONVERSATION_STEPS.MODIFYING
+    || convState.context_data?.intent === 'reschedule';
+
+  // Named staff + explicit slot must beat bare date/time deterministic parse
+  // ("azi la 15 la Mihai" → holdRequestedSlot + colleague fallback, not date grid).
+  const explicitEarly = resolveExplicitSlot(textBody, business, now);
+  if (explicitEarly?.dateKey && explicitEarly?.timeHHmm && !looksLikeExistingAppointmentQuery(textBody)) {
+    const staffEarly = resolveStaffMentionFromText(textBody, employees, services);
+    if (staffEarly.employee_id || staffEarly.employee_name) {
+      const modEarly = triageUserIntent(textBody, { businessType: business.business_type, services });
+      if (modEarly.intent !== 'cancel') {
+        const namedEarly = matchServiceMention(textBody, services);
+        return emptyExtract({
+          action: inModifyEarly || modEarly.intent === 'reschedule' ? 'reschedule' : 'book',
+          date_text: explicitEarly.dateKey,
+          time_text: explicitEarly.timeHHmm,
+          datetime: explicitEarly.datetime,
+          service_id: namedEarly?.id ?? null,
+          service_name: namedEarly?.name ?? null,
+          employee_id: staffEarly.employee_id,
+          employee_name: staffEarly.employee_name,
+          confidence: 'high',
+          source: 'parser',
+        });
+      }
+    }
   }
 
   const deterministic = resolveDeterministicInbound({
